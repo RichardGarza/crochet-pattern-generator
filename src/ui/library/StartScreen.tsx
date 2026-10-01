@@ -17,7 +17,7 @@ export function StartScreen() {
   return (
     <StartLayout
       libraryActions={
-        <Button variant="ghost" icon="refresh" size="sm" disabledReason="Available once projects are saved">
+        <Button variant="ghost" icon="refresh" size="sm" disabledReason="Coming soon: restore a project from the projects folder or a backup">
           Restore from folder or backup
         </Button>
       }
@@ -27,7 +27,7 @@ export function StartScreen() {
           onOpen={(id) => navigate({ screen: 'project', projectId: id })}
           empty={
             <EmptyState icon="yarn" title="No projects yet" variant="panel">
-              Pick one of the cards above to start. Saving isn&rsquo;t switched on yet, so for now a project stays in this tab until you close or reload it.
+              Pick one of the cards above to start. Your projects are saved in this browser as you work.
             </EmptyState>
           }
         />
