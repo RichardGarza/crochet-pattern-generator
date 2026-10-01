@@ -129,6 +129,61 @@ describe('multi-view build', HEAVY, () => {
     expect(r.issues.map((i) => i.code)).toContain(RECON_ISSUES.thin);
     const ball = await buildRecon(request([sphere(0.5)], ['front', 'left', 'top'], { N: 64 }));
     expect(ball.issues.map((i) => i.code)).not.toContain(RECON_ISSUES.thin);
+    // The teddy's ears are 4 voxels thick even at N = 64: preview and final agree (no note).
+    for (const N of [64, 128] as const) {
+      const t = await buildRecon(request(teddy, ['front', 'left', 'top'], { N }));
+      expect(t.issues.map((i) => i.code)).not.toContain(RECON_ISSUES.thin);
+    }
+  });
+
+  it('a fish seen head-on keeps its length (front rounding stretched along z)', async () => {
+    const fish = [{ c: [0, 0, 0] as Vec3, r: [0.2, 0.45, 1.0] as Vec3 }];
+    for (const labels of [['front', 'left', 'top'], ['front', 'left']] as const) {
+      const r = await buildRecon(request(fish, labels.map((label) => ({ label, cam: { pxPerUnit: 200 } })), { N: 128 }));
+      const s = r.model.finishedSize;
+      expect(Math.abs((s.depth as number) / s.height / (2 / 0.9) - 1)).toBeLessThan(0.05);
+      for (const iou of Object.values(r.report.iouPerView)) expect(iou).toBeGreaterThan(0.95);
+      expect(r.issues.map((i) => i.code)).not.toContain(RECON_ISSUES.iou);
+    }
+  });
+
+  it('a view the final shape does not match raises W_RECON_IOU on that photo', async () => {
+    // The side photo shows a box-like object deeper at the top: the front rounding (round cross-sections) cannot
+    // follow a side outline that is a thin bar at the bottom and a wide block at the top.
+    const w = 512;
+    const rect = (x0: number, x1: number, y0: number, y1: number, m = new Uint8Array(w * w)): Uint8Array<ArrayBuffer> => {
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) m[x + w * y] = 1;
+      return m;
+    };
+    const side = rect(56, 456, 100, 200, rect(236, 276, 200, 400));
+    const r = await buildRecon(request([], [{ label: 'front', mask: rect(206, 306, 100, 400) }, { label: 'left', mask: side }], { N: 64 }));
+    const low = Object.entries(r.report.iouPerView).filter(([, v]) => v < 0.9);
+    expect(low.length).toBeGreaterThan(0);
+    const flagged = r.issues.filter((i) => i.code === RECON_ISSUES.iou).map((i) => i.where?.view);
+    expect(flagged.sort()).toEqual(low.map(([id]) => id).sort());
+  });
+
+  it('front + back that disagree are flagged (W_VIEW_IOU on the plane-only path too)', async () => {
+    const r = await buildRecon(request(teddy, ['front', { label: 'back', cam: { stretchU: 1.3 } }], { N: 64 }));
+    expect(r.issues.filter((i) => i.code === 'W_VIEW_IOU').length).toBeGreaterThan(0);
+  });
+
+  it('empty masks: all empty is E_MASK_EMPTY; a top photo with only empty companions builds alone', async () => {
+    const empty = new Uint8Array(512 * 512);
+    const none = (await buildRecon(request(teddy, [{ label: 'front', mask: empty }, { label: 'left', mask: empty }], { N: 64 })).catch((e: unknown) => e)) as ReconError;
+    expect(none.code).toBe('E_MASK_EMPTY');
+    const top = await buildRecon(request(teddy, [{ label: 'front', mask: empty }, 'top'], { N: 64, targetHeightIn: 6 }));
+    expect(Math.max(top.model.finishedSize.width as number, top.model.finishedSize.depth as number)).toBeCloseTo(6, 3);
+    expect(top.issues.map((i) => i.code)).toContain('W_VIEW_EMPTY');
+  });
+
+  it('a shape that would exceed the 48 in part limit is E_RECON_SIZE; a target above 60 in is a RangeError', async () => {
+    const rod = [{ c: [0, 0, 0] as Vec3, r: [0.1, 0.1, 0.7] as Vec3 }];
+    const error = (await buildRecon(request(rod, [{ label: 'left', cam: { pxPerUnit: 300 } }], { N: 64, photoView: 'left', targetHeightIn: 8 })).catch((e: unknown) => e)) as ReconError;
+    expect(error.code).toBe(RECON_ISSUES.size);
+    const ok = await buildRecon(request(rod, [{ label: 'left', cam: { pxPerUnit: 300 } }], { N: 64, photoView: 'left', targetHeightIn: 2 }));
+    expect(validateModel(ok.model).ok).toBe(true);
+    await expect(buildRecon(request(teddy, ['front', 'left'], { N: 64, targetHeightIn: 61 }))).rejects.toThrow(RangeError);
   });
 
   it('keepHoles: a ring keeps its hole (genus 1, accepted: no warning)', async () => {
@@ -212,6 +267,14 @@ describe('single photo (§2.9.3 view turns)', HEAVY, () => {
       }
     }
     expect(Math.abs(xAt) / (s.width as number)).toBeLessThan(0.1);
+  });
+
+  it('uses only the orientation of align (an offset or scale cannot move the photo plane off x = 0)', async () => {
+    const plain = await buildRecon(request(teddy, ['left'], { N: 64, photoView: 'left' }));
+    const moved = await buildRecon(request(teddy, [{ label: 'left', align: { dx: 0.3, dy: -0.2, scale: 1.1 } }], { N: 64, photoView: 'left' }));
+    expect(only(moved).part.position).toEqual(only(plain).part.position);
+    await expect(buildRecon(request(teddy, [{ label: 'left', align: { dx: Number.NaN } }], { N: 64 }))).rejects.toThrow(RangeError);
+    await expect(buildRecon(request(teddy, [{ label: 'left', align: { mirror: 1 as unknown as boolean } }], { N: 64 }))).rejects.toThrow(RangeError);
   });
 
   it('an empty mask is E_MASK_EMPTY on that photo', async () => {

@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { mulberry32 } from '../../kernel/prng';
 import { edt2d } from '../../kernel/geom/edt';
-import { inflationFromThickness, inflationHeight, localThickness } from '../inflate';
+import { downsampleMask, inflationFromThickness, inflationHeight, localThickness } from '../inflate';
 
 const HEAVY = { timeout: 120_000 };
 
@@ -26,12 +26,13 @@ function bruteR(mask: Uint8Array, w: number, h: number): Float32Array {
   for (let q = 0; q < w * h; q++) {
     const r = d[q];
     if (!r) continue;
+    const r2 = Math.round(r * r); // whole-number squared distances: rim pixels are decided exactly
     const qx = q % w;
     const qy = (q - qx) / w;
     for (let y = Math.max(0, qy - Math.floor(r)); y <= Math.min(h - 1, qy + r); y++) {
       for (let x = Math.max(0, qx - Math.floor(r)); x <= Math.min(w - 1, qx + r); x++) {
         const p = x + w * y;
-        if (mask[p] && (x - qx) ** 2 + (y - qy) ** 2 <= r * r && R[p] < r) R[p] = r;
+        if (mask[p] && (x - qx) ** 2 + (y - qy) ** 2 <= r2 && R[p] < r) R[p] = r;
       }
     }
   }
@@ -96,6 +97,40 @@ describe('inflation height', HEAVY, () => {
       expect(diff).toBe(0);
       expect(lt.ridge).toBeLessThan(mask.reduce((s, v) => s + v, 0) / 5);
     }
+  });
+
+  it('R_loc equals the brute force on adversarial masks (pixel, lines, checkerboard, ring, frame-cut, ellipse)', () => {
+    const masks: { mask: Uint8Array; w: number; h: number }[] = [];
+    const make = (w: number, h: number, f: (x: number, y: number) => boolean): void => {
+      const mask = new Uint8Array(w * h);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (f(x, y)) mask[x + w * y] = 1;
+      masks.push({ mask, w, h });
+    };
+    make(9, 9, (x, y) => x === 4 && y === 4);
+    make(40, 40, (x, y) => x === y);
+    make(40, 40, (x, y) => Math.abs(x - y) <= 1);
+    make(60, 30, (x, y) => Math.abs(y - 15 - 0.3 * (x - 30)) <= 1.5);
+    make(30, 30, (x, y) => (x + y) % 2 === 0);
+    make(70, 70, (x, y) => Math.hypot(x - 35, y - 35) <= 30 && Math.hypot(x - 35, y - 35) >= 18);
+    make(50, 40, (x, y) => y < 25 && !(x > 20 && x < 26 && y < 10));
+    make(90, 40, (x, y) => ((x - 45) / 40) ** 2 + ((y - 20) / 15) ** 2 <= 1);
+    make(25, 25, () => true);
+    for (const { mask, w, h } of masks) {
+      const lt = localThickness(mask, w, h);
+      const ref = bruteR(mask, w, h);
+      for (let p = 0; p < w * h; p++) expect(lt.R[p]).toBe(ref[p]);
+    }
+  });
+
+  it('downsampleMask keeps blocks that are at least half inside', () => {
+    const m = new Uint8Array(5 * 3);
+    m[0] = m[1] = m[5] = 1; // the first 2 × 2 block: 3 of 4
+    m[4] = 1; // the last column's block (1 × 2 pixels): 1 of 2
+    const d = downsampleMask(m, 5, 3, 2);
+    expect([d.w, d.h]).toEqual([3, 2]);
+    expect([...d.mask]).toEqual([1, 0, 1, 0, 0, 0]);
+    expect(downsampleMask(m, 5, 3, 1).mask).toEqual(Uint8Array.from(m));
+    expect(() => downsampleMask(m, 5, 3, 0)).toThrow(RangeError);
   });
 
   it('scales with the spacing, treats the frame as outside, and is 0 outside the mask', () => {

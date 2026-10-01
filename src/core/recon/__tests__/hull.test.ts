@@ -74,7 +74,7 @@ describe('front-view rounding (D13)', HEAVY, () => {
     const hullVolume = volumeOf(f, grid);
     const T = inflationTable(a.views, grid, 'XY') as Float32Array;
     expect(T).not.toBeNull();
-    const zc = frontRounding(f, grid, T);
+    const { zc } = frontRounding(f, grid, T);
     const r = (0.8 * cam) / a.views[0].pxPerUnit;
     const ratio = volumeOf(f, grid) / ((4 / 3) * Math.PI * r ** 3);
     expect(Math.abs(ratio - 1)).toBeLessThan(0.03);
@@ -93,7 +93,7 @@ describe('front-view rounding (D13)', HEAVY, () => {
     const { planes } = planeTables(a, grid);
     const f = separableHull(planes, 64);
     const T = inflationTable(a.views, grid, 'XY') as Float32Array;
-    const zc = frontRounding(f, grid, T);
+    const { zc } = frontRounding(f, grid, T);
     const i = 32 + 64 * 32;
     let lo = Infinity;
     let hi = -Infinity;
@@ -107,6 +107,43 @@ describe('front-view rounding (D13)', HEAVY, () => {
     expect(Math.abs(zc[i] - (lo + hi) / 2)).toBeLessThan(grid.voxel);
   });
 
+  it('keeps the depth of an object deeper than its front silhouette is wide (stretch), and is the plain formula otherwise', () => {
+    // A fish seen head-on: 0.4 wide, 0.9 tall, 2 long. The plain formula would cut it to about its width.
+    const fish: Ellipsoid[] = [{ c: [0, 0, 0], r: [0.2, 0.45, 1.0] }];
+    const a = align(fish, ['front', 'left', 'top'], 200);
+    const grid = makeGrid(alignedBounds(a), 96);
+    const { planes } = planeTables(a, grid);
+    const hull = separableHull(planes, 96);
+    const T = inflationTable(a.views, grid, 'XY') as Float32Array;
+    const stretched = Float32Array.from(hull);
+    const { stretch } = frontRounding(stretched, grid, T);
+    expect(stretch).toBeGreaterThan(4);
+    expect(stretch).toBeLessThan(6);
+    const plain = Float32Array.from(hull);
+    expect(frontRounding(plain, grid, T, 1, { preserveDepth: false }).stretch).toBe(1);
+    const depthOf = (f: Float32Array): number => {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let k = 0; k < f.length; k++) {
+        if (f[k] < 0) continue;
+        const z = Math.floor(k / (96 * 96));
+        lo = Math.min(lo, z);
+        hi = Math.max(hi, z);
+      }
+      return (hi - lo) * grid.voxel;
+    };
+    const r = 1 / a.views[0].pxPerUnit; // world units per mask px; the fish is 2 × 200 px long → 400 px
+    expect(Math.abs(depthOf(stretched) / (400 * r) - 1)).toBeLessThan(0.05);
+    expect(depthOf(plain) / (400 * r)).toBeLessThan(0.35);
+    // The sphere and the teddy are not deeper than wide: stretch 1 (up to the sampling of T and the hull).
+    for (const solids of [[sphere(0.5)], centered(TEDDY)]) {
+      const b = align(solids, ['front', 'left', 'top'], 380);
+      const g = makeGrid(alignedBounds(b), 64);
+      const tb = planeTables(b, g);
+      expect(frontRounding(separableHull(tb.planes, 64), g, inflationTable(b.views, g, 'XY') as Float32Array).stretch).toBeLessThan(1.02);
+    }
+  });
+
   it('only lowers the field, leaves empty rays alone, and validates its input', () => {
     const a = align(centered(TEDDY), ['front', 'left', 'top'], 380);
     const grid = makeGrid(alignedBounds(a), 64);
@@ -114,7 +151,7 @@ describe('front-view rounding (D13)', HEAVY, () => {
     const hull = separableHull(planes, 64);
     const f = Float32Array.from(hull);
     const T = inflationTable(a.views, grid, 'XY') as Float32Array;
-    const zc = frontRounding(f, grid, T);
+    const { zc } = frontRounding(f, grid, T);
     let emptyRays = 0;
     for (let k = 0; k < f.length; k++) expect(f[k]).toBeLessThanOrEqual(hull[k]);
     for (let i = 0; i < 64 * 64; i++) {

@@ -11,10 +11,12 @@
 // Ridge pixels: an inside pixel q whose disc (radius d(q)) is not contained in the disc of one of its 8 neighbors
 // n. Exact containment is d(n) ≥ d(q) + |n − q|; on a pixel grid the nearest outside pixel moves in steps, so the
 // discs of a smooth outline's interior pixels miss containment by a fraction of a pixel and almost every pixel
-// would count as a ridge (cost: the sum of their disc areas). A pixel counts as contained when
-// d(n) ≥ d(q) + |n − q| − RIDGE_SLACK·|n − q|; what the slack drops is a sliver at most RIDGE_SLACK px wide at
-// the far side of a disc that a larger neighboring disc covers otherwise (measured in the tests: the disc's
-// hemisphere stays within 2%, the strip's profile stays a semicircle).
+// would count as a ridge (cost: the sum of their disc areas: 2.3 s at 512²). So a disc counts as contained when
+// d(n) ≥ d(q) + (1 − RIDGE_SLACK)·|n − q|. Ridge discs are painted whole; a contained-with-slack disc paints only
+// the part its larger neighbor's disc can miss: the far cap of its outer ring (derived where it is painted). The
+// result is the exact largest inscribed (closed) disc: equal to the brute force over every pixel's disc, in
+// ≈ 100 ms for a 440 × 320 px silhouette instead of seconds. Distances are compared through their squares,
+// which are whole numbers (r² = round(d²)), so a pixel exactly on a disc's rim is always inside it.
 //
 // The photo frame counts as outside (the mask is padded with one background pixel), as in align.ts.
 import { edt2d } from '../kernel/geom/edt';
@@ -66,7 +68,7 @@ export function localThickness(mask: ArrayLike<number>, w: number, h: number, o:
   // Paints R ← max(R, r) over the inside pixels p = q + (dx, dy) with rIn² < dx² + dy² ≤ r² (rIn ≤ 0: the whole
   // disc) and, when `cap`, dx·ux + dy·uy ≤ c0. Iterates along the axis on which the cap is thin.
   const paint = (x: number, y: number, r: number, rIn: number, cap: boolean, ux: number, uy: number, c0: number): void => {
-    const r2 = r * r;
+    const r2 = Math.round(r * r); // d² of the exact EDT is a whole number
     const in2 = rIn > 0 ? rIn * rIn : -1;
     const n = Math.floor(r);
     const byRows = !cap || Math.abs(uy) >= Math.abs(ux);
@@ -156,6 +158,36 @@ export function inflationFromThickness(lt: Pick<LocalThickness, 'd' | 'R'>): Flo
     if (di > 0) T[i] = Math.sqrt(di * Math.max(2 * R[i] - di, di));
   }
   return T;
+}
+
+/**
+ * A mask reduced by a whole factor (≥ 1): each output pixel covers a factor × factor block (cut at the right and
+ * bottom edges) and is inside when at least half of the block's pixels are. Used to compute T at the resolution
+ * of the grid it is sampled onto (hull.ts).
+ */
+export function downsampleMask(mask: ArrayLike<number>, w: number, h: number, factor: number): { mask: Uint8Array<ArrayBuffer>; w: number; h: number } {
+  checkMask(mask, w, h);
+  if (!Number.isInteger(factor) || factor < 1) throw new RangeError(`factor must be an integer ≥ 1, got ${factor}`);
+  if (factor === 1) return { mask: Uint8Array.from(mask, (v) => (v !== 0 ? 1 : 0)), w, h };
+  const W = Math.ceil(w / factor);
+  const H = Math.ceil(h / factor);
+  const out = new Uint8Array(W * H);
+  for (let Y = 0; Y < H; Y++) {
+    const y1 = Math.min(h, (Y + 1) * factor);
+    for (let X = 0; X < W; X++) {
+      const x1 = Math.min(w, (X + 1) * factor);
+      let inside = 0;
+      let all = 0;
+      for (let y = Y * factor; y < y1; y++) {
+        for (let x = X * factor; x < x1; x++) {
+          all++;
+          if (mask[x + w * y] !== 0) inside++;
+        }
+      }
+      out[X + W * Y] = 2 * inside >= all ? 1 : 0;
+    }
+  }
+  return { mask: out, w: W, h: H };
 }
 
 /** The inflation height T of a mask (§2.9.3), world units (`spacing` per pixel). */

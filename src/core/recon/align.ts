@@ -78,7 +78,8 @@ function checkRot90(rot90: number): void {
   if (![0, 1, 2, 3].includes(rot90)) throw new RangeError(`align.rot90 must be 0, 1, 2 or 3, got ${rot90}`);
 }
 
-function checkAlign(a: ViewAlign): void {
+/** Validates a view's `align` (RangeError): scale finite > 0, finite offsets, rot90 0–3, boolean mirror. */
+export function checkAlign(a: ViewAlign): void {
   if (!(a.scale > 0) || !Number.isFinite(a.scale)) throw new RangeError(`align.scale must be a finite number > 0, got ${a.scale}`);
   if (!Number.isFinite(a.dx) || !Number.isFinite(a.dy)) throw new RangeError(`align offsets must be finite, got ${a.dx}, ${a.dy}`);
   checkRot90(a.rot90);

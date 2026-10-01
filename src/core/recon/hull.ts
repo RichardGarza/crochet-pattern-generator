@@ -13,7 +13,7 @@
 // `grid.origin + grid.voxel·(x, y, z)` (Step 0 convention).
 import type { Vec3 } from '../../types/geometry';
 import { PLANE_AXES, sampleField, viewUVToPixel, type AlignedView, type ReconGrid, type ViewPlane } from './align';
-import { inflationHeight } from './inflate';
+import { downsampleMask, inflationHeight } from './inflate';
 
 /** §2.9.3: κ of the multi-view front rounding. */
 export const MULTI_VIEW_KAPPA = 1.0;
@@ -54,28 +54,45 @@ export function separableHull(planes: Partial<Record<ViewPlane, ArrayLike<number
   return f;
 }
 
-/** The inflation height T of an aligned view on its pixel grid (world units). */
-export function viewInflation(view: AlignedView): Float32Array<ArrayBuffer> {
-  return inflationHeight(view.mask, view.w, view.h, { spacing: 1 / view.pxPerUnit });
+/** §2.9.3 helper: T is computed with about this many mask pixels per grid voxel (never finer than the mask). */
+export const T_PIXELS_PER_VOXEL = 2;
+
+/** A view's inflation height on its own (possibly reduced) pixel grid: pixel (i, j) of T covers `factor`² mask px. */
+export interface ViewT {
+  T: Float32Array<ArrayBuffer>;
+  w: number;
+  h: number;
+  factor: number;
+}
+
+/**
+ * The inflation height T of an aligned view, world units. With a `voxel` (world units), the mask is first reduced
+ * by a whole factor so that a voxel spans about `T_PIXELS_PER_VOXEL` pixels: T is sampled onto that grid anyway,
+ * and local thickness costs about the cube of the resolution (a full-frame 512² mask: 0.35 s at full resolution).
+ */
+export function viewInflation(view: AlignedView, voxel?: number): ViewT {
+  const factor = voxel === undefined ? 1 : Math.max(1, Math.floor((view.pxPerUnit * voxel) / T_PIXELS_PER_VOXEL));
+  const small = downsampleMask(view.mask, view.w, view.h, factor);
+  return { T: inflationHeight(small.mask, small.w, small.h, { spacing: factor / view.pxPerUnit }), w: small.w, h: small.h, factor };
 }
 
 /**
  * The inflation height T of the views of one plane sampled on that plane's N × N table grid (same layout as
  * `planeTables`), united by max (front ∪ mirror(back)). `null` when no view lies in the plane. World units.
- * `pixelT` may hold each view's `viewInflation`, by view id (computed when missing).
+ * `pixelT` may hold each view's `viewInflation`, by view id (computed for this grid when missing).
  */
 export function inflationTable(
   views: readonly AlignedView[],
   grid: ReconGrid,
   plane: ViewPlane,
-  pixelT: Readonly<Record<string, Float32Array>> = {},
+  pixelT: Readonly<Record<string, ViewT>> = {},
 ): Float32Array<ArrayBuffer> | null {
   const { N, origin, voxel } = grid;
   const [p, q] = PLANE_AXES[plane];
   let out: Float32Array<ArrayBuffer> | null = null;
   for (const view of views) {
     if (view.convention.plane !== plane) continue;
-    const T = Object.hasOwn(pixelT, view.id) ? pixelT[view.id] : viewInflation(view);
+    const vt = Object.hasOwn(pixelT, view.id) ? pixelT[view.id] : viewInflation(view, voxel);
     const { u, v } = view.convention;
     const table = new Float32Array(N * N);
     for (let j = 0; j < N; j++) {
@@ -85,7 +102,7 @@ export function inflationTable(
         const a = u.sign * (u.axis === p ? wp : wq);
         const b = v.sign * (v.axis === p ? wp : wq);
         const [px, py] = viewUVToPixel(view, a, b);
-        table[i + N * j] = Math.max(0, sampleField(T, view.w, view.h, px, py, 0));
+        table[i + N * j] = Math.max(0, sampleField(vt.T, vt.w, vt.h, px / vt.factor, py / vt.factor, 0));
       }
     }
     if (!out) out = table;
@@ -132,13 +149,28 @@ export function projectionIoU(field: ArrayLike<number>, N: number, plane: ViewPl
   return union === 0 ? 1 : inter / union;
 }
 
+/** Rays whose T is at least this fraction of the largest T measure the depth stretch of `frontRounding`. */
+export const STRETCH_RAYS_T = 0.9;
+
 /**
  * Front-view rounding (§2.9.3), in place: per ray (x, y) the hull's occupied z-interval [z₀, z₁] (sub-voxel: the
  * zero crossings next to the first and last inside samples), z_c = (z₀ + z₁)/2, then
- * `f = min(f, κ·T(x, y) − |z − z_c|)` along the ray. Rays without an inside sample are left alone. Returns z_c per
- * ray (NaN where empty), `zc[x + N·y]`.
+ * `f = min(f, κ·T(x, y) − |z − z_c|/s)` along the ray. Rays without an inside sample are left alone.
+ *
+ * `s` (≥ 1) keeps the depth of objects deeper than their front silhouette is wide: T assumes a round cross-section
+ * (depth = width), which cuts a fish or a dachshund seen head-on to a fraction of its length while the side view
+ * says otherwise. s = the median, over the thickest rays (T ≥ 0.9·max T), of the hull's half-depth (z₁ − z₀)/2
+ * over κ·T; a sphere, a teddy or anything at most as deep as it is wide gives s = 1, i.e. the §2.9.3 formula
+ * itself. With s > 1 every cross-section is the round one stretched along z (exact for an ellipsoid).
+ * `o.preserveDepth: false` forces s = 1. Returns z_c per ray (NaN where empty), `zc[x + N·y]`, and s.
  */
-export function frontRounding(field: Float32Array, grid: ReconGrid, T: ArrayLike<number>, kappa = MULTI_VIEW_KAPPA): Float32Array<ArrayBuffer> {
+export function frontRounding(
+  field: Float32Array,
+  grid: ReconGrid,
+  T: ArrayLike<number>,
+  kappa = MULTI_VIEW_KAPPA,
+  o: { preserveDepth?: boolean } = {},
+): { zc: Float32Array<ArrayBuffer>; stretch: number } {
   const { N, origin, voxel } = grid;
   if (field.length !== N * N * N) throw new RangeError(`field has ${field.length} samples, expected ${N * N * N}`);
   checkTable(T, N, 'T');
@@ -156,6 +188,7 @@ export function frontRounding(field: Float32Array, grid: ReconGrid, T: ArrayLike
     }
   }
   const zc = new Float32Array(NN).fill(Number.NaN);
+  const half = new Float32Array(NN);
   const crossing = (i: number, k: number, k2: number): number => {
     // The zero between samples k (inside) and k2 (outside, or off the lattice), as a z index.
     if (k2 < 0 || k2 >= N) return k;
@@ -169,18 +202,29 @@ export function frontRounding(field: Float32Array, grid: ReconGrid, T: ArrayLike
     const z0 = crossing(i, first[i], first[i] - 1);
     const z1 = crossing(i, last[i], last[i] + 1);
     zc[i] = origin[2] + voxel * 0.5 * (z0 + z1);
+    half[i] = voxel * 0.5 * (z1 - z0);
   }
+  let stretch = 1;
+  if (o.preserveDepth !== false) {
+    let maxT = 0;
+    for (let i = 0; i < NN; i++) if (zc[i] === zc[i] && T[i] > maxT) maxT = T[i];
+    const ratios: number[] = [];
+    for (let i = 0; i < NN; i++) if (zc[i] === zc[i] && maxT > 0 && T[i] >= STRETCH_RAYS_T * maxT) ratios.push(half[i] / (kappa * T[i]));
+    ratios.sort((a, b) => a - b);
+    if (ratios.length > 0) stretch = Math.max(1, ratios[(ratios.length - 1) >> 1]);
+  }
+  const inv = 1 / stretch;
   for (let z = 0; z < N; z++) {
     const wz = origin[2] + voxel * z;
     const base = NN * z;
     for (let i = 0; i < NN; i++) {
       const c = zc[i];
       if (c !== c) continue; // NaN: an empty ray
-      const bound = kappa * T[i] - Math.abs(wz - c);
+      const bound = kappa * T[i] - Math.abs(wz - c) * inv;
       if (bound < field[base + i]) field[base + i] = bound;
     }
   }
-  return zc;
+  return { zc, stretch };
 }
 
 /**

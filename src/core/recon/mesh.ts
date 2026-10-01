@@ -11,7 +11,7 @@
 // 4. Decimation: simplify.ts.
 // 5. Validation through the Step 0 `manifoldFromMesh` (never `new Manifold(mesh)` in a try): status NoError, the
 //    largest part kept, genus, volume > 0; thin features flagged ("crochet flat").
-// 6. Inches: lowest point y = 0, +Y up, front +Z, scaled to the target height.
+// (Step 6, inches, is done by build.ts.)
 import { edt3d } from '../kernel/geom/edt';
 import { manifoldFromMesh } from '../kernel/geom/manifold';
 import { marchingCubes, type IndexedMesh } from '../kernel/geom/marchingCubes';
@@ -42,13 +42,20 @@ export interface CleanReport {
   closed: number;
 }
 
-/** 6-connected labels of the samples where `member[i]` is 1; returns the sizes (label k − 1 at index k − 1). */
-function components6(member: Uint8Array, N: number, labels: Int32Array): number[] {
+/** Samples visited between two yields of the clean-up's flood fills (a few tens of milliseconds). */
+const FLOOD_CHUNK = 1 << 20;
+
+/**
+ * 6-connected labels of the samples where `member[i]` is 1; returns the sizes (label k − 1 at index k − 1). A
+ * generator: it yields every `FLOOD_CHUNK` visited samples, so a caller can let other work run.
+ */
+function* components6(member: Uint8Array, N: number, labels: Int32Array): Generator<void, number[], void> {
   const NN = N * N;
   const total = NN * N;
   const sizes: number[] = [];
   const queue = new Int32Array(total);
   labels.fill(0);
+  let budget = FLOOD_CHUNK;
   for (let s = 0; s < total; s++) {
     if (!member[s] || labels[s]) continue;
     const label = sizes.length + 1;
@@ -73,6 +80,10 @@ function components6(member: Uint8Array, N: number, labels: Int32Array): number[
       if (y < N - 1) visit(i + N);
       if (z > 0) visit(i - NN);
       if (z < N - 1) visit(i + NN);
+      if (--budget === 0) {
+        budget = FLOOD_CHUNK;
+        yield;
+      }
     }
     sizes.push(tail);
   }
@@ -87,6 +98,31 @@ function components6(member: Uint8Array, N: number, labels: Int32Array): number[
  * others become outside (−|f|). Enclosed outside regions become inside (|f|).
  */
 export function cleanVolume(field: Float32Array, N: number, voxel: number, o: { mergeTouching?: boolean } = {}): CleanReport {
+  const run = cleanPhases(field, N, voxel, o);
+  let step = run.next();
+  while (!step.done) step = run.next();
+  return step.value;
+}
+
+/** `cleanVolume` with `between()` awaited between its phases (a worker's `gate.check`, §5.4). */
+export async function cleanVolumeAsync(
+  field: Float32Array,
+  N: number,
+  voxel: number,
+  o: { mergeTouching?: boolean } = {},
+  between: () => Promise<void> = async () => {},
+): Promise<CleanReport> {
+  const run = cleanPhases(field, N, voxel, o);
+  let step = run.next();
+  while (!step.done) {
+    await between();
+    step = run.next();
+  }
+  return step.value;
+}
+
+/** The phases of `cleanVolume`; each `yield` is a point where a job may be cancelled. */
+function* cleanPhases(field: Float32Array, N: number, voxel: number, o: { mergeTouching?: boolean }): Generator<void, CleanReport, void> {
   const total = N * N * N;
   if (field.length !== total) throw new RangeError(`field has ${field.length} samples, expected ${total}`);
   if (!(voxel > 0) || !Number.isFinite(voxel)) throw new RangeError(`voxel must be a finite number > 0, got ${voxel}`);
@@ -100,6 +136,7 @@ export function cleanVolume(field: Float32Array, N: number, voxel: number, o: { 
     const toInside = edt3d(member, [N, N, N]); // voxels to the nearest inside sample
     const dilatedOut = new Uint8Array(total);
     for (let i = 0; i < total; i++) dilatedOut[i] = toInside[i] <= r ? 0 : 1;
+    yield;
     const toOut = edt3d(dilatedOut, [N, N, N]); // voxels to the nearest sample outside the dilation
     for (let i = 0; i < total; i++) {
       if (member[i] || toOut[i] <= r) continue;
@@ -107,10 +144,11 @@ export function cleanVolume(field: Float32Array, N: number, voxel: number, o: { 
       field[i] = Math.max(tiny, 0.5 * voxel * Math.min(1, toOut[i] - r));
       closed++;
     }
+    yield;
   }
 
   const labels = new Int32Array(total);
-  const sizes = components6(member, N, labels);
+  const sizes = yield* components6(member, N, labels);
   let keep = 0;
   for (let k = 1; k < sizes.length; k++) if (sizes[k] > sizes[keep]) keep = k;
   let removed = 0;
@@ -122,12 +160,13 @@ export function cleanVolume(field: Float32Array, N: number, voxel: number, o: { 
       removed++;
     }
   }
+  yield;
 
   // Cavities: outside samples not 6-connected to the lattice border through outside samples.
   const outside = new Uint8Array(total);
   for (let i = 0; i < total; i++) outside[i] = member[i] ? 0 : 1;
   const outLabels = labels; // reuse
-  const outSizes = components6(outside, N, outLabels);
+  const outSizes = yield* components6(outside, N, outLabels);
   const reaches = new Uint8Array(outSizes.length + 1);
   const NN = N * N;
   for (let z = 0; z < N; z++) {
@@ -151,8 +190,10 @@ export function cleanVolume(field: Float32Array, N: number, voxel: number, o: { 
 }
 
 /**
- * Inside samples (`f ≥ 0`) that an opening with the 6-neighbor cross removes: parts at most 2 samples thick
- * ("crochet flat", §2.9.5 step 5). Returns the count and a 0/1 mask.
+ * Inside samples (`f ≥ 0`) of parts at most 2 samples thick ("crochet flat", §2.9.5 step 5): erosion with the
+ * 6-neighbor cross (a slab 2 samples thick vanishes, one 3 thick keeps its middle), then dilation with the 3 × 3 × 3
+ * cube, so the stair-step corners of a smooth surface (within √3 of the eroded core) are not counted. Returns the
+ * count and a 0/1 mask.
  */
 export function thinSamples(field: ArrayLike<number>, N: number): { count: number; mask: Uint8Array<ArrayBuffer> } {
   const NN = N * N;
@@ -174,13 +215,23 @@ export function thinSamples(field: ArrayLike<number>, N: number): { count: numbe
       for (let x = 0; x < N; x++) {
         const i = x + N * y + NN * z;
         if (!inside(i) || eroded[i]) continue;
-        const kept =
-          (x > 0 && eroded[i - 1]) ||
-          (x < N - 1 && eroded[i + 1]) ||
-          (y > 0 && eroded[i - N]) ||
-          (y < N - 1 && eroded[i + N]) ||
-          (z > 0 && eroded[i - NN]) ||
-          (z < N - 1 && eroded[i + NN]);
+        let kept = false;
+        for (let dz = -1; dz <= 1 && !kept; dz++) {
+          const zz = z + dz;
+          if (zz < 0 || zz >= N) continue;
+          for (let dy = -1; dy <= 1 && !kept; dy++) {
+            const yy = y + dy;
+            if (yy < 0 || yy >= N) continue;
+            const row = N * yy + NN * zz;
+            for (let dx = -1; dx <= 1; dx++) {
+              const xx = x + dx;
+              if (xx >= 0 && xx < N && eroded[row + xx]) {
+                kept = true;
+                break;
+              }
+            }
+          }
+        }
         if (!kept) {
           mask[i] = 1;
           count++;
@@ -191,21 +242,13 @@ export function thinSamples(field: ArrayLike<number>, N: number): { count: numbe
   return { count, mask };
 }
 
-/** Marching cubes (closed border) + Taubin, 10 pairs (§2.9.5 steps 2–3), in grid world units. */
+/** Marching cubes (closed border) + Taubin, 10 pairs (§2.9.5 steps 2–3), in grid world units. build.ts runs the two
+ * steps separately (`marchingCubes`, `taubinSmooth`) with a gate check between them. */
 export function meshField(field: ArrayLike<number>, grid: ReconGrid, o: { taubinPairs?: number } = {}): IndexedMesh {
   const { N, origin, voxel } = grid;
   const mesh = marchingCubes(field, [N, N, N], { origin, voxel });
   if (mesh.indices.length > 0 && (o.taubinPairs ?? 10) > 0) taubinSmooth(mesh.positions, mesh.indices, { pairs: o.taubinPairs ?? 10 });
   return mesh;
-}
-
-/** A similarity in place: p ← (p − shift)·scale. */
-export function transformPositions(positions: Float32Array, shift: Readonly<Vec3>, scale: number): void {
-  for (let i = 0; i < positions.length; i += 3) {
-    positions[i] = (positions[i] - shift[0]) * scale;
-    positions[i + 1] = (positions[i + 1] - shift[1]) * scale;
-    positions[i + 2] = (positions[i + 2] - shift[2]) * scale;
-  }
 }
 
 /** The result of `validateMesh`. */

@@ -69,6 +69,32 @@ describe('T3.2 timings', TIMING, () => {
     expect(await bestAsync(3, () => buildRecon(req))).toBeLessThan(800);
   });
 
+  it('3D build N = 128 from three full-frame 512² masks in < 0.8 s (T at grid resolution)', async () => {
+    const full = new Uint8Array(512 * 512).fill(1);
+    const req = request([], (['front', 'left', 'top'] as const).map((label) => ({ label, mask: full })), { N: 128 });
+    expect(await bestAsync(3, () => buildRecon(req))).toBeLessThan(800);
+  });
+
+  it('the longest stretch between two gate checks at N = 128 stays under 150 ms (§5.8 ≈ 50 ms on a quiet machine)', async () => {
+    const req = request(centered(TEDDY), ['front', 'left', 'top', 'back'], { N: 128 });
+    let worst = Infinity;
+    for (let k = 0; k < 2; k++) {
+      let last = performance.now();
+      let gap = 0;
+      const gate = {
+        check: async () => {
+          const now = performance.now();
+          gap = Math.max(gap, now - last);
+          last = now;
+        },
+      };
+      await buildRecon(req, { gate });
+      gap = Math.max(gap, performance.now() - last);
+      worst = Math.min(worst, gap);
+    }
+    expect(worst).toBeLessThan(150);
+  });
+
   it('local thickness of a large 512² silhouette in < 400 ms', () => {
     const m = new Uint8Array(512 * 512);
     for (let y = 0; y < 512; y++) for (let x = 0; x < 512; x++) if (((x - 256) / 220) ** 2 + ((y - 256) / 160) ** 2 <= 1) m[x + 512 * y] = 1;
