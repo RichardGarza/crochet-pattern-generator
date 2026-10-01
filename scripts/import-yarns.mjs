@@ -77,6 +77,8 @@ function readInput(entry, baseDir) {
   const json = JSON.parse(bytes.toString('utf8'));
   if (inp.format === 'makebead') {
     if (!Array.isArray(json.colors)) throw new Error('makebead input has no colors array');
+    // The file states its own licence: it must be the one recorded.
+    if (json.license !== entry.provenance.license) throw new Error(`the input says licence ${String(json.license)}, the provenance records ${entry.provenance.license}`);
     return json.colors.map((c) => ({ name: c.name, number: c.code, hex: c.hex }));
   }
   if (inp.format === 'yarnline') {

@@ -148,6 +148,13 @@ describe('scripts/import-yarns.mjs refuses lines without provenance (§5.6)', ()
     expect(r.out).toMatch(/not unique/);
   });
 
+  it('refuses a makebead input whose own licence differs from the recorded one', () => {
+    const r = run([{ ...good, provenance: { ...good.provenance, license: 'CC0-1.0' } }], 'mismatch');
+    expect(r.status).toBe(1);
+    expect(r.written).toBe(false);
+    expect(r.out).toMatch(/the input says licence CC-BY-4.0/);
+  });
+
   it('a refused line does not stop a good one; bad usage exits 2', () => {
     const r = run([{ ...good, id: 'other', provenance: undefined }, good], 'mixed');
     expect(r.status).toBe(1);

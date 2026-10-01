@@ -227,6 +227,20 @@ describe('caching the prepared image (integration task T1-1)', () => {
     expect(decodes).toBe(3);
   });
 
+  it('ChartCache: concurrent requests share one decode; a failed decode is not cached', async () => {
+    const cache = new ChartCache();
+    let decodes = 0;
+    const slow = (): Promise<RgbaImage> => {
+      decodes++;
+      return new Promise((resolve) => setTimeout(() => resolve(solid(2, 2, '#000000')), 5));
+    };
+    const [a, b] = await Promise.all([cache.image('s', slow), cache.image('s', slow)]);
+    expect(decodes).toBe(1);
+    expect(a.value).toBe(b.value);
+    await expect(cache.image('bad', () => Promise.reject(new Error('boom')))).rejects.toThrow('boom');
+    expect(cache.decoded.has('bad')).toBe(false);
+  });
+
   it('LruCache evicts the least recently used entry', () => {
     const c = new LruCache<string, number>(2);
     c.set('a', 1);

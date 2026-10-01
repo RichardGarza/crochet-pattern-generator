@@ -12,7 +12,7 @@
 import type { ChartEdits, ChartGrid, ChartSettings, ColorRef, PaletteEntry } from '../../types/chart';
 import type { Issue } from '../../types/issues';
 import type { Yarn, YarnLine } from '../../types/yarn';
-import { ciede2000, featureToHex, featureToOklab, hexToFeature, hexToLab, isHex, linearRgbToLab, linearRgbToOklab, oklabToFeature, oklabToLinearRgb, type Color3 } from '../kernel/color';
+import { ciede2000, featureToHex, featureToOklab, hexToFeature, hexToLab, hexToLinearRgb, isHex, linearRgbToLab, linearRgbToOklab, oklabToFeature, oklabToLinearRgb, type Color3 } from '../kernel/color';
 import { canonicalJson, createFnv1a64 } from '../kernel/hash';
 import { compositeCells } from '../image2d/background';
 import { NO_LABEL, despeckleLabels, poolLabels } from '../image2d/labels';
@@ -30,6 +30,12 @@ import { MERGE_DE00, mergeCenters, salientGroups } from './salience';
 
 /** Hand-edit colors closer than this to a center map to that center (§5.5.5). */
 export const OVERRIDE_SAME_DE00 = 2;
+/** At most this many distinct hand-edit colors (labels are bytes, 255 = none). */
+export const OVERRIDE_MAX_COLORS = 200;
+/** A salient group may cover at most this share of the subject (eyes and dots, not regions)… */
+export const SALIENT_MAX_SHARE = 0.003;
+/** …but always at least this many cells. */
+export const SALIENT_MAX_CELLS_MIN = 8;
 
 export type ColorSettings = Pick<
   ChartSettings,
@@ -107,12 +113,12 @@ export function remapEdits(edits: ChartEdits, cols: number, rows: number): Chart
   };
   const valid = (cell: number): boolean => Number.isInteger(cell) && cell >= 0 && cell < edits.baseCols * edits.baseRows;
   const byCell = new Map<number, ColorRef>();
-  for (const o of edits.overrides) if (valid(o.cell)) byCell.set(map(o.cell), o.color);
+  for (const o of edits.overrides ?? []) if (valid(o.cell)) byCell.set(map(o.cell), o.color);
   return {
     baseCols: cols,
     baseRows: rows,
     overrides: [...byCell.entries()].sort((a, b) => a[0] - b[0]).map(([cell, color]) => ({ cell, color })),
-    locked: [...new Set(edits.locked.filter(valid).map(map))].sort((a, b) => a - b),
+    locked: [...new Set((edits.locked ?? []).filter(valid).map(map))].sort((a, b) => a - b),
   };
 }
 
@@ -219,7 +225,10 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
       if (edits.overrides.length > 0 || edits.locked.length > 0) {
         issues.push({ code: 'I_EDITS_REMAPPED', severity: 'info', message: `The hand edits were made on a ${req.edits!.baseCols} × ${req.edits!.baseRows} chart and moved to ${cols} × ${rows} by position.` });
       }
-    } else edits = undefined;
+    } else {
+      issues.push({ code: 'W_EDITS_INVALID', severity: 'warn', message: `The hand edits name an invalid chart size (${String(edits.baseCols)} × ${String(edits.baseRows)}) and were ignored.` });
+      edits = undefined;
+    }
   }
   const overrides: { cell: number; color: ColorRef }[] = [];
   let invalid = 0;
@@ -231,19 +240,41 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
     overrides.push({ cell: o.cell, color: { hex: o.color.hex.toLowerCase(), ...(o.color.yarnId !== undefined ? { yarnId: o.color.yarnId } : {}) } });
   }
   if (invalid > 0) issues.push({ code: 'W_EDITS_INVALID', severity: 'warn', message: `${invalid} hand edit${invalid > 1 ? 's were' : ' was'} outside the chart or had no valid color and ${invalid > 1 ? 'were' : 'was'} ignored.` });
+  // Distinct override colors, in a fixed order (by identity, so the paint order does not matter), at most
+  // OVERRIDE_MAX_COLORS of them (the most used; the rest take the nearest kept color).
   const overrideCell = new Int32Array(n).fill(-1); // index into overrideRefs
-  const overrideRefs: ColorRef[] = [];
-  const refIndex = new Map<string, number>();
+  const byKey = new Map<string, { ref: ColorRef; uses: number }>();
+  const cellKey = new Map<number, string>();
   for (const o of overrides) {
     const key = identity(o.color);
-    let r = refIndex.get(key);
-    if (r === undefined) {
-      r = overrideRefs.length;
-      refIndex.set(key, r);
-      overrideRefs.push(o.color);
-    }
-    overrideCell[o.cell] = r;
+    const e = byKey.get(key);
+    if (e === undefined) byKey.set(key, { ref: o.color, uses: 1 });
+    else e.uses++;
+    cellKey.set(o.cell, key);
   }
+  const keys = [...byKey.keys()].sort();
+  const kept = [...keys].sort((p, q) => byKey.get(q)!.uses - byKey.get(p)!.uses || (p < q ? -1 : 1)).slice(0, OVERRIDE_MAX_COLORS).sort();
+  const overrideRefs: ColorRef[] = kept.map((k) => byKey.get(k)!.ref);
+  const refIndex = new Map(kept.map((k, r) => [k, r]));
+  if (keys.length > kept.length) {
+    const keptLab = overrideRefs.map((r) => hexToLab(r.hex));
+    for (const k of keys) {
+      if (refIndex.has(k)) continue;
+      const lab = hexToLab(byKey.get(k)!.ref.hex);
+      let best = 0;
+      let bd = Infinity;
+      keptLab.forEach((l, r) => {
+        const d = ciede2000(lab, l);
+        if (d < bd) {
+          bd = d;
+          best = r;
+        }
+      });
+      refIndex.set(k, best);
+    }
+    issues.push({ code: 'W_OVERRIDE_COLORS', severity: 'warn', message: `The hand edits use ${keys.length} colors; only ${OVERRIDE_MAX_COLORS} fit in one chart, so the rarest were replaced by the nearest kept color.` });
+  }
+  for (const [cell, key] of cellKey) overrideCell[cell] = refIndex.get(key)!;
 
   // ---- points
   const flat = s.kind === 'flat';
@@ -257,6 +288,13 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
     for (let i = 0; i < n; i++) include[i] = s.background[i] ? 0 : 1;
     points = cellPoints(colors.feat, include).points;
   }
+
+  // Linear colors of the histogram points (flat art), computed when first needed.
+  let pointLinCache: Color3[] | undefined;
+  const pointLin = (p: number): Color3 => {
+    pointLinCache ??= Array.from({ length: hist!.points.n }, (_, q) => linFromFeature([hist!.points.f[q * 3], hist!.points.f[q * 3 + 1], hist!.points.f[q * 3 + 2]]));
+    return pointLinCache[p];
+  };
 
   // ---- assignment of cells to centers
   let thin: Uint8Array<ArrayBuffer> | undefined;
@@ -278,7 +316,28 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
         }
         if (blend) {
           const lin = centers.map((c) => linFromFeature(c.f));
-          removed = removeBlendCenters(px, w, h, lin, (q) => centers[q].protected);
+          // Spread of a center's own colors along the mix a → b (linear light), from the histogram bins.
+          const spread = (c: number, ea: number, eb: number): number => {
+            const A = lin[ea];
+            const B = lin[eb];
+            const AB = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+            const len2 = AB[0] ** 2 + AB[1] ** 2 + AB[2] ** 2;
+            if (!(len2 > 0)) return 0;
+            let sw = 0;
+            let st = 0;
+            let stt = 0;
+            for (let p = 0; p < hist!.points.n; p++) {
+              if (pc[p] !== c) continue;
+              const L = pointLin(p);
+              const tt = ((L[0] - A[0]) * AB[0] + (L[1] - A[1]) * AB[1] + (L[2] - A[2]) * AB[2]) / len2;
+              const wp = hist!.points.w[p];
+              sw += wp;
+              st += wp * tt;
+              stt += wp * tt * tt;
+            }
+            return sw > 0 ? Math.sqrt(Math.max(0, stt / sw - (st / sw) ** 2)) : 0;
+          };
+          removed = removeBlendCenters(px, w, h, lin, (q) => centers[q].protected, spread);
           if (removed.length > 0) return { cell, pop: new Float64Array(k), removed };
         }
         const keep = new Set<number>();
@@ -319,13 +378,19 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
   };
 
   // Yarn modes: every hand-edit color maps to its own yarn when the candidates have it, else to the nearest shade.
-  const overrideYarns: number[] = mode === 'yarns' ? overrideRefs.map((ref) => (ref.yarnId !== undefined ? candIndex.get(ref.yarnId) : undefined) ?? nearestYarnIn(ref.hex, cand!)!.index) : [];
+  // A hand edit without its own yarn is protected, so it never maps to a textured shade (§2.4.4).
+  const overrideYarns: number[] =
+    mode === 'yarns'
+      ? overrideRefs.map((ref) => (ref.yarnId !== undefined ? candIndex.get(ref.yarnId) : undefined) ?? (nearestYarnIn(ref.hex, cand!, notTextured) ?? nearestYarnIn(ref.hex, cand!)!).index)
+      : [];
 
   // p-median sums over bins (§2.4.4): the points pooled to ΔEOKr2 0.02 cubes when there are many.
   let pooled: WeightedPoints | undefined;
   const binned = (): WeightedPoints => (pooled ??= points.n > CURVE_MAX_POINTS ? coarsePoints(points, CURVE_BIN) : points);
 
   let centers: Center[] = [];
+  /** Auto mode: the center each override color went to (objects survive filtering). */
+  const overrideTarget: Center[] = [];
   let autoK: Colorized['autoK'];
   let autoQ: Quantized | undefined;
   const freeK = (): number => {
@@ -346,30 +411,34 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
       const keep = mergeCenters(labs, q.weights, () => false);
       centers = keep.map((c) => ({ f: [q.centers[c * 3], q.centers[c * 3 + 1], q.centers[c * 3 + 2]], protected: false, role: 'color', salient: false }));
     }
-    // ---- hand-edit colors as protected centers
-    for (const ref of overrideRefs) {
+    // ---- hand-edit colors as protected centers: an existing center within ΔE00 2, or one named by the same
+    // yarn (its nearest reference shade), takes the edit; otherwise the edit's exact color is inserted.
+    const namedId = centers.map((c) => nearestYarnToLab(featureToLab(...c.f), reference)?.yarn.id);
+    overrideRefs.forEach((ref, r) => {
       const lab = hexToLab(ref.hex);
       const refYarn = ref.yarnId !== undefined ? (findYarn(ref.yarnId, req.lines, reference) ?? undefined) : undefined;
       let hit = -1;
       for (let c = 0; c < centers.length && hit < 0; c++) {
         const cc = centers[c];
-        if (cc.role === 'override') {
-          if (cc.hex === ref.hex && (cc.yarn?.id ?? undefined) === ref.yarnId) hit = c;
-          continue;
-        }
-        if (ciede2000(lab, featureToLab(...cc.f)) < OVERRIDE_SAME_DE00) hit = c;
+        // Any existing center — an inserted hand-edit color too — within ΔE00 2 or of the same yarn.
+        if (ciede2000(lab, featureToLab(...cc.f)) < OVERRIDE_SAME_DE00 || (ref.yarnId !== undefined && (cc.yarn?.id ?? namedId[c]) === ref.yarnId)) hit = c;
       }
-      if (hit >= 0 && centers[hit].role === 'color') {
-        centers[hit] = { ...centers[hit], protected: true };
+      if (hit >= 0 && centers[hit].role === 'color' && !centers[hit].protected) {
+        centers[hit] = { ...centers[hit], protected: true, ...(refYarn !== undefined && centers[hit].yarn === undefined ? { yarn: refYarn } : {}) };
       } else if (hit < 0) {
         centers.push({ f: hexToFeature(ref.hex), hex: ref.hex, ...(refYarn ? { yarn: refYarn } : {}), protected: true, role: 'override', salient: false });
+        hit = centers.length - 1;
       }
-    }
+      overrideTarget[r] = centers[hit];
+    });
   } else {
     // ---- p-median over the candidates (§2.4.4); hand-edit yarns are always chosen
-    const fixed = [...new Set(overrideYarns)];
+    const fixed = [...new Set(overrideYarns)].sort((x, y) => x - y);
     if (points.n > 0 || fixed.length > 0) {
-      const k = Math.max(fixed.length, Math.min(points.n > 0 ? freeK() : 1, cand!.length));
+      // A custom CSV is a fixed palette: with max colors 'auto' every row is a candidate color (unused ones drop
+      // out); p-median picks a subset only when the budget is smaller than the palette (§2.4.4).
+      const want = points.n === 0 ? 1 : settings.paletteMode === 'custom' && auto ? cap : freeK();
+      const k = Math.max(fixed.length, Math.min(want, cand!.length));
       centers = yarnCenters(pMedian(binned(), candFeat, k, { fixed }).chosen, fixed);
     }
   }
@@ -431,14 +500,32 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
       eligible[i] = 1;
       assignedLab.set(centerLab[solidOf(a.cell[i], i)], i * 3);
     }
+    // Mixes of two colors — the background yarn included — are edge cells, not details.
     const centerLin = centers.map((c) => linFromFeature(c.f));
+    if (bg !== undefined) centerLin.push(hexToLinearRgb(bg.hex));
     const mixed = (i: number): boolean => isMixOf([colors.lin[i * 3], colors.lin[i * 3 + 1], colors.lin[i * 3 + 2]], centerLin);
-    const groups = salientGroups(cols, rows, cellLab, assignedLab, colors.lin, eligible, mixed);
+    // Details are small: a group larger than 0.3% of the subject (at least 8 cells) is a region the palette
+    // simply does not cover, not an eye (research 06 §2.4).
+    let subject = 0;
+    for (let i = 0; i < n; i++) if (a.cell[i] >= 0) subject++;
+    const maxCells = Math.max(SALIENT_MAX_CELLS_MIN, Math.ceil(SALIENT_MAX_SHARE * subject));
+    let groups = salientGroups(cols, rows, cellLab, assignedLab, colors.lin, eligible, mixed).filter((g) => g.cells.length <= maxCells);
+    if (mode === 'yarns') {
+      // A group whose nearest solid yarn is the one most of its cells already have gains nothing.
+      groups = groups.filter((g) => {
+        const m = nearestYarnToLab(g.lab, cand!, notTextured);
+        if (m === null) return false;
+        const counts = new Map<number, number>();
+        for (const i of g.cells) counts.set(a.cell[i], (counts.get(a.cell[i]) ?? 0) + 1);
+        const [top] = [...counts.entries()].sort((x, y) => y[1] - x[1] || x[0] - y[0])[0];
+        return centers[top]?.candidate !== m.index;
+      });
+    }
     if (groups.length > 0) {
       const protectedCount = centers.filter((c) => c.protected).length;
       const room = Math.max(0, cap - 1 - protectedCount);
       const take = groups.slice(0, room);
-      for (const g of groups) for (const i of g.cells) salient[i] = 1;
+      for (const g of take) for (const i of g.cells) salient[i] = 1;
       if (take.length > 0) {
         if (mode === 'auto') {
           for (const g of take) {
@@ -461,8 +548,9 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
           centers = centers.map((c) => (salientYarns.includes(c.candidate!) ? { ...c, protected: true, salient: true } : c));
           const fresh = salientYarns.filter((j) => !centers.some((c) => c.candidate === j));
           if (fresh.length > 0) {
-            const allFixed = [...fixed, ...fresh];
-            const k = Math.max(allFixed.length, centers.length);
+            const allFixed = [...fixed, ...fresh].sort((x, y) => x - y);
+            // The detail is added within the budget; a chosen yarn is displaced only when the budget is full.
+            const k = Math.max(allFixed.length, Math.min(cap, centers.length + fresh.length));
             centers = yarnCenters(pMedian(binned(), candFeat, Math.min(k, cand!.length), { fixed: allFixed }).chosen, fixed).map((c) =>
               fresh.includes(c.candidate!) ? { ...c, protected: true, salient: true } : c,
             );
@@ -481,8 +569,14 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
   for (const g of salientTargets) {
     const k = g.center !== undefined ? centers.indexOf(g.center) : centers.findIndex((c) => c.candidate === g.candidate);
     if (k < 0) continue;
+    const fk = centers[k].f;
     for (const i of g.cells) {
       if (a.cell[i] < 0 || a.cell[i] === k) continue;
+      // Only when the detail's color is nearer than the cell's own (or the cell's own is a textured yarn).
+      const old = centers[a.cell[i]];
+      const dNew = (colors.feat[i * 3] - fk[0]) ** 2 + (colors.feat[i * 3 + 1] - fk[1]) ** 2 + (colors.feat[i * 3 + 2] - fk[2]) ** 2;
+      const dOld = (colors.feat[i * 3] - old.f[0]) ** 2 + (colors.feat[i * 3 + 1] - old.f[1]) ** 2 + (colors.feat[i * 3 + 2] - old.f[2]) ** 2;
+      if (!(dNew < dOld || old.yarn?.textured === true)) continue;
       a.pop[a.cell[i]]--;
       a.cell[i] = k;
       a.pop[k]++;
@@ -492,9 +586,10 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
   // ---- hand edits win their cells
   const overrideCenter = overrideRefs.map((ref) => {
     if (mode === 'yarns') return centers.findIndex((c) => c.candidate === overrideYarns[overrideRefs.indexOf(ref)]);
+    const target = overrideTarget[overrideRefs.indexOf(ref)];
+    const k = target !== undefined ? centers.indexOf(target) : -1;
+    if (k >= 0) return k;
     const lab = hexToLab(ref.hex);
-    const exact = centers.findIndex((c) => c.role === 'override' && c.hex === ref.hex && (c.yarn?.id ?? undefined) === ref.yarnId);
-    if (exact >= 0) return exact;
     let best = -1;
     let bd = Infinity;
     centers.forEach((c, k) => {
@@ -537,7 +632,9 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
     }
   });
   let bgEntry = -1;
-  if (bg !== undefined) {
+  let bgFinal = 0;
+  for (let i = 0; i < n; i++) if (a.cell[i] < 0) bgFinal++;
+  if (bg !== undefined && bgFinal > 0) {
     // The background shares an entry with a color center of the same yarn (or, in auto mode, within ΔE00 5).
     const bgLab = hexToLab(bg.hex);
     let share = -1;
@@ -549,10 +646,10 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
     if (share >= 0) {
       bgEntry = share;
       entries[share].background = true;
-      entries[share].pop += bgCells;
+      entries[share].pop += bgFinal;
     } else {
       bgEntry = entries.length;
-      entries.push({ background: true, pop: bgCells });
+      entries.push({ background: true, pop: bgFinal });
     }
   }
   const order = entries.map((_, q) => q).sort((p, q) => entries[q].pop - entries[p].pop || p - q);
@@ -592,11 +689,14 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
     }
     const hex = cc.hex ?? featureToHex(...cc.f);
     const lab = hexToLab(hex);
-    const named = cc.yarn !== undefined ? { yarn: cc.yarn, deltaE00: ciede2000(lab, hexToLab(cc.yarn.hex)) } : nearestYarnToLab(lab, reference, cc.protected ? notTextured : undefined);
-    const out: PaletteEntry = { code, hex, name: named !== null ? named.yarn.name + (named.deltaE00 > APPROXIMATE_DE00 ? ' (approximate)' : '') : `Color ${code}`, role };
+    // Named by the center's nearest shade; the ΔE00 shown is the cluster mean's (§2.4.4) — a hand edit's own
+    // color for an override (its cells' picture colors are what it replaced).
+    const named = cc.yarn !== undefined ? { yarn: cc.yarn } : nearestYarnToLab(lab, reference, cc.protected ? notTextured : undefined);
+    const shownDe = named !== null ? ciede2000(cc.role === 'override' ? lab : meanLab, hexToLab(named.yarn.hex)) : 0;
+    const out: PaletteEntry = { code, hex, name: named !== null ? named.yarn.name + (shownDe > APPROXIMATE_DE00 ? ' (approximate)' : '') : `Color ${code}`, role };
     if (named !== null) {
       out.yarn = named.yarn;
-      out.deltaE00 = round2(named.deltaE00);
+      out.deltaE00 = round2(shownDe);
     }
     if (cc.protected) out.protected = true;
     return out;
@@ -639,10 +739,12 @@ export function toChartGrid(c: Colorized): ChartGrid {
   return { cols: c.cols, rows: c.rows, labels: c.labels, palette: c.palette };
 }
 
-/** A hash of the colors decided (integers and strings only, §5.8): labels and the palette. */
+/** A hash of the colors decided (§5.8): labels, protect and salient masks, and the palette (ΔE00 rounded to 0.01). */
 export function colorizeHash(c: Colorized): string {
   const h = createFnv1a64();
-  h.update(canonicalJson({ cols: c.cols, rows: c.rows, palette: c.palette.map((p) => [p.code, p.hex, p.yarn?.id ?? null, p.role ?? null, p.protected ?? false]) }));
+  h.update(canonicalJson({ cols: c.cols, rows: c.rows, palette: c.palette.map((p) => [p.code, p.hex, p.yarn?.id ?? null, p.role ?? null, p.protected ?? false, p.deltaE00 ?? null]) }));
   h.update(c.labels);
+  h.update(c.protect);
+  h.update(c.salient);
   return h.hex();
 }

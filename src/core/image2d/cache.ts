@@ -33,6 +33,9 @@ export class LruCache<K, V> {
     this.map.set(key, value);
     while (this.map.size > this.capacity) this.map.delete(this.map.keys().next().value as K);
   }
+  delete(key: K): void {
+    this.map.delete(key);
+  }
   clear(): void {
     this.map.clear();
   }
@@ -50,7 +53,8 @@ export interface CacheLookup<V> {
  * a source switch back and forth stays cached, nothing more.
  */
 export class ChartCache {
-  readonly decoded: LruCache<string, RgbaImage>;
+  /** Decodes by source id; a pending decode is shared by concurrent requests and forgotten if it fails. */
+  readonly decoded: LruCache<string, Promise<RgbaImage>>;
   readonly prepared: LruCache<string, PreparedWork>;
   constructor(o: { decoded?: number; prepared?: number } = {}) {
     this.decoded = new LruCache(o.decoded ?? 2);
@@ -64,16 +68,24 @@ export class ChartCache {
   async image(sourceId: string | undefined, decode: () => Promise<RgbaImage>): Promise<CacheLookup<RgbaImage>> {
     if (sourceId !== undefined && sourceId !== '') {
       const cached = this.decoded.get(sourceId);
-      if (cached !== undefined) return { value: cached, key: sourceId, hit: true };
-      const value = await decode();
-      this.decoded.set(sourceId, value);
-      return { value, key: sourceId, hit: false };
+      if (cached !== undefined) return { value: await cached, key: sourceId, hit: true };
+      const pending = decode();
+      this.decoded.set(sourceId, pending);
+      try {
+        return { value: await pending, key: sourceId, hit: false };
+      } catch (e) {
+        if (this.decoded.get(sourceId) === pending) this.decoded.delete(sourceId);
+        throw e;
+      }
     }
     const value = await decode();
     return { value, key: contentId(value), hit: false };
   }
 
-  /** `prepareWork(req)`, cached under `prepareKey(sourceId ?? contentId(req.image), req)`. */
+  /**
+   * `prepareWork(req)`, cached under `prepareKey(sourceId ?? contentId(req.image), req)`. The cached object is
+   * shared: callers must treat it (and its typed arrays) as read-only.
+   */
   prepare(req: Pick<SampleRequest, 'image' | 'crop' | 'settings' | 'stats' | 'backgroundEdits'>, sourceId?: string): CacheLookup<PreparedWork> {
     const id = sourceId !== undefined && sourceId !== '' ? sourceId : contentId(req.image);
     const key = prepareKey(id, req);

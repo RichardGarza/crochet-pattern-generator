@@ -6,7 +6,8 @@
 // of the normalized curve, so the knee is never K = 2). A center is an anti-aliasing blend when
 //   - its color lies between two other centers — within ΔEOKr2 0.05 of a mix of them, 5–95% of the way, mixed
 //     in linear light (optical mixing, resampling) or in sRGB (how most renderers anti-alias) — and
-//   - at least half of its pixels have both of those centers within 2 px (a 5 × 5 window).
+//   - at least half of its pixels have both of those centers within 1 px (3 × 3), or within 2 px (5 × 5) when
+//     the center is a ramp — its own colors spread along the mix (std of the mix fraction ≥ 0.05, `spread`).
 // Such centers are removed one at a time (the most edge-bound first). Protected centers (hand edits, salient
 // details) are never removed. Photos are never passed here.
 // `isMixOf` is the same color test for one color; the salience guard uses it so that cells straddling an edge
@@ -17,7 +18,11 @@ import { NO_LABEL } from '../image2d/labels';
 export const BLEND_MAX_DE = 0.05;
 export const BLEND_MIN_T = 0.05;
 export const BLEND_MIN_EDGE_SHARE = 0.5;
-const RADIUS = 2;
+/** Both ends must lie within this many pixels — 1 px for a center of one color, 2 px for a ramp (see below). */
+const RADIUS_NARROW = 1;
+const RADIUS_RAMP = 2;
+/** A center whose colors spread this much along the mix (std of the mix fraction) is a ramp. */
+export const BLEND_RAMP_SPREAD = 0.05;
 
 const featureOfLin = (c: Color3): Color3 => {
   const [L, a, b] = linearRgbToOklab(c[0], c[1], c[2]);
@@ -69,7 +74,7 @@ function mixPairs(c: Color3, lin: readonly Color3[], usable: (k: number) => bool
 }
 
 /** Share of the given pixels that have both labels a and b within the window. */
-function edgeShare(labels: Uint8Array, w: number, h: number, pixels: readonly number[], a: number, b: number): number {
+function edgeShare(labels: Uint8Array, w: number, h: number, pixels: readonly number[], a: number, b: number, RADIUS: number): number {
   if (pixels.length === 0) return 0;
   let on = 0;
   for (const i of pixels) {
@@ -95,10 +100,18 @@ function edgeShare(labels: Uint8Array, w: number, h: number, pixels: readonly nu
 
 /**
  * Finds and removes anti-aliasing centers from a flat-art pixel label image (labels < lin.length, NO_LABEL =
- * none). `lin` = the centers' linear RGB. Relabels `labels` in place (a removed center's pixels go to the nearer
+ * none). `lin` = the centers' linear RGB; `spread(c, a, b)` = the std of the mix fraction of c's own colors
+ * between a and b (omitted: every center is one color). Relabels `labels` in place (a removed center's pixels go to the nearer
  * end) and returns the removed centers in removal order.
  */
-export function removeBlendCenters(labels: Uint8Array, w: number, h: number, lin: readonly Color3[], isProtected: (k: number) => boolean): number[] {
+export function removeBlendCenters(
+  labels: Uint8Array,
+  w: number,
+  h: number,
+  lin: readonly Color3[],
+  isProtected: (k: number) => boolean,
+  spread?: (c: number, a: number, b: number) => number,
+): number[] {
   const k = lin.length;
   const pixels: number[][] = lin.map(() => []);
   for (let i = 0; i < labels.length; i++) if (labels[i] !== NO_LABEL && labels[i] < k) pixels[labels[i]].push(i);
@@ -113,7 +126,10 @@ export function removeBlendCenters(labels: Uint8Array, w: number, h: number, lin
       // Every pair that explains the color is tried (an end may itself be a blend still alive); the pair whose
       // colors surround the center's pixels best counts.
       for (const pair of mixPairs(lin[c], lin, (q) => q !== c && alive[q])) {
-        const share = edgeShare(labels, w, h, pixels[c], pair.a, pair.b);
+        // A ramp (blurred or resampled edge: its pixels spread along the mix) may be 2–3 px wide; a center of
+        // one color between two others must touch both within 1 px — a designed 2 px outline does not.
+        const radius = spread !== undefined && spread(c, pair.a, pair.b) >= BLEND_RAMP_SPREAD ? RADIUS_RAMP : RADIUS_NARROW;
+        const share = edgeShare(labels, w, h, pixels[c], pair.a, pair.b, radius);
         if (share >= BLEND_MIN_EDGE_SHARE && (pick === undefined || share > pick.share)) pick = { c, a: pair.a, b: pair.b, share };
       }
     }

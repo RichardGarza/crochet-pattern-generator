@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { addNoise, fillDisc, fromFn, solid, upscale } from '../../../test/rgba';
+import { addNoise, fillDisc, fillRect, fromFn, solid, upscale } from '../../../test/rgba';
 import type { ChartEdits, ChartSettings, ColorRef } from '../../../types/chart';
 import type { RgbaImage } from '../../../types/geometry';
 import type { YarnLine } from '../../../types/yarn';
 import { ciede2000, deltaE00Hex, hexToLab } from '../../kernel/color';
 import { sampleImage } from '../../image2d/sample';
-import { SPRITE_PALETTE, characterSprite, logo, photoLike, randomSprite } from '../../image2d/__tests__/images';
+import { SPRITE_PALETTE, blur3, characterSprite, logo, photoLike, randomSprite } from '../../image2d/__tests__/images';
 import { getShippedLine } from '../../yarn/lines';
 import { nearestYarnIn } from '../../yarn/match';
 import { colorize, colorizeHash, paletteCode, remapEdits, toChartGrid, type ColorizeRequest } from '../colorize';
@@ -406,5 +406,129 @@ describe('helpers', () => {
     const g = toChartGrid(c);
     expect(g.cols * g.rows).toBe(g.labels.length);
     expect(g.palette).toBe(c.palette);
+  });
+});
+
+describe('review regressions (T1.2)', () => {
+  /** The logo on a transparent background. */
+  const transparentLogo = (): RgbaImage => {
+    const img = logo(600, 400);
+    for (let o = 0; o < img.data.length; o += 4) {
+      // Paper → transparent; ink coverage → alpha (straight ink color).
+      const k = (255 - img.data[o + 1]) / (255 - 0x10);
+      img.data.set([0xc8, 0x10, 0x2e, Math.round(255 * Math.min(1, k))], o);
+    }
+    return img;
+  };
+
+  it('G14 on a transparent background: the background + 1 color, auto and line mode', () => {
+    for (const over of [{}, { paletteMode: 'line' as const, lineIds: ['red-heart-super-saver'] }, { maxColors: 4 }]) {
+      const { c } = chart(transparentLogo(), over);
+      expect(c.palette.length).toBe(2);
+      expect(c.palette.filter((p) => p.role === 'background').length).toBe(1);
+      expect(c.palette.some((p) => p.protected)).toBe(false);
+    }
+  });
+
+  it('a blurred logo (2–4 px ramps) still gives 2 colors; a designed 2 px outline is kept', () => {
+    expect(chart(blur3(blur3(logo(600, 400))), { imageKind: 'flat' }).c.palette.length).toBe(2);
+    expect(chart(blur3(blur3(blur3(logo(600, 400)))), { imageKind: 'flat' }).c.palette.length).toBe(2);
+    // Red disc with a 2 px pink outline on white, one pixel per stitch.
+    const img = solid(160, 160, '#ffffff');
+    fillDisc(img, 80, 80, 52, '#ff9fae');
+    fillDisc(img, 80, 80, 50, '#e00020');
+    const { c } = chart(img, { imageKind: 'flat' }, { gauge: SQUARE, stitches: 160 });
+    expect(c.palette.map((p) => p.hex).sort()).toEqual(['#e00020', '#ff9fae', '#ffffff']);
+  });
+
+  it('yarn-line mode with auto K: a one-color subject on transparency keeps its own nearest yarn', () => {
+    const img = fromFn(120, 120, () => [0, 0, 0, 0]);
+    fillDisc(img, 60, 60, 40, '#3a6fd9');
+    const { c } = chart(img, { paletteMode: 'line', lineIds: ['red-heart-super-saver'] });
+    expect(c.palette.map((p) => p.yarn!.id).sort()).toEqual(['red-heart-super-saver:0311', nearestYarnIn('#3a6fd9', RHSS.yarns)!.yarn.id].sort());
+  });
+
+  it('a palette far from the picture does not collapse it into "details"', () => {
+    const csv = '#ff0000,Red\n#00aa00,Green\n#0000ff,Blue\n#ffffff,White\n#000000,Black\n#ffff00,Yellow';
+    for (const maxColors of [3, 6, 'auto'] as const) {
+      const { c } = chart(photoLike(300, 300, 6), { paletteMode: 'custom', customCsv: csv, maxColors });
+      expect(c.salient.reduce((x, y) => x + y, 0)).toBeLessThan(0.01 * c.labels.length);
+      expect(c.palette.length).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('hand edits over every background cell leave no empty background entry; codes stay in population order', () => {
+    const img = fromFn(120, 120, () => [0, 0, 0, 0]);
+    fillDisc(img, 60, 60, 30, '#3a6fd9');
+    const { s } = chart(img);
+    const green: ColorRef = { hex: '#00ff00' };
+    const overrides = [];
+    for (let i = 0; i < s.cols * s.rows; i++) if (s.background[i]) overrides.push({ cell: i, color: green });
+    const { c } = chart(img, {}, { edits: { baseCols: s.cols, baseRows: s.rows, overrides, locked: [] } });
+    expect(c.palette.some((p) => p.role === 'background')).toBe(false);
+    expectEColor(c);
+    const pop = c.palette.map((_, k) => c.labels.filter((l) => l === k).length);
+    for (let k = 1; k < pop.length; k++) expect(pop[k]).toBeLessThanOrEqual(pop[k - 1]);
+  });
+
+  it('at most 200 hand-edit colors (labels are bytes): the rest take the nearest kept one, with a warning', () => {
+    const { s } = chart(photoLike(300, 360, 2));
+    const overrides = Array.from({ length: 300 }, (_, k) => ({ cell: k * 7, color: { hex: `#${(k * 55871).toString(16).padStart(6, '0').slice(-6)}` } }));
+    const { c } = chart(photoLike(300, 360, 2), {}, { edits: { baseCols: s.cols, baseRows: s.rows, overrides, locked: [] } });
+    expectEColor(c);
+    expect(c.palette.length).toBeLessThan(255);
+    expect(c.issues.map((i) => i.code)).toContain('W_OVERRIDE_COLORS');
+  });
+
+  it('the paint order of hand edits does not change the result', () => {
+    const { s } = chart(photoLike(300, 360, 2));
+    const o = ['#e01b2e', '#00a0ff', '#f7e017', '#6b3fa0'].flatMap((hex, k) => Array.from({ length: 5 }, (_, q) => ({ cell: 40 * k + q, color: { hex } })));
+    const e1: ChartEdits = { baseCols: s.cols, baseRows: s.rows, overrides: o, locked: [] };
+    const e2: ChartEdits = { ...e1, overrides: [...o].reverse() };
+    for (const over of [{ maxColors: 6 }, { maxColors: 6, paletteMode: 'line' as const, lineIds: ['red-heart-super-saver'] }]) {
+      expect(colorizeHash(chart(photoLike(300, 360, 2), over, { edits: e2 }).c)).toBe(colorizeHash(chart(photoLike(300, 360, 2), over, { edits: e1 }).c));
+    }
+  });
+
+  it('a hand edit never maps to a textured shade unless it names that yarn', () => {
+    const { s } = chart(photoLike(200, 200, 3));
+    const grey: ColorRef = { hex: '#9e9e93' };
+    const line = { paletteMode: 'line' as const, lineIds: ['red-heart-super-saver'], maxColors: 6 };
+    const a = chart(photoLike(200, 200, 3), line, { edits: { baseCols: s.cols, baseRows: s.rows, overrides: [{ cell: 0, color: grey }], locked: [] } }).c;
+    expect(a.palette[a.labels[0]].yarn!.textured).toBeUndefined();
+    const named: ColorRef = { hex: '#9e9e93', yarnId: 'red-heart-super-saver:0400' };
+    const b = chart(photoLike(200, 200, 3), line, { edits: { baseCols: s.cols, baseRows: s.rows, overrides: [{ cell: 0, color: named }], locked: [] } }).c;
+    expect(b.palette[b.labels[0]].yarn!.id).toBe('red-heart-super-saver:0400');
+  });
+
+  it('a hand edit with the yarn id a center is named after maps to that center (§5.5.5)', () => {
+    const plain = chart(photoLike(300, 360, 2), { maxColors: 6 }).c;
+    const a = plain.palette[0];
+    const { s } = chart(photoLike(300, 360, 2));
+    const ref: ColorRef = { hex: a.yarn!.hex, yarnId: a.yarn!.id };
+    const { c } = chart(photoLike(300, 360, 2), { maxColors: 6 }, { edits: { baseCols: s.cols, baseRows: s.rows, overrides: [{ cell: 3, color: ref }], locked: [] } });
+    expect(c.palette.filter((p) => p.yarn?.id === a.yarn!.id).length).toBe(1);
+    expect(c.palette[c.labels[3]].yarn!.id).toBe(a.yarn!.id);
+    // Two hand edits of one color but different yarn ids share one entry too.
+    const two = chart(photoLike(300, 360, 2), { maxColors: 6 }, {
+      edits: { baseCols: s.cols, baseRows: s.rows, overrides: [{ cell: 1, color: { hex: '#FF00FF' } }, { cell: 2, color: { hex: '#ff00ff', yarnId: 'red-heart-super-saver:0390' } }], locked: [] },
+    }).c;
+    expect(two.labels[1]).toBe(two.labels[2]);
+  });
+
+  it('edits with an invalid size are dropped with W_EDITS_INVALID; remapEdits tolerates missing arrays', () => {
+    const { c } = chart(photoLike(100, 100, 1), {}, { edits: { baseCols: 0, baseRows: 5, overrides: [{ cell: 0, color: { hex: '#00ff00' } }], locked: [] } });
+    expect(c.issues.map((i) => i.code)).toContain('W_EDITS_INVALID');
+    expect(remapEdits({ baseCols: 2, baseRows: 2 } as ChartEdits, 4, 4)).toEqual({ baseCols: 4, baseRows: 4, overrides: [], locked: [] });
+  });
+
+  it('a custom CSV with max colors auto is a fixed palette: every row that is nearest to some cell is used', () => {
+    const img = solid(120, 120, '#ff0000');
+    fillRect(img, 0, 0, 60, 60, '#0000ff');
+    fillRect(img, 60, 60, 60, 60, '#00aa00');
+    fillRect(img, 0, 60, 60, 60, '#ffff00');
+    const csv = '#ff0000,Red\n#00aa00,Green\n#0000ff,Blue\n#ffff00,Yellow\n#000000,Black';
+    const { c } = chart(img, { paletteMode: 'custom', customCsv: csv });
+    expect(c.palette.map((p) => p.name).sort()).toEqual(['Blue', 'Green', 'Red', 'Yellow']);
   });
 });
