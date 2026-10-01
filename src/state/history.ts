@@ -167,48 +167,73 @@ function setKey(target: Record<string, unknown>, key: string, value: unknown): v
   Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
 }
 
-function applyAt(node: unknown, patch: Patch, depth: number): unknown {
-  const { path, op } = patch;
-  if (depth === path.length) {
-    if (op === 'replace') return patch.value as unknown;
-    throw unresolved(patch);
-  }
-  const key = path[depth];
-  const last = depth === path.length - 1;
-  if (Array.isArray(node)) {
-    const index = typeof key === 'number' ? key : Number(key);
-    const limit = last && op === 'add' ? node.length : node.length - 1;
-    if (!Number.isInteger(index) || index < 0 || index > limit) throw unresolved(patch);
-    const copy = node.slice() as unknown[];
-    if (!last) copy[index] = applyAt(node[index], patch, depth + 1);
-    else if (op === 'replace') copy[index] = patch.value as unknown;
-    else if (op === 'add') copy.splice(index, 0, patch.value as unknown);
-    else copy.splice(index, 1);
-    return Object.freeze(copy);
-  }
-  if (isPlainObject(node)) {
-    const name = String(key);
-    const exists = Object.hasOwn(node, name);
-    if (last ? (op === 'add') === exists : !exists) throw unresolved(patch);
-    const copy: Record<string, unknown> = { ...node };
-    if (!last) setKey(copy, name, applyAt(node[name], patch, depth + 1));
-    else if (op === 'remove') delete copy[name];
-    else setKey(copy, name, patch.value as unknown);
-    return Object.freeze(copy);
-  }
-  throw unresolved(patch);
+/** The index a patch names in `array`, checked: `0 … length - 1`, or up to `length` for an insertion. */
+function indexIn(array: readonly unknown[], key: string | number, patch: Patch, inserting: boolean): number {
+  const index = typeof key === 'number' ? key : Number(key);
+  if (!Number.isInteger(index) || index < 0 || index > (inserting ? array.length : array.length - 1)) throw unresolved(patch);
+  return index;
 }
 
 /**
- * Applies patches in order and returns the new document. `doc` is not changed: only the objects and arrays
- * on the way to a patched place are copied (and frozen); every other branch is shared, and patch values go in
- * as they are — so an undo puts back the very objects a step removed. A patch that does not fit the document
- * (a missing key, an index out of range) throws, and nothing is applied.
+ * Applies patches in order and returns the new document. `doc` is not changed: every object or array on the
+ * way to a patched place is copied once (and frozen at the end), however many patches pass through it; every
+ * other branch is shared, and patch values go in as they are — so an undo puts back the very objects a step
+ * removed. A patch that does not fit the document (a missing key, an index out of range) throws, and nothing
+ * is applied.
  */
 export function applyPatches<T>(doc: T, patches: readonly Patch[]): T {
-  let result: unknown = doc;
-  for (const patch of patches) result = applyAt(result, patch, 0);
-  return result as T;
+  if (patches.length === 0) return doc;
+  /** The copies made by this call: the only objects it may write to. */
+  const copies = new Set<object>();
+  const writable = (node: unknown, patch: Patch): unknown[] | Record<string, unknown> => {
+    if (typeof node === 'object' && node !== null && copies.has(node)) return node as unknown[] | Record<string, unknown>;
+    let copy: unknown[] | Record<string, unknown>;
+    if (Array.isArray(node)) copy = node.slice() as unknown[];
+    else if (isPlainObject(node)) copy = { ...node };
+    else throw unresolved(patch);
+    copies.add(copy);
+    return copy;
+  };
+
+  let root: unknown = doc;
+  for (const patch of patches) {
+    const { path, op } = patch;
+    if (path.length === 0) {
+      if (op !== 'replace') throw unresolved(patch);
+      root = patch.value as unknown;
+      continue;
+    }
+    root = writable(root, patch);
+    let node = root as unknown[] | Record<string, unknown>;
+    for (let depth = 0; depth < path.length - 1; depth++) {
+      if (Array.isArray(node)) {
+        const index = indexIn(node, path[depth], patch, false);
+        const child = writable(node[index], patch);
+        node[index] = child;
+        node = child;
+      } else {
+        const name = String(path[depth]);
+        if (!Object.hasOwn(node, name)) throw unresolved(patch);
+        const child = writable(node[name], patch);
+        setKey(node, name, child);
+        node = child;
+      }
+    }
+    const key = path[path.length - 1];
+    if (Array.isArray(node)) {
+      const index = indexIn(node, key, patch, op === 'add');
+      if (op === 'replace') node[index] = patch.value as unknown;
+      else if (op === 'add') node.splice(index, 0, patch.value as unknown);
+      else node.splice(index, 1);
+    } else {
+      const name = String(key);
+      if ((op === 'add') === Object.hasOwn(node, name)) throw unresolved(patch);
+      if (op === 'remove') delete node[name];
+      else setKey(node, name, patch.value as unknown);
+    }
+  }
+  for (const copy of copies) Object.freeze(copy);
+  return root as T;
 }
 
 // ---- recipes
