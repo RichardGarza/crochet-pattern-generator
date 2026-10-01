@@ -17,13 +17,13 @@ describe('DESIGN §2.7.2 — the four renderings of Row 11', () => {
     const line = row(11, ops, 40, { side: 'RS', arrow: '←', start: turn, cues: [{ kind: 'color', text: 'carry B' }] });
     expect(renderLine(line, us)).toBe('Row 11 (RS) ←: Ch 1, turn. 4 sc A, 3 sc B, 33 sc A (40 sts) · carry B');
   });
-  it('US verbose: … With A, sc in first 4 sts; change to B, sc in next 3 sts; change to A, sc in last 33 sts. (40 sc)', () => {
+  it('US verbose (with the reading arrow, §2.7.2 v1.4): … With A, sc in first 4 sts; change to B, sc in next 3 sts; change to A, sc in last 33 sts. (40 sc)', () => {
     const line = row(11, ops, 40, { side: 'RS', arrow: '←', start: turn });
-    expect(renderLine(line, vus)).toBe('Row 11 (RS): Ch 1, turn. With A, sc in first 4 sts; change to B, sc in next 3 sts; change to A, sc in last 33 sts. (40 sc)');
+    expect(renderLine(line, vus)).toBe('Row 11 (RS) ←: Ch 1, turn. With A, sc in first 4 sts; change to B, sc in next 3 sts; change to A, sc in last 33 sts. (40 sc)');
   });
   it('UK verbose: the same through the terminology table (sc → dc)', () => {
     const line = row(11, ops, 40, { side: 'RS', arrow: '←', start: turn });
-    expect(renderLine(line, vuk)).toBe('Row 11 (RS): Ch 1, turn. With A, dc in first 4 sts; change to B, dc in next 3 sts; change to A, dc in last 33 sts. (40 dc)');
+    expect(renderLine(line, vuk)).toBe('Row 11 (RS) ←: Ch 1, turn. With A, dc in first 4 sts; change to B, dc in next 3 sts; change to A, dc in last 33 sts. (40 dc)');
     expect(renderLine(line, uk)).toBe('Row 11 (RS) ←: Ch 1, turn. 4 dc A, 3 dc B, 33 dc A (40 sts)');
   });
 });
@@ -129,11 +129,11 @@ describe('chart lines (2D)', () => {
     expect(renderFoundation(first, { terms: 'uk' })).toBe('Foundation: With A, ch 40; join with ss in first ch to form a ring (do not twist).');
     expect(renderLine(first, us)).toBe('Rnd 1 (RS) ←: Ch 1 (does not count as a st), 4 sc A, 3 sc B, 33 sc A; join with sl st in first sc. (40 sts) · carry B');
     expect(renderLine(first, vus)).toBe(
-      'Rnd 1 (RS): Ch 1 (does not count as a st), with A, sc in first 4 ch; change to B, sc in next 3 ch; change to A, sc in last 33 ch; join with sl st in first sc. (40 sc) · carry B',
+      'Rnd 1 (RS) ←: Ch 1 (does not count as a st), with A, sc in first 4 ch; change to B, sc in next 3 ch; change to A, sc in last 33 ch; join with sl st in first sc. (40 sc) · carry B',
     );
     const next = rnd(2, parseBody('40 sc A'), 40, { side: 'RS', arrow: '←', start: { k: 'join' }, join: {} });
     expect(renderLine(next, us)).toBe('Rnd 2 (RS) ←: Ch 1, 40 sc A; join with sl st in first sc. (40 sts)');
-    expect(renderLine(next, vus)).toBe('Rnd 2 (RS): Ch 1, with A, sc in each st around; join with sl st in first sc. (40 sc)');
+    expect(renderLine(next, vus)).toBe('Rnd 2 (RS) ←: Ch 1, with A, sc in each st around; join with sl st in first sc. (40 sc)');
   });
 
   it('a C2C row: the label keeps its arrow and tags; verbose spells out the tiles', () => {
@@ -162,7 +162,7 @@ describe('chart lines (2D)', () => {
     const line = row(5, [sc, ...times(3, blo), long, ...times(2, long), blo, sc], 9, { side: 'RS', arrow: '←', colorHeader: 'B' });
     expect(renderLine(line, us)).toBe('Row 5 (B, RS) ←: sc, 3 sc BLO, 3 dc FLO 2 rows below, sc BLO, sc (9 sts)');
     expect(renderLine(line, vus)).toBe(
-      'Row 5 (B, RS): Sc in first st, sc in back loop only of next 3 sts, dc in front loop of each of next 3 sts 2 rows below, sc in back loop only of next st, sc in last st. (9 sts)',
+      'Row 5 (B, RS) ←: Sc in first st, sc in back loop only of next 3 sts, dc in front loop of each of next 3 sts 2 rows below, sc in back loop only of next st, sc in last st. (9 sts)',
     );
     expect(renderLine(line, uk)).toBe('Row 5 (B, RS) ←: dc, 3 dc BLO, 3 tr FLO 2 rows below, dc BLO, dc (9 sts)');
   });
@@ -220,5 +220,22 @@ describe('options, kinds and extras', () => {
     expect(toTerms('Row 2: Ch 3 (counts as dc), dc in next st, sc2tog, hdc in next 2 sts, sl st in last st. Gauge: 16 sc = 4".', 'uk')).toBe(
       'Row 2: Ch 3 (counts as tr), tr in next st, dc2tog, htr in next 2 sts, ss in last st. Tension: 16 dc = 4".',
     );
+  });
+});
+
+describe('docKind (integration S1, T2 task 2)', () => {
+  it('a tapestry round and an amigurumi round with the same ops print differently by docKind', () => {
+    const line = rnd(3, parseBody('3 sc A, 3 sc B'), 6, { side: 'RS', arrow: '←', start: { k: 'join' }, join: {} });
+    const chart = renderLine(line, { ...us, docKind: '2d' });
+    const toy = renderLine(line, { ...us, docKind: '3d' });
+    expect(chart).toBe('Rnd 3 (RS) ←: Ch 1, 3 sc A, 3 sc B; join with sl st in first sc. (6 sts)');
+    expect(toy).toBe('Rnd 3 (RS) ←: Ch 1 (does not count), sc A in same st as join, 2 sc A, 3 sc B; join with sl st in first sc. (6)');
+    expect(chart).not.toBe(toy);
+    // Without docKind the side/arrow make it a chart round (inferDocKind); docKind wins over the inference.
+    expect(renderLine(line, us)).toBe(chart);
+    const bare = rnd(3, parseBody('3 sc A, 3 sc B'), 6, { start: { k: 'join' }, join: {} });
+    expect(renderLine(bare, { ...us, docKind: '2d' })).toBe('Rnd 3: Ch 1, 3 sc A, 3 sc B; join with sl st in first sc. (6 sts)');
+    expect(renderLine(bare, us)).toBe('Rnd 3: Ch 1 (does not count), sc A in same st as join, 2 sc A, 3 sc B; join with sl st in first sc. (6)');
+    expect(renderLine(line, { ...vus, docKind: '2d' })).not.toBe(renderLine(line, { ...vus, docKind: '3d' }));
   });
 });

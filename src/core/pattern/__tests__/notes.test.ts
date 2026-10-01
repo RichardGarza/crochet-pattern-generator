@@ -186,3 +186,17 @@ describe('word chart (§2.7.2)', () => {
     expect(wordChartRuns(rnd(2, times(6, sc), 6))).toBe('6 sc');
   });
 });
+
+describe('notesFor ctx.rounds and ctx.stitch (integration S1, T2 task 3: now in the frozen ctx)', () => {
+  it('rounds reach the §2.7.5 drift sentence; stitch reaches “1 hdc” and “Ch 2”', () => {
+    const drift = notesFor('tapestry-round', { ...rh, roundLean: { mode: 'note', stPerRnd: 0.5 }, rounds: 60 }).join(' ');
+    expect(drift).toContain('shift about 30 sts to the right between Rnd 1 and Rnd 60');
+    const hdc = notesFor('flat-graph', { ...rh, stitch: 'hdc' });
+    expect(hdc[0]).toBe('Each square = 1 hdc.');
+    expect(hdc[2]).toBe('Ch 2 at the beginning of a row does not count as a stitch.');
+  });
+  it('the drift is rounded half up (§0.1 roundHalfUp): 0.5 st × 5 rounds = 2.5 → 3', () => {
+    expect(notesFor('tapestry-round', { ...rh, roundLean: { mode: 'note', stPerRnd: 0.5 }, rounds: 6 }).join(' ')).toContain('about 3 sts');
+    expect(notesFor('tapestry-round', { ...rh, roundLean: { mode: 'note', stPerRnd: 0.3 }, rounds: 6 }).join(' ')).toContain('about 2 sts');
+  });
+});

@@ -132,3 +132,38 @@ describe('specialStitchesFor', () => {
     expect(specialStitchesFor([], 'us')).toEqual([]);
   });
 });
+
+describe('decMethod (integration S1, T2 task 1): only the decrease the pattern uses', () => {
+  const ami: Line[] = [rnd(1, times(6, sc), null, { start: { k: 'mr', n: 6 } }), rnd(2, [...times(4, sc), dec], 6)];
+  const abbrs = (m?: 'invdec' | 'sc2tog'): string[] => abbreviationsFor(ami, 'us', m).map((a) => a.abbr);
+  it('sc2tog: no invdec in the abbreviations or the special stitches', () => {
+    expect(abbrs('sc2tog')).toContain('sc2tog');
+    expect(abbrs('sc2tog')).not.toContain('invdec');
+    const special = specialStitchesFor(ami, 'us', 'sc2tog');
+    expect(special.map((s) => s.name)).toEqual(['Magic ring (MR)', 'Decrease (dec, sc2tog)']);
+    expect(JSON.stringify(special)).not.toMatch(/invisible|invdec/i);
+    expect(specialStitchesFor(ami, 'uk', 'sc2tog').map((s) => s.name)).toEqual(['Magic ring (MR)', 'Decrease (dec, dc2tog)']);
+  });
+  it('invdec: no sc2tog, and the invisible decrease without the sc2tog alternative', () => {
+    expect(abbrs('invdec')).toContain('invdec');
+    expect(abbrs('invdec')).not.toContain('sc2tog');
+    const special = specialStitchesFor(ami, 'us', 'invdec');
+    expect(special[1].name).toBe('Invisible decrease (dec, invdec)');
+    expect(special[1].text).not.toMatch(/sc2tog/i);
+  });
+  it('absent: both, as before', () => {
+    expect(abbrs()).toEqual(expect.arrayContaining(['invdec', 'sc2tog']));
+    expect(specialStitchesFor(ami, 'us')[1].text).toMatch(/Sc2tog works too/);
+  });
+  it('dec3 with sc2tog lists sc3tog; BLO decreases are sc2tog through the loop whatever the method', () => {
+    const lines: Line[] = [rnd(1, times(6, sc), null, { start: { k: 'mr', n: 6 } }), rnd(2, [sc, sc, sc, dec3], 6, { stated: 4 })];
+    expect(abbreviationsFor(lines, 'us', 'sc2tog').map((a) => a.abbr)).toEqual(expect.arrayContaining(['dec3', 'sc3tog']));
+    expect(specialStitchesFor(lines, 'us', 'sc2tog').map((s) => s.name)).toContain('Decrease over 3 stitches (dec3, sc3tog)');
+    const blo: Line[] = [rnd(1, times(6, sc), null, { start: { k: 'mr', n: 6 } }), rnd(2, inLoop(times(3, dec), 'BLO'), 6, { stated: 3 })];
+    expect(specialStitchesFor(blo, 'us', 'invdec').map((s) => s.name)).toEqual(['Magic ring (MR)', 'BLO sc2tog']);
+  });
+  it('an unknown method is read as absent; never throws', () => {
+    expect(abbreviationsFor(ami, 'us', 'x' as never)).toEqual(abbreviationsFor(ami, 'us'));
+    expect(() => specialStitchesFor(null as never, 'us', 'sc2tog')).not.toThrow();
+  });
+});

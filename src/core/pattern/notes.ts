@@ -7,6 +7,7 @@
 // `notesFor` is the frozen entry point; `notesWith` takes two more facts T2's writers know (the stitch of a
 // flat chart and the number of rounds of a tapestry tube).
 import type { ChartSettings, Hand, NotesForFn, Terms } from '../../types';
+import { roundHalfUp } from '../gauge/round';
 import { toTerms } from './terminology';
 
 export type NotesKind = Parameters<NotesForFn>[0];
@@ -139,8 +140,9 @@ function tapestryRound(ctx: NotesContext): string[] {
     const tail = "Choose 'Pre-skew the chart' or 'Turn every round' in the settings to avoid it.";
     const rounds = ctx.rounds;
     if (typeof rounds === 'number' && Number.isInteger(rounds) && rounds >= 2) {
-      const shift = Math.round(Math.abs(per) * (rounds - 1));
-      notes.push(`Stitches worked in rounds lean: expect the design to shift about ${shift} sts to the ${side} between Rnd 1 and Rnd ${rounds}. ${tail}`);
+      const shift = roundHalfUp(Math.abs(per) * (rounds - 1));
+      const amount = shift === 0 ? 'less than 1 st' : shift === 1 ? 'about 1 st' : `about ${shift} sts`;
+      notes.push(`Stitches worked in rounds lean: expect the design to shift ${amount} to the ${side} between Rnd 1 and Rnd ${rounds}. ${tail}`);
     } else {
       notes.push(`Stitches worked in rounds lean: expect the design to shift about ${num(Math.abs(per))} st per round to the ${side}. ${tail}`);
     }

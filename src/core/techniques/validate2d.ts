@@ -14,18 +14,32 @@
 //   E_FOLD        a folded range of rows whose rows differ from the line in ops (as read from the chart in each
 //                 row's direction) or in strand cues (when the pattern prints them), that does not read the same
 //                 in both directions, that keeps a side or an arrow, or that includes Row 1
+//                 — and the same for folded tapestry rounds (which keep their side and arrow) and for the rows a
+//                 block repeat note stands for (`Rows 13–24: rep Rows 1–12.`: an even block in flat work, the
+//                 rows equal to the block's in the chart, read in their own direction, with the same cues)
+//   E_C2C_TILES   C2C rows (c2c.ts, validateC2C)
+//   E_BORDER      border rounds (border.ts, validateBorder)
 //   W_LONG_CARRY  a color carried across more than 8 stitches (bobbin techniques)
-//   W_ROW_COLORS  more than 6 strands worked in one row (§2.4.3)
+//   W_ROW_COLORS  more than 6 strands worked in one row (§2.4.3; tapestry: colors held in the line)
 //
-// plus every rule of the Step 0 line validator (`validateLines`, docKind '2d', with the palette's codes).
-// E_C2C_TILES, E_MOSAIC_ADJ and E_BORDER come with their writers (T2.2, T2.4).
-import type { ChartGrid, Hand, Issue, Line, PatternDoc, Technique2D } from '../../types';
+// Rounds of `sc_tapestry_round` get the row rules in their own terms: E_RUN_SUM (C sts, every chart row once,
+// read in the round's direction, pre-skewed as `roundLean` says, with its side and arrow), E_FOUNDATION (a ring of
+// ch C, then joined rounds, or turned with ch 1). Plus every rule of the Step 0 line validator (`validateLines`,
+// docKind '2d', with the palette's codes). E_MOSAIC_ADJ comes with the mosaic writer (T2.4).
+import type { ChartGrid, ChartSettings, Hand, Issue, Line, Op, PatternDoc, ResolvedGauge, Technique2D } from '../../types';
+import { roundHalfUp } from '../gauge/round';
 import { type LineIssueCode, validateLines } from '../pattern/validateLine';
 import { isOp, lineProduced } from '../pattern/ops';
+import { validateBorder } from './border';
+import { type Corner, cornerFromArrow, cornerOf } from './c2cCorners';
+import { validateC2C } from './c2c';
+import { lineRepeat } from './repeats';
+import { LEAN_LIMIT, type RoundLean, roundLabels, roundLeanOf, roundReadsRightToLeft, roundShift, roundSide } from './scRound';
 import { type FlatStitch, directionIndependent, flatFoundation, flatRowOps, labelCode, TURN_CHAINS } from './scFlat';
 import { CARRY_MAX, ROW_STRANDS_WARN, type StrandPlan, planStrands, readsRightToLeft, rowCueTexts } from './strands';
+import { type TapestryPlan, planFlatTapestry, planTapestry, tapestryCueTexts } from './tapestry';
 
-export type Validate2DCode = LineIssueCode | 'E_RUN_SUM' | 'E_FOLD' | 'W_LONG_CARRY' | 'W_ROW_COLORS';
+export type Validate2DCode = LineIssueCode | 'E_RUN_SUM' | 'E_FOLD' | 'E_C2C_TILES' | 'E_BORDER' | 'W_LONG_CARRY' | 'W_ROW_COLORS';
 
 /** No chart side may be longer (R15, §2.13). */
 export const CHART_SIDE_LIMIT = 1000;
@@ -96,15 +110,15 @@ export function validateChart(grid: ChartGrid): Issue[] {
   return issues;
 }
 
-const JOIN_CUE = /^\s*join\s+(\S+)\s+\(bobbin\s+\d+\)\s*$/;
-const CARRY_CUE = /^\s*carry\s+(.+?)\s*$/;
+const JOIN_CUE = /^\s*join\s+(\S+)(?:\s+\(bobbin\s+\d+\))?\s*$/;
+const LIST_CUE = /^\s*(?:carry|cut)\s+(.+?)\s*$/;
 
-/** The color codes a color cue names (`join B (bobbin 2)`, `carry A, C`). */
+/** The color codes a color cue names (`join B (bobbin 2)`, `join B`, `carry A, C`, `cut C`). */
 export function cueColors(text: string): string[] {
   const join = JOIN_CUE.exec(text);
   if (join !== null) return [join[1]];
-  const carry = CARRY_CUE.exec(text);
-  if (carry !== null) return carry[1].split(',').map((code) => code.trim()).filter((code) => code !== '');
+  const list = LIST_CUE.exec(text);
+  if (list !== null) return list[1].split(',').map((code) => code.trim()).filter((code) => code !== '');
   return [];
 }
 
@@ -116,8 +130,18 @@ export interface Validate2DInput {
   lines: readonly Line[];
   /** `Piece.id`, copied into `where.piece`. */
   piece?: string;
-  /** The strand plan the lines were written with; computed when left out (flat-row techniques). */
+  /** The strand plan the lines were written with; computed when left out (graphgan techniques). */
   plan?: StrandPlan;
+  /** `sc_tapestry_round`: the lean setting the rounds were written with (inferred from the rounds when left out). */
+  roundLean?: ChartSettings['roundLean'];
+  /** `c2c`: the start corner (inferred from Row 1's arrow when left out). */
+  startCorner?: ChartSettings['startCorner'];
+  /** With the gauge the border's S_side, S_top (C2C) and round count are checked against §2.7.10. */
+  gauge?: Pick<ResolvedGauge, 'cell' | 'wSc' | 'hSc'>;
+  /** The border setting (width and color code); checked when given. */
+  border?: { widthIn: number; color?: string };
+  /** Color codes outside the chart's palette the pattern may use (a border yarn). */
+  extraCodes?: readonly string[];
 }
 
 function readable(line: unknown): line is Line {
@@ -126,12 +150,14 @@ function readable(line: unknown): line is Line {
   return Number.isInteger(l.n) && l.n >= 1 && (l.nEnd === undefined || (Number.isInteger(l.nEnd) && l.nEnd >= l.n)) && Array.isArray(l.ops) && l.ops.every((op) => isOp(op)) && (l.cues === undefined || (Array.isArray(l.cues) && l.cues.every((cue) => typeof cue === 'object' && cue !== null && typeof cue.text === 'string')));
 }
 
+const OP_FIELDS = ['k', 'st', 'n', 'loop', 'color', 'into'] as const;
+
 function sameLineOps(a: Line['ops'], b: Line['ops']): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     const x = a[i] as Record<string, unknown>;
     const y = b[i] as Record<string, unknown>;
-    for (const key of new Set([...Object.keys(x), ...Object.keys(y)])) if (x[key] !== y[key]) return false;
+    for (const key of OP_FIELDS) if (x[key] !== y[key]) return false;
   }
   return true;
 }
@@ -146,7 +172,7 @@ export function validate2D(i: Validate2DInput): Issue[] {
   if (chartIssues.some((x) => x.code === 'E_SANITY')) return chartIssues;
   const grid = i.chart;
   const lines: readonly Line[] = Array.isArray(i.lines) ? i.lines : [];
-  const codes = grid.palette.map((entry) => entry.code);
+  const codes = [...grid.palette.map((entry) => entry.code), ...(Array.isArray(i.extraCodes) ? i.extraCodes.filter((c) => typeof c === 'string') : [])];
   const piece = typeof i.piece === 'string' ? i.piece : undefined;
   const at = (line: Line): Issue['where'] => (piece === undefined ? { line: line.n } : { piece, line: line.n });
   const issues: Issue[] = [...chartIssues];
@@ -170,17 +196,55 @@ export function validate2D(i: Validate2DInput): Issue[] {
     if (insane.has(line) || !Array.isArray(line.cues)) continue;
     for (const cue of line.cues) {
       if (cue.kind !== 'color') continue;
-      for (const code of cueColors(cue.text)) if (!palette.has(code)) issues.push(issue('E_COLOR', `Row ${line.n}: the cue “${cue.text}” names color ${code}, which is not in the palette`, at(line)));
+      for (const code of cueColors(cue.text)) if (!palette.has(code)) issues.push(issue('E_COLOR', `${line.kind === 'rnd' || line.kind === 'border' ? 'Rnd' : 'Row'} ${line.n}: the cue “${cue.text}” names color ${code}, which is not in the palette`, at(line)));
     }
   }
 
-  if (!FLAT_ROW_TECHNIQUES.has(i.technique)) return issues;
+  const hand: Hand = i.hand === 'left' ? 'left' : 'right';
+  if (FLAT_ROW_TECHNIQUES.has(i.technique)) issues.push(...flatRules(i, grid, lines, insane, lineIssues, piece, at));
+  else if (i.technique === 'sc_tapestry_round') issues.push(...roundRules(i, grid, lines, insane, palette, piece, at));
+  else if (i.technique === 'c2c') {
+    const first = lines.find((line) => !insane.has(line) && line.kind === 'c2c' && line.n === 1);
+    const corner: Corner = i.startCorner !== undefined ? cornerOf(i.startCorner, hand) : (cornerFromArrow(hand, first?.arrow) ?? cornerOf(undefined, hand));
+    issues.push(...validateC2C(grid, lines.filter((line) => !insane.has(line)), { hand, corner, piece }));
+  }
+  if (i.technique !== 'mosaic_overlay') {
+    issues.push(
+      ...validateBorder({
+        chart: grid,
+        technique: i.technique,
+        hand,
+        lines: lines.filter((line) => !insane.has(line)),
+        piece,
+        lastColor: lastStitchColor(grid, i.technique, hand),
+        gauge: i.gauge,
+        border: i.border,
+      }),
+    );
+  }
+  return issues;
+}
+
+/** The color code of the panel's last stitch (flat rows: the end of Row R in its direction), else undefined. */
+export function lastStitchColor(grid: ChartGrid, technique: Technique2D, hand: Hand): string | undefined {
+  if (!FLAT_ROW_TECHNIQUES.has(technique) || grid.rows < 1) return undefined;
+  const ops = flatRowOps(grid, grid.rows, hand, flatStitchOf(technique));
+  return ops.length === 0 ? undefined : ops[ops.length - 1].color;
+}
+
+type At = (line: Line) => Issue['where'];
+
+/** The flat-row rules (sc / hdc graphgan, sc tapestry). */
+function flatRules(i: Validate2DInput, grid: ChartGrid, lines: readonly Line[], insane: ReadonlySet<Line>, lineIssues: readonly Issue[], piece: string | undefined, at: At): Issue[] {
+  const issues: Issue[] = [];
+  const palette = new Set([...grid.palette.map((entry) => entry.code), ...(i.extraCodes ?? [])]);
   const stitch = flatStitchOf(i.technique);
   const W = grid.cols;
   const R = grid.rows;
   const rows = lines.filter((line) => typeof line === 'object' && line !== null && line.kind === 'row');
 
-  // E_RUN_SUM: every row is W stitches, and the rows cover 1..R once each, in order.
+  // E_RUN_SUM: every row is W stitches, and the rows cover 1..R once each, in order (a block repeat note covers
+  // the rows it stands for).
   let expected = 1;
   for (const line of rows) {
     if (insane.has(line)) {
@@ -199,6 +263,8 @@ export function validate2D(i: Validate2DInput): Issue[] {
       issues.push(issue('E_RUN_SUM', `Row ${line.n} comes again after Row ${expected - 1}: the rows must cover the chart once, in order`, at(line)));
     }
     expected = Math.max(expected, end + 1);
+    const rep = lineRepeat(line);
+    if (rep !== null && rep.from === expected && rep.to >= rep.from) expected = rep.to + 1;
   }
   if (expected <= R) {
     const missing = expected === R ? `Row ${R} is` : `Rows ${expected}–${R} are`;
@@ -247,8 +313,14 @@ export function validate2D(i: Validate2DInput): Issue[] {
   }
 
   // E_FOLD, W_LONG_CARRY, W_ROW_COLORS: against the chart and its strand plan.
+  const tapestry = i.technique === 'sc_tapestry';
   const plan = i.plan ?? planStrands(grid, { hand: i.hand });
+  const tplan: TapestryPlan | null = tapestry ? planFlatTapestry(grid, i.hand) : null;
   const code = (label: number): string => labelCode(grid, label);
+  const cueOf = (k: number): string => {
+    if (tplan !== null) return tplan.lines[k - 1] === undefined ? '' : tapestryCueTexts(tplan.lines[k - 1], code).join(' · ');
+    return plan.rows[k - 1] === undefined ? '' : rowCueTexts(plan.rows[k - 1], code).join(' · ');
+  };
   // A pattern written without strand cues (writer option `cues: false`) folds by ops alone.
   const cuesPrinted = rows.some((line) => !insane.has(line) && (line.cues ?? []).some((cue) => cue.kind === 'color'));
   for (const line of rows) {
@@ -263,8 +335,7 @@ export function validate2D(i: Validate2DInput): Issue[] {
         problems.push(`Row ${k} of the chart is not this row`);
         break;
       }
-      const planRow = plan.rows[k - 1];
-      const rowCues = planRow === undefined || !cuesPrinted ? '' : rowCueTexts(planRow, code).join(' · ');
+      const rowCues = !cuesPrinted ? '' : cueOf(k);
       if (rowCues !== lineCues) {
         problems.push(`Row ${k} has other cues (${rowCues === '' ? 'none' : rowCues})`);
         break;
@@ -272,8 +343,17 @@ export function validate2D(i: Validate2DInput): Issue[] {
     }
     for (const problem of problems) issues.push(issue('E_FOLD', `Rows ${line.n}–${line.nEnd}: ${problem}`, at(line)));
   }
+  issues.push(
+    ...repeatRules(rows, insane, at, {
+      word: 'Row',
+      even: true,
+      count: R,
+      ops: (k) => flatRowOps(grid, k, i.hand, stitch),
+      cues: (k) => (cuesPrinted ? cueOf(k) : ''),
+    }),
+  );
 
-  if (i.technique !== 'sc_tapestry') {
+  if (!tapestry) {
     for (const row of plan.rows) {
       for (const seg of row.segments) {
         for (const gap of seg.gaps) {
@@ -292,7 +372,8 @@ export function validate2D(i: Validate2DInput): Issue[] {
       }
     }
   }
-  for (const row of plan.rows) {
+  if (tplan !== null) issues.push(...heldWarnings(tplan, 'Row', piece));
+  for (const row of tapestry ? [] : plan.rows) {
     if (row.segments.length > ROW_STRANDS_WARN) {
       issues.push(
         issue('W_ROW_COLORS', `Row ${row.k}: ${row.segments.length} strands are worked in this row (more than ${ROW_STRANDS_WARN}); consider merging small areas`, {
@@ -306,10 +387,281 @@ export function validate2D(i: Validate2DInput): Issue[] {
   return issues;
 }
 
-/** `validate2D` for every piece of a 2D pattern (`doc.chart` and `doc.hand`); [] for a 3D pattern. */
-export function validateDoc2D(doc: PatternDoc): Issue[] {
+/** W_ROW_COLORS for tapestry lines that hold more than 6 colors. */
+function heldWarnings(plan: TapestryPlan, word: 'Row' | 'Rnd', piece: string | undefined): Issue[] {
+  const out: Issue[] = [];
+  for (const line of plan.lines) {
+    if (line.held.length > ROW_STRANDS_WARN) {
+      out.push(
+        issue('W_ROW_COLORS', `${word} ${line.k}: ${line.held.length} colors are carried in this ${word === 'Row' ? 'row' : 'round'} (more than ${ROW_STRANDS_WARN}); consider merging colors`, {
+          ...(piece === undefined ? {} : { piece }),
+          line: line.k,
+        }),
+      );
+    }
+  }
+  return out;
+}
+
+/** How the repeat rules see the lines of a piece: chart-derived ops and cues of line k. */
+interface RepeatFamily {
+  word: 'Row' | 'Rnd';
+  /** Flat work (and turned rounds): the block must have an even number of lines. */
+  even: boolean;
+  count: number;
+  ops: (k: number) => Op[];
+  cues: (k: number) => string;
+}
+
+/** E_FOLD for block repeat notes (repeats.ts): the block, its place, and the lines it stands for. */
+function repeatRules(lines: readonly Line[], insane: ReadonlySet<Line>, at: At, f: RepeatFamily): Issue[] {
+  const issues: Issue[] = [];
+  for (const line of lines) {
+    if (insane.has(line)) continue;
+    const rep = lineRepeat(line);
+    if (rep === null) continue;
+    const [c, d] = rep.source;
+    const L = d - c + 1;
+    const name = `${f.word}s ${rep.from}–${rep.to}`;
+    const problems: string[] = [];
+    const end = line.nEnd !== undefined && line.nEnd > line.n ? line.nEnd : line.n;
+    if (end !== d) problems.push(`the repeat note belongs on ${f.word} ${d}, the last ${f.word.toLowerCase()} of the block`);
+    if (c < 2 || L < 2 || c > d) problems.push(`a repeated block is 2 or more ${f.word.toLowerCase()}s and never includes ${f.word} 1`);
+    else if (f.even && L % 2 === 1) problems.push(`a block of ${L} ${f.word.toLowerCase()}s would change sides (RS/WS): repeat an even number of ${f.word.toLowerCase()}s`);
+    if (rep.from !== d + 1 || rep.to - rep.from + 1 !== L * rep.times || rep.to > f.count) problems.push(`it must follow the block and cover ${rep.times} × ${L} ${f.word.toLowerCase()}s of the chart`);
+    if (problems.length === 0) {
+      for (let k = rep.from; k <= rep.to; k++) {
+        const src = c + ((k - rep.from) % L);
+        if (!sameLineOps(f.ops(k), f.ops(src)) || f.cues(k) !== f.cues(src)) {
+          problems.push(`${f.word} ${k} of the chart is not ${f.word} ${src}`);
+          break;
+        }
+      }
+    }
+    for (const problem of problems) issues.push(issue('E_FOLD', `${name}: ${problem}`, at(line)));
+  }
+  return issues;
+}
+
+/**
+ * Every shift s (0 ≤ s < C) with `got[x] = base[(x − s) mod C]` for all x: the occurrences of `got` in `base`
+ * written twice (KMP, O(C)).
+ */
+export function rotationsOf(base: ArrayLike<number>, got: readonly number[]): number[] {
+  const C = base.length;
+  if (got.length !== C || C === 0) return [];
+  const fail = new Int32Array(C);
+  for (let i = 1, k = 0; i < C; i++) {
+    while (k > 0 && got[i] !== got[k]) k = fail[k - 1];
+    if (got[i] === got[k]) k++;
+    fail[i] = k;
+  }
+  const out: number[] = [];
+  for (let i = 0, k = 0; i < 2 * C - 1; i++) {
+    const v = base[i % C];
+    while (k > 0 && v !== got[k]) k = fail[k - 1];
+    if (v === got[k]) k++;
+    if (k === C) {
+      const t = i - C + 1;
+      out.push((C - t) % C);
+      k = fail[k - 1];
+    }
+  }
+  return out.sort((a, b) => a - b);
+}
+
+/**
+ * The lean the rounds were written with, read from the rounds when not given: `turn` when a round turns or is
+ * WS; otherwise `preskew` with the smallest rate whose shifts make every round its chart row, or `note`.
+ */
+export function inferRoundLean(grid: ChartGrid, hand: Hand, lines: readonly Line[]): RoundLean {
+  const rounds = (Array.isArray(lines) ? lines : []).filter((line) => readable(line) && line.kind === 'rnd');
+  if (rounds.some((line) => line.start?.k === 'turn' || line.side === 'WS')) return { mode: 'turn', stPerRnd: 0.5 };
+  const C = grid.cols;
+  const codes = grid.palette.map((entry) => entry.code);
+  // The ops of every round the lines stand for: folded ranges and block-repeat notes expanded.
+  const opsOf = new Map<number, Line['ops']>();
+  for (const line of rounds) {
+    const end = line.nEnd !== undefined && line.nEnd > line.n ? line.nEnd : line.n;
+    for (let k = line.n; k <= Math.min(end, grid.rows); k++) if (!opsOf.has(k)) opsOf.set(k, line.ops);
+  }
+  for (const line of rounds) {
+    const rep = lineRepeat(line);
+    if (rep === null) continue;
+    const L = rep.source[1] - rep.source[0] + 1;
+    if (L < 1) continue;
+    for (let k = rep.from; k <= Math.min(rep.to, grid.rows); k++) {
+      const src = opsOf.get(rep.source[0] + ((k - rep.from) % L));
+      if (src !== undefined && !opsOf.has(k)) opsOf.set(k, src);
+    }
+  }
+  // The rotations s with which each round equals its chart row (unskewed sequence rotated by s).
+  const sets: { k: number; s: number[] }[] = [];
+  for (const [k, ops] of [...opsOf].sort((a, b) => a[0] - b[0])) {
+    if (k < 2 || ops.length !== C) continue;
+    const got = ops.map((op) => codes.indexOf(op.color ?? ''));
+    const base = roundLabels(grid, k, hand, { mode: 'note', stPerRnd: 0 }, 0);
+    sets.push({ k, s: rotationsOf(base, got) });
+  }
+  if (sets.every((x) => x.s.length === 0 || x.s.includes(0))) return { mode: 'note', stPerRnd: 0.5 };
+  // The rates p with roundHalfUp(p·(k − 1)) ≡ s (mod C) for an s of every round: an intersection of intervals,
+  // searched within |p| ≤ LEAN_LIMIT st per round.
+  let intervals: [number, number][] = [[-LEAN_LIMIT, LEAN_LIMIT]];
+  for (const { k, s } of sets) {
+    if (k < 2 || s.length === 0 || s.length === C) continue;
+    const allowed: [number, number][] = [];
+    for (const shift of s) {
+      const span = LEAN_LIMIT * (k - 1);
+      for (let t = shift - Math.ceil((span + shift) / C) * C; t <= span + C; t += C) {
+        allowed.push([(t - 0.5) / (k - 1), (t + 0.5) / (k - 1)]);
+      }
+    }
+    const next: [number, number][] = [];
+    for (const [a, b] of intervals) for (const [c, d] of allowed) if (Math.max(a, c) < Math.min(b, d)) next.push([Math.max(a, c), Math.min(b, d)]);
+    intervals = next;
+    if (intervals.length === 0) break;
+  }
+  const mids = intervals.map(([a, b]) => (a + b) / 2).sort((x, y) => Math.abs(x) - Math.abs(y) || x - y);
+  const fits = (p: number): boolean => sets.every((x) => x.s.length === 0 || x.s.includes(((roundHalfUp(p * (x.k - 1)) % C) + C) % C));
+  for (const p of mids) if (fits(p)) return { mode: 'preskew', stPerRnd: p };
+  return { mode: 'note', stPerRnd: 0.5 };
+}
+
+/** The rules of `sc_tapestry_round` rounds (see the file header). */
+function roundRules(i: Validate2DInput, grid: ChartGrid, lines: readonly Line[], insane: ReadonlySet<Line>, palette: ReadonlySet<string>, piece: string | undefined, at: At): Issue[] {
+  const issues: Issue[] = [];
+  const hand: Hand = i.hand === 'left' ? 'left' : 'right';
+  const lean = i.roundLean !== undefined ? roundLeanOf(i.roundLean) : inferRoundLean(grid, hand, lines);
+  const C = grid.cols;
+  const R = grid.rows;
+  const code = (label: number): string => labelCode(grid, label);
+  const seqs: Uint8Array[] = [];
+  for (let k = 1; k <= R; k++) seqs.push(roundLabels(grid, k, hand, lean));
+  const plan = planTapestry(seqs, grid.palette.length);
+  const opsOf = (k: number): Op[] => Array.from(seqs[k - 1], (label) => ({ k: 'st', st: 'sc', color: code(label) }) as Op);
+  const rounds = lines.filter((line) => typeof line === 'object' && line !== null && line.kind === 'rnd');
+  const cuesPrinted = rounds.some((line) => !insane.has(line) && (line.cues ?? []).some((cue) => cue.kind === 'color'));
+  const cueOf = (k: number): string => (!cuesPrinted || plan.lines[k - 1] === undefined ? '' : tapestryCueTexts(plan.lines[k - 1], code).join(' · '));
+  const arrowOf = (k: number): '←' | '→' => (roundReadsRightToLeft(k, hand, lean) ? '←' : '→');
+  const how = lean.mode === 'preskew' ? `, shifted ${'{s}'} sts` : '';
+
+  let expected = 1;
+  for (const line of rounds) {
+    if (insane.has(line)) continue;
+    const made = lineProduced(line);
+    if (made !== C) issues.push(issue('E_RUN_SUM', `Rnd ${line.n}: its runs sum to ${made} sts, but the round is ${C} sts (${made} ≠ ${C})`, at(line)));
+    const end = line.nEnd !== undefined && line.nEnd > line.n ? line.nEnd : line.n;
+    if (line.n > expected) {
+      const missing = line.n - 1 === expected ? `Rnd ${expected} is` : `Rnds ${expected}–${line.n - 1} are`;
+      issues.push(issue('E_RUN_SUM', `${missing} missing: every row of the chart must be worked (0 ≠ ${C})`, at(line)));
+    } else if (line.n < expected) {
+      issues.push(issue('E_RUN_SUM', `Rnd ${line.n} comes again after Rnd ${expected - 1}: the rounds must cover the chart once, in order`, at(line)));
+    }
+    expected = Math.max(expected, end + 1);
+    const rep = lineRepeat(line);
+    if (rep !== null && rep.from === expected && rep.to >= rep.from) expected = rep.to + 1;
+  }
+  if (expected <= R) {
+    const missing = expected === R ? `Rnd ${R} is` : `Rnds ${expected}–${R} are`;
+    issues.push(issue('E_RUN_SUM', `${missing} missing: the chart has ${R} rows (0 ≠ ${C})`));
+  } else if (expected > R + 1) {
+    issues.push(issue('E_RUN_SUM', `the pattern has ${expected - 1} rounds but the chart only ${R} rows`));
+  }
+
+  for (const line of rounds) {
+    if (insane.has(line) || line.n > R) continue;
+    const k = line.n;
+    const folded = line.nEnd !== undefined && line.nEnd > line.n;
+    // E_FOUNDATION: a ring of ch C, then joined (or turned) rounds.
+    if (k === 1 && (line.start?.k !== 'chainRing' || line.start.chains !== C)) {
+      issues.push(issue('E_FOUNDATION', `Rnd 1: a ${C}-st tube starts from a ring of ch ${C} (ch ${C}; join with sl st in first ch)`, at(line)));
+    } else if (k > 1) {
+      const turn = lean.mode === 'turn';
+      const ok = turn ? line.start?.k === 'turn' && line.start.chains === 1 : line.start?.k === 'join';
+      if (!ok) issues.push(issue('E_FOUNDATION', `Rnd ${k}: ${turn ? 'a turned round starts “Ch 1, turn.”' : 'a joined round starts “Ch 1,” in the join'}`, at(line)));
+    }
+    if (line.join === undefined) issues.push(issue('E_FOUNDATION', `Rnd ${k}: every round ends “join with sl st in first sc”`, at(line)));
+    const want = opsOf(k);
+    const side = roundSide(k, lean);
+    const arrow = arrowOf(k);
+    const inPalette = line.ops.every((op) => op.color !== undefined && palette.has(op.color));
+    if (lineProduced(line) === C && inPalette && !sameLineOps(want, line.ops)) {
+      const s = roundShift(k, lean);
+      issues.push(issue('E_RUN_SUM', `Rnd ${k}: its runs are not chart row ${k} read ${arrow === '←' ? 'right to left' : 'left to right'} (${hand}-handed${how.replace('{s}', String(s))})`, at(line)));
+    }
+    if (line.side !== side || line.arrow !== arrow) {
+      issues.push(issue('E_RUN_SUM', `Rnd ${k}: it is a ${side} round read ${arrow} (${hand}-handed), not ${line.side ?? 'no side'} ${line.arrow ?? 'no arrow'}`, at(line)));
+    }
+    if (folded) {
+      const problems: string[] = [];
+      const lineCues = (line.cues ?? []).filter((cue) => cue.kind === 'color').map((cue) => cue.text).join(' · ');
+      for (let j = k + 1; j <= Math.min(line.nEnd!, R); j++) {
+        if (!sameLineOps(opsOf(j), line.ops)) {
+          problems.push(`Rnd ${j} of the chart is not this round`);
+          break;
+        }
+        if (roundSide(j, lean) !== line.side || arrowOf(j) !== line.arrow) {
+          problems.push(`Rnd ${j} is worked from the other side`);
+          break;
+        }
+        if (cueOf(j) !== lineCues) {
+          problems.push(`Rnd ${j} has other cues (${cueOf(j) === '' ? 'none' : cueOf(j)})`);
+          break;
+        }
+      }
+      if (cuesPrinted && cueOf(k) !== lineCues) problems.push(`Rnd ${k} has other cues (${cueOf(k) === '' ? 'none' : cueOf(k)})`);
+      for (const problem of problems) issues.push(issue('E_FOLD', `Rnds ${line.n}–${line.nEnd}: ${problem}`, at(line)));
+    }
+  }
+  issues.push(...repeatRules(rounds, insane, at, { word: 'Rnd', even: lean.mode === 'turn', count: R, ops: opsOf, cues: cueOf }));
+  issues.push(...heldWarnings(plan, 'Rnd', piece));
+  return issues;
+}
+
+/** The border setting with its color as the code the doc uses (a materials line with that yarn or hex; unset: A). */
+function borderSettingOf(doc: PatternDoc, border: ChartSettings['border'] | undefined): { widthIn: number; color?: string } | undefined {
+  if (border === undefined || border === null || typeof border !== 'object' || typeof border.widthIn !== 'number' || !Number.isFinite(border.widthIn)) return undefined;
+  const ref = border.color;
+  const materials = Array.isArray(doc.materials) ? doc.materials : [];
+  let code: string | undefined;
+  if (ref === undefined) code = doc.chart?.grid.palette.find((p) => p.code === 'A')?.code ?? doc.chart?.grid.palette[0]?.code;
+  else {
+    const byYarn = ref.yarnId === undefined ? undefined : materials.find((m) => m.yarn?.id === ref.yarnId);
+    code = (byYarn ?? materials.find((m) => typeof ref.hex === 'string' && m.hex.toLowerCase() === ref.hex.toLowerCase()))?.code;
+  }
+  return code === undefined ? { widthIn: border.widthIn } : { widthIn: border.widthIn, color: code };
+}
+
+/** Options of `validateDoc2D`: the settings and gauge the pattern was built with, when known. */
+export interface ValidateDoc2DOptions {
+  settings?: Partial<Pick<ChartSettings, 'roundLean' | 'startCorner' | 'border'>>;
+  gauge?: Pick<ResolvedGauge, 'cell' | 'wSc' | 'hSc'>;
+}
+
+/**
+ * `validate2D` for every piece of a 2D pattern (`doc.chart` and `doc.hand`); [] for a 3D pattern. The codes of
+ * `doc.materials` are valid colors (a border yarn). Without settings, a tapestry round's lean and a C2C start
+ * corner are read from the lines.
+ */
+export function validateDoc2D(doc: PatternDoc, o: ValidateDoc2DOptions = {}): Issue[] {
   if (doc.kind !== '2d' || doc.chart === undefined) return [];
   const out: Issue[] = [];
-  for (const p of doc.pieces) out.push(...validate2D({ chart: doc.chart.grid, technique: doc.chart.technique, hand: doc.hand, lines: p.lines, piece: p.id }));
+  const extraCodes = Array.isArray(doc.materials) ? doc.materials.map((m) => m.code) : [];
+  for (const p of doc.pieces) {
+    out.push(
+      ...validate2D({
+        chart: doc.chart.grid,
+        technique: doc.chart.technique,
+        hand: doc.hand,
+        lines: p.lines,
+        piece: p.id,
+        extraCodes,
+        roundLean: o.settings?.roundLean,
+        startCorner: o.settings?.startCorner,
+        gauge: o.gauge,
+        border: borderSettingOf(doc, o.settings?.border),
+      }),
+    );
+  }
   return out;
 }

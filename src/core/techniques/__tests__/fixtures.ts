@@ -6,7 +6,7 @@
 // gaps for bobbins, short ones for carries), generated once by a small script and committed.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { ChartGrid, ChartResult, PaletteEntry } from '../../../types';
+import type { ChartGrid, ChartResult, ChartSettings, PaletteEntry } from '../../../types';
 import type { Rng } from '../../kernel/prng';
 
 /** Reads a committed ChartResult fixture and turns its labels back into a Uint8Array. */
@@ -50,4 +50,26 @@ export function randomChart(rng: Rng, cols: number, rows: number, colors: number
     }
   }
   return { cols, rows, labels, palette: palette(colors) };
+}
+
+/** Chart settings with the defaults of a new project; `over` replaces fields. */
+export function settingsOf(over: Partial<ChartSettings> = {}): ChartSettings {
+  return {
+    technique: 'sc_graphgan',
+    hand: 'right',
+    startCorner: 'BR',
+    lockAspect: true,
+    border: { widthIn: 0 },
+    maxColors: 'auto',
+    paletteMode: 'auto',
+    lineIds: [],
+    referenceLineId: '',
+    detail: 'balanced',
+    dither: 'off',
+    imageKind: 'auto',
+    background: 'keep',
+    applyRepeats: 'auto',
+    roundLean: { mode: 'note', stPerRnd: 0.5 },
+    ...over,
+  };
 }

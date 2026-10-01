@@ -63,12 +63,12 @@ describe('sc_graphgan writer (DESIGN §2.7.3)', () => {
     expect(uk[0]).toBe('Row 1 (RS) ←: Starting in 2nd ch from hook, 2 dc A, dc B, 2 dc A (5 sts) · join B (bobbin 1) · carry A');
     const verbose = lines.map((line) => renderLine(line, { dialect: 'verbose', terms: 'us', hand: 'right' }));
     expect(verbose).toEqual([
-      'Row 1 (RS): With A, sc in 2nd ch from hook and in next ch; change to B, sc in next ch; change to A, sc in last 2 ch. (5 sc) · join B (bobbin 1) · carry A',
-      'Row 2 (WS): Ch 1, turn. With A, sc in first st; change to B, sc in next 3 sts; change to A, sc in last st. (5 sc) · carry A',
-      'Row 3 (RS): Ch 1, turn. With A, sc in first 4 sts; change to B, sc in last st. (5 sc)',
+      'Row 1 (RS) ←: With A, sc in 2nd ch from hook and in next ch; change to B, sc in next ch; change to A, sc in last 2 ch. (5 sc) · join B (bobbin 1) · carry A',
+      'Row 2 (WS) →: Ch 1, turn. With A, sc in first st; change to B, sc in next 3 sts; change to A, sc in last st. (5 sc) · carry A',
+      'Row 3 (RS) ←: Ch 1, turn. With A, sc in first 4 sts; change to B, sc in last st. (5 sc)',
     ]);
     expect(renderLine(lines[2], { dialect: 'verbose', terms: 'uk', hand: 'right' })).toBe(
-      'Row 3 (RS): Ch 1, turn. With A, dc in first 4 sts; change to B, dc in last st. (5 dc)',
+      'Row 3 (RS) ←: Ch 1, turn. With A, dc in first 4 sts; change to B, dc in last st. (5 dc)',
     );
   });
 
@@ -124,7 +124,7 @@ describe('sc_graphgan writer (DESIGN §2.7.3)', () => {
     ]);
     expect(renderLine(lines[1], { dialect: 'verbose', terms: 'us', hand: 'right' })).toBe('Rows 2–6 (5 rows): Ch 1, turn. With A, sc in each st across. (40 sc)');
     expect(renderLine(lines[0], { dialect: 'verbose', terms: 'us', hand: 'right' })).toBe(
-      'Row 1 (RS): With A, sc in 2nd ch from hook and in each ch across. (40 sc)',
+      'Row 1 (RS) ←: With A, sc in 2nd ch from hook and in each ch across. (40 sc)',
     );
     expect(renderWordChartLine(lines[1])).toBe('2–6 | 40A | 40');
   });
@@ -192,7 +192,7 @@ describe('sc_graphgan writer (DESIGN §2.7.3)', () => {
       'Row 3 (RS) ←: Ch 2 (does not count as a st), turn. 4 hdc A, hdc B (5 sts)',
     ]);
     expect(renderLine(lines[0], { dialect: 'verbose', terms: 'uk', hand: 'right' })).toBe(
-      'Row 1 (RS): With A, htr in 3rd ch from hook and in next ch; change to B, htr in next ch; change to A, htr in last 2 ch. (5 htr)',
+      'Row 1 (RS) ←: With A, htr in 3rd ch from hook and in next ch; change to B, htr in next ch; change to A, htr in last 2 ch. (5 htr)',
     );
     expect(validate2D({ chart: g9, technique: 'hdc_graphgan', hand: 'right', lines }).filter((x) => x.severity === 'error')).toEqual([]);
   });
@@ -201,7 +201,7 @@ describe('sc_graphgan writer (DESIGN §2.7.3)', () => {
     const one = writeScGraphgan(chartOf(['B']), { hand: 'right' }).lines;
     expect(one.map(compact)).toEqual(['Row 1 (RS) ←: Starting in 2nd ch from hook, sc B (1 st)']);
     expect(renderFoundation(one[0], { terms: 'us' })).toBe('Foundation: With B, ch 2.');
-    expect(renderLine(one[0], { dialect: 'verbose', terms: 'us', hand: 'right' })).toBe('Row 1 (RS): With B, sc in 2nd ch from hook and in each ch across. (1 sc)');
+    expect(renderLine(one[0], { dialect: 'verbose', terms: 'us', hand: 'right' })).toBe('Row 1 (RS) ←: With B, sc in 2nd ch from hook and in each ch across. (1 sc)');
     expect(validate2D({ chart: chartOf(['B']), technique: 'sc_graphgan', hand: 'right', lines: one }).filter((x) => x.severity === 'error')).toEqual([]);
   });
 });

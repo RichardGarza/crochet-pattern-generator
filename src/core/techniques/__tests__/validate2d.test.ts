@@ -131,7 +131,8 @@ describe('2D validators fire on crafted bad input and stay silent on generated o
       { kind: 'rnd', n: 2, start: { k: 'join' }, join: {}, ops: g9Rows()[1].ops, prevCount: 5, stated: 5 },
     ];
     const issues = validate2D({ chart: g9, technique: 'sc_tapestry_round', hand: 'right', lines });
-    expect(issues.map((x) => [x.code, x.message])).toEqual([['E_SANITY', 'Rnd 2: a round of a chart needs its side and reading arrow']]);
+    // (The round rules of T2.2 also report the rounds that are not the chart's; only the sanity finding matters here.)
+    expect(issues.filter((x) => x.code === 'E_SANITY').map((x) => [x.code, x.message])).toEqual([['E_SANITY', 'Rnd 2: a round of a chart needs its side and reading arrow']]);
   });
 
   it('E_SANITY: the chart’s size, labels and palette', () => {

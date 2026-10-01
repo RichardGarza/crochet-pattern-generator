@@ -3,7 +3,7 @@
 //
 //   Compact US  Row 11 (RS) ←: Ch 1, turn. 4 sc A, 3 sc B, 33 sc A (40 sts) · carry A
 //   Compact UK  Row 11 (RS) ←: Ch 1, turn. 4 dc A, 3 dc B, 33 dc A (40 sts) · carry A
-//   Verbose US  Row 11 (RS): Ch 1, turn. With A, sc in first 4 sts; change to B, sc in next 3 sts; change to A,
+//   Verbose US  Row 11 (RS) ←: Ch 1, turn. With A, sc in first 4 sts; change to B, sc in next 3 sts; change to A,
 //               sc in last 33 sts. (40 sc) · carry A
 //   Verbose 3D  Rnd 3: [Sc in next st, 2 sc in next st] 6 times. (18 sts)
 //
@@ -27,6 +27,7 @@ import type { Hand, Line, Op, PatternDoc, RenderLineFn, Terms } from '../../type
 import { chainOvalSide, compactFoundation, compactLabel, isJoinedHead, lineItems, renderCompactLine, sharedLoop } from './compact';
 import { type Item, displayOps } from './ops';
 import { compactNames, toTerms } from './terminology';
+import { type BorderTextContext, borderHeader, renderBorderLine } from '../techniques/border';
 
 export type DocKind = PatternDoc['kind'];
 export type Dialect = 'compact' | 'verbose';
@@ -41,6 +42,11 @@ export interface RenderOptions {
   decMethod?: DecMethod;
   /** Default: `inferDocKind(line)`. */
   docKind?: DocKind;
+  /**
+   * Border lines (§2.7.10): what only the pattern knows — the technique (C2C tile edges) and the panel's size
+   * (the spacing hints). Without it a border prints with row words and no hints.
+   */
+  border?: Omit<BorderTextContext, 'terms' | 'hand'>;
 }
 
 /**
@@ -358,10 +364,9 @@ function verboseCount(line: Line, docKind: DocKind, names: Readonly<VerboseNames
   return `(${n} ${n === 1 ? 'st' : 'sts'})`;
 }
 
-/** The label of a verbose line: the compact label without the reading arrow (C2C rows keep it). */
+/** The label of a verbose line: the compact label, reading arrow included (§2.7.2; research 07 §7.7). */
 function verboseLabel(line: Line): string {
-  if (line.kind === 'c2c' || line.arrow === undefined) return compactLabel(line);
-  return compactLabel({ ...line, arrow: undefined });
+  return compactLabel(line);
 }
 
 /** Everything between the colon and the count, in the verbose dialect. */
@@ -469,6 +474,10 @@ export function renderVerboseLine(line: Line, o: Omit<RenderOptions, 'dialect' |
 
 /** `renderLine` with an explicit pattern kind (T2's own writers pass it). */
 export function renderLineWith(line: Line, o: RenderOptions): string {
+  if (line.kind === 'border' && (line.start?.k === 'edge' || line.start?.k === 'join')) {
+    // The border sentences of §2.7.10 (the same in both dialects); its start corner and join are in the line.
+    return renderBorderLine(line, { ...o.border, terms: o.terms, hand: o.hand });
+  }
   const docKind = docKindOf(line, o);
   if (o.dialect === 'verbose') return renderVerboseLine(line, { terms: o.terms, decMethod: o.decMethod, docKind });
   if (o.terms !== 'uk') return renderCompactLine(line, { docKind });
@@ -486,10 +495,12 @@ export function renderLineWith(line: Line, o: RenderOptions): string {
 export const renderLine: RenderLineFn = (line, o) => renderLineWith(line, o);
 
 /**
- * The sentence printed before a line worked into chains (`Foundation: With A, ch 6.`, `Ch 10.`), in the given
- * terms; null when the line has no such start. The same in both dialects.
+ * The sentence printed before a line worked into chains (`Foundation: With A, ch 6.`, `Ch 10.`) or before a
+ * border's Rnd 1 (`Border (with B):`), in the given terms; null when the line has no such start. The same in
+ * both dialects.
  */
 export function renderFoundation(line: Line, o: { terms: Terms; docKind?: DocKind }): string | null {
+  if (line.kind === 'border' && line.start?.k === 'edge') return borderHeader(line, o.terms);
   return compactFoundation(line, { docKind: docKindOf(line, o), names: compactNames(o.terms) });
 }
 
