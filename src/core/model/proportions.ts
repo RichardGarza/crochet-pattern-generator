@@ -295,7 +295,64 @@ export function resizeLimbs(model: CrochetModelV1, lengths: Readonly<Record<stri
   return current;
 }
 
-/** The limbs in tree order (parents first), each with the end that stays put. A mirror twin takes its twin's end. */
+/**
+ * How decisive the parent-SDF test of §4.2 must be, as a fraction of the limb's radius: two poles whose parent
+ * SDFs differ by less than this lie along the parent alike (a limb hanging tangent to its parent's side), and
+ * the test cannot tell the attached end from the free one.
+ */
+const POLE_SDF_MARGIN = 0.25;
+
+/** The limb's radius: a capsule's `r`, a cylinder's larger end radius. */
+function limbRadius(p: LimbPart): number {
+  return p.type === 'capsule' ? p.dims.r : Math.max(p.dims.rTop, p.dims.rBottom);
+}
+
+/**
+ * Which pole of a limb is its proximal end (§4.2): `grow` −1 = the +axis pole, +1 = the −axis pole. In order:
+ *
+ * 1. `attach.openEnd` `'top'` / `'bottom'`: the open end is the one sewn to the parent, so it is the proximal
+ *    end (`'top'` = the +axis pole, as in §2.10.2).
+ * 2. A mesh parent known only by its triangles (no SDF): the pole nearer the parent's center.
+ * 3. The spec's rule: the pole with the larger parent SDF (the end inside or nearest the parent) — when the two
+ *    differ by at least `POLE_SDF_MARGIN` × the limb's radius.
+ * 4. Otherwise the two ends meet the parent alike and the rule would follow the limb's length, not its
+ *    attachment (the teddy's arm lies along the body: at 'nubs' length its lower pole is the nearer one, so
+ *    the next chip would grow the arm up from the hand). Limbs grow away from the model's mirror plane x = 0:
+ *    the pole with the smaller |x| is proximal. Keeping that pole and changing the length moves the other pole
+ *    along the axis, so a limb that heads away from the mirror plane keeps the same proximal pole on every
+ *    later chip. When both poles are as far from the plane (within 1e-6 in), rule 3's comparison decides.
+ */
+function proximalGrow(p: LimbPart, parent: Part, meshes?: Record<string, ColoredMesh>): -1 | 1 {
+  const openEnd = p.attach?.openEnd;
+  if (openEnd === 'top') return -1;
+  if (openEnd === 'bottom') return 1;
+  const axis = partAxis(p, 1);
+  const half = limbLength(p) / 2;
+  const c = partCenter(p);
+  const plus: Vec3 = [c[0] + axis[0] * half, c[1] + axis[1] * half, c[2] + axis[2] * half];
+  const minus: Vec3 = [c[0] - axis[0] * half, c[1] - axis[1] * half, c[2] - axis[2] * half];
+  if (parent.type === 'mesh' && meshOf(parent, meshes)) {
+    // No SDF for a mesh known only by its triangles: the pole nearer the parent's center.
+    const pc = partCenter(parent, meshOf(parent, meshes));
+    const dPlus = Math.hypot(plus[0] - pc[0], plus[1] - pc[1], plus[2] - pc[2]);
+    const dMinus = Math.hypot(minus[0] - pc[0], minus[1] - pc[1], minus[2] - pc[2]);
+    return dPlus < dMinus ? -1 : 1;
+  }
+  const f = worldSdf(parent);
+  const fPlus = f(plus[0], plus[1], plus[2]);
+  const fMinus = f(minus[0], minus[1], minus[2]);
+  const bySdf: -1 | 1 = fPlus > fMinus ? -1 : 1;
+  if (!(Math.abs(fPlus - fMinus) < POLE_SDF_MARGIN * limbRadius(p))) return bySdf;
+  const xPlus = Math.abs(plus[0]);
+  const xMinus = Math.abs(minus[0]);
+  if (Math.abs(xPlus - xMinus) <= 1e-6) return bySdf;
+  return xPlus < xMinus ? -1 : 1;
+}
+
+/**
+ * The limbs in tree order (parents first), each with the end that stays put (`proximalGrow`). A mirror twin
+ * takes its twin's end.
+ */
 function planLimbs(model: CrochetModelV1, meshes?: Record<string, ColoredMesh>): LimbPlan[] {
   const parts = model.parts;
   const graph = attachGraph(parts);
@@ -310,26 +367,7 @@ function planLimbs(model: CrochetModelV1, meshes?: Record<string, ColoredMesh>):
   for (const l of ordered) {
     const p = parts[l.index] as LimbPart;
     const parentIndex = graph.parent[l.index];
-    let grow: -1 | 0 | 1 = 0;
-    if (parentIndex !== null) {
-      const parent = parts[parentIndex];
-      const axis = partAxis(p, 1);
-      const half = limbLength(p) / 2;
-      const c = partCenter(p);
-      const plus: Vec3 = [c[0] + axis[0] * half, c[1] + axis[1] * half, c[2] + axis[2] * half];
-      const minus: Vec3 = [c[0] - axis[0] * half, c[1] - axis[1] * half, c[2] - axis[2] * half];
-      if (parent.type === 'mesh' && meshOf(parent, meshes)) {
-        // No SDF for a mesh known only by its triangles: the pole nearer the parent's center.
-        const pc = partCenter(parent, meshOf(parent, meshes));
-        const dPlus = Math.hypot(plus[0] - pc[0], plus[1] - pc[1], plus[2] - pc[2]);
-        const dMinus = Math.hypot(minus[0] - pc[0], minus[1] - pc[1], minus[2] - pc[2]);
-        grow = dPlus < dMinus ? -1 : 1;
-      } else {
-        // The proximal end is the pole with the larger parent SDF: the end inside or nearest the parent.
-        const f = worldSdf(parent);
-        grow = f(plus[0], plus[1], plus[2]) > f(minus[0], minus[1], minus[2]) ? -1 : 1;
-      }
-    }
+    const grow: -1 | 0 | 1 = parentIndex === null ? 0 : proximalGrow(p, parts[parentIndex], meshes);
     plans.set(p.id, { id: p.id, kind: l.kind, grow });
   }
   // Mirror twins get the same change: the same end stays put (the twins' local frames mirror each other).

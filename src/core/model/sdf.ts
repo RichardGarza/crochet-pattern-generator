@@ -386,19 +386,34 @@ export function gapProbe(child: Part, parent: Part): 'child' | 'parent' {
   return child.type === 'mesh' && parent.type !== 'mesh' ? 'parent' : 'child';
 }
 
+/**
+ * The gap from the probe's vertices, corrected for enclosure: when no probe vertex is inside the solid
+ * (`gap` > 0), the solid may still lie inside the probe (a child that encloses its parent) — then the solid's
+ * vertices are probed against the probe's SDF, and minus the deepest one's depth is returned. `reverse` is only
+ * called in that case. Shared by `surfaceGap` and `inferAttach`.
+ */
+export function gapWithEnclosure(gap: number, reverse: () => number): number {
+  if (!(gap > 0)) return gap;
+  const back = reverse();
+  return back <= 0 ? back : gap;
+}
+
 /** `surfaceGap` with the SDFs of mesh parts (part-local, keyed by meshRef). */
 export function surfaceGapWith(child: Part, parent: Part, meshSdf?: Record<string, MeshSdf>): number {
   const swap = gapProbe(child, parent) === 'parent';
   const probe = swap ? parent : child;
   const solid = swap ? child : parent;
-  return gapOfVertices(partWorldVertices(probe), worldSdf(solid, meshSdfOf(solid, meshSdf)));
+  const gap = gapOfVertices(partWorldVertices(probe), worldSdf(solid, meshSdfOf(solid, meshSdf)));
+  return gapWithEnclosure(gap, () => gapOfVertices(partWorldVertices(solid), worldSdf(probe, meshSdfOf(probe, meshSdf))));
 }
 
 /**
  * The gap between a child and its parent, in inches (§3.7.6), from the child's builder vertices: the distance
  * from the nearest child vertex to the parent's surface. Positive when the parts are apart; zero or negative
- * when a child vertex touches or enters the parent (then it is minus the deepest vertex's depth). `W_GAP`
- * fires above 0.1 in.
+ * when a child vertex touches or enters the parent (then it is minus the deepest vertex's depth). When no child
+ * vertex is inside the parent, the parent's vertices are also probed against the child: a parent vertex inside
+ * the child (a child that encloses its parent) also gives zero or minus that vertex's depth, never a gap.
+ * `W_GAP` fires above 0.1 in.
  */
 export const surfaceGap: SurfaceGapFn = (child, parent) => surfaceGapWith(child, parent);
 

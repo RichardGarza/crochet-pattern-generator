@@ -100,6 +100,8 @@ function renameReferences(model: CrochetModelV1, newId: readonly string[], renam
  * Names the parts of a model by geometry (§2.9.7 step 6) and rewrites every reference to them. `renames` maps
  * each changed id to its new one. Parts whose id is in `o.keepIds` (ids the user has renamed) keep it, and no
  * other part takes it. Naming a named model again changes nothing.
+ *
+ * Precondition, not checked: part ids are unique (§3.5.1; references resolve to the first part with an id).
  */
 export const nameParts: NamePartsFn = (m, o) => {
   const parts = m.parts;

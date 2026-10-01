@@ -134,6 +134,35 @@ describe('Euler XYZ ↔ matrix (§0.1: three.js order "XYZ", matrix = Rx·Ry·Rz
     expect(down[2]).toBe(0);
     expect(down[0]).toBeCloseTo(-15, 6); // x − z at y = −90°
   });
+
+  it('round-trips near (not at) gimbal lock, where three.js drops z: |y| in [89.9°, 90°)', () => {
+    // three.js takes its gimbal branch (z = 0) from |m13| ≥ 0.9999999, i.e. |y| ≥ 89.9744°, and loses up to
+    // 4.5e-4 of the rotation there; the kernel keeps the general decomposition down to cos(y) = 1e-8.
+    // Measured worst element error: 1.1e-13 below the band, 7e-16 for |y| ≤ 89.9999°, 7.6e-9 closer to 90°.
+    const rng = mulberry32(2024);
+    const bands: [number, number, number][] = [
+      [89.9, 89.975, 1e-12],
+      [89.975, 89.9999, 1e-12],
+      [89.9999, 90 - 1e-12, 2e-8],
+    ];
+    for (const [lo, hi, tolerance] of bands) {
+      let worst = 0;
+      for (let i = 0; i < 500; i++) {
+        const deg: Vec3 = [randomRange(rng, -180, 180), (rng() < 0.5 ? -1 : 1) * randomRange(rng, lo, hi), randomRange(rng, -180, 180)];
+        const m = eulerXYZToMat3(deg);
+        const back = mat3ToEulerXYZ(m);
+        expect(Math.abs(back[1])).toBeLessThanOrEqual(90);
+        const again = eulerXYZToMat3(back);
+        for (let k = 0; k < 9; k++) worst = Math.max(worst, Math.abs(again[k] - m[k]));
+      }
+      expect(worst, `|y| in [${lo}°, ${hi}°)`).toBeLessThan(tolerance);
+    }
+    // In the band the angles are the input's, where three.js's are not.
+    const deg: Vec3 = [20, 89.99, 35];
+    expectClose(mat3ToEulerXYZ(eulerXYZToMat3(deg)), deg, 1e-8);
+    const theirs = new Euler().setFromRotationMatrix(threeEuler(deg), 'XYZ');
+    expect(theirs.z).toBe(0);
+  });
 });
 
 describe('rigid transforms: compose / decompose', () => {

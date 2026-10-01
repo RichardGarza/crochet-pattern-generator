@@ -340,6 +340,24 @@ describe('inferAttach: links (Prim’s rule on overlap, then the smallest gap)',
     expect(g.parent).toEqual([null, 0, 0, 1]);
   });
 
+  it('duplicate ids: a later part with a repeated id is never a parent, nor the root — no self link, still one tree, idempotent', () => {
+    // The larger, lower "a" (index 1) is what the root rule picks; but a link to "a" names index 0, so linking
+    // index 0 to it would link index 0 to itself. Index 0 becomes the root and index 1 hangs from it.
+    const m = modelOf([ball('a', 0.3, [0, 2, 0]), ball('a', 1, [0, 1, 0])]);
+    const r = inferAttach(m);
+    expect(r.model.parts[0].attach).toBeUndefined();
+    expect(r.model.parts[1].attach).toEqual({ to: 'a', method: 'sewn' });
+    expect(attachGraph(r.model.parts).parent).toEqual([null, 0]);
+    expect(isOneTree(r.model)).toBe(true);
+    expect(inferAttach(r.model).model).toBe(r.model);
+    // a later duplicate in the tree is never chosen as a target, even when it overlaps most
+    const three = modelOf([ball('body', 2, [0, 2, 0]), ball('x', 0.4, [0, 4.3, 0]), ball('x', 1, [0, 4.5, 0]), ball('y', 0.5, [0, 5.6, 0])]);
+    const g = attachGraph(inferAttach(three).model.parts);
+    expect(g.isTree).toBe(true);
+    expect(g.parent[2]).not.toBe(2);
+    expect(g.parent[3]).not.toBe(2);
+  });
+
   it('mesh parts use the supplied SDFs, keyed by meshRef; without one, the ellipsoid inscribed in bboxIn', () => {
     const blob = part('mesh', { meshRef: 'blob-mesh', bboxIn: [1, 1, 1] }, { id: 'blob', position: [0, 4.3, 0] });
     // "top" sits just outside a corner of the blob's bounding box
@@ -620,6 +638,24 @@ describe('inferMirrorPairs (§3.7.6)', HEAVY, () => {
     expect(inferMirrorPairs(modelOf([l, { ...r, mirrorOf: 'nose' }, other])).repairs).toEqual([]);
     expect(inferMirrorPairs(modelOf([r, other])).repairs).toEqual([]);
     expect(inferMirrorPairs(modelOf([part('sphere', { r: 0.4 }, { id: 'r', position: [0, 1, 0] })])).repairs).toEqual([]);
+  });
+
+  it('never makes a mirror chain: a left twin that mirrors something, or a right twin that is a source, stays unlinked', () => {
+    const l = part('sphere', { r: 0.4 }, { id: 'ear_l', position: [1, 1, 0] });
+    const r = part('sphere', { r: 0.4 }, { id: 'ear_r', position: [-1, 1, 0] });
+    const other = part('sphere', { r: 0.4 }, { id: 'bump', position: [1, 1, 0] });
+    // ear_l mirrors bump: ear_r → ear_l would be a chain
+    const leftMirrors = modelOf([{ ...l, mirrorOf: 'bump' }, r, other]);
+    expect(inferMirrorPairs(leftMirrors).repairs).toEqual([]);
+    // bump mirrors ear_r: ear_r → ear_l would make bump → ear_r → ear_l
+    const rightIsSource = modelOf([l, r, { ...other, mirrorOf: 'ear_r' }]);
+    expect(inferMirrorPairs(rightIsSource).repairs).toEqual([]);
+    // within one pass: q_r_l_l is the right twin of q_l_l_l and the left twin of q_r_l_r — only one link is made
+    const q = (id: string, x: number): Part => part('sphere', { r: 0.4 }, { id, position: [x, 1, 0] });
+    const pass = inferMirrorPairs(modelOf([q('q_l_l_l', 1), q('q_r_l_l', -1), q('q_r_l_r', 1)]));
+    expect(pass.repairs.map((x) => [x.part, x.data?.mirrorOf])).toEqual([['q_r_l_l', 'q_l_l_l']]);
+    expect(validateModel(pass.model).ok).toBe(true);
+    expect(inferMirrorPairs(pass.model).repairs).toEqual([]);
   });
 
   it('mesh twins are compared by their bounding boxes, not their buffers', () => {

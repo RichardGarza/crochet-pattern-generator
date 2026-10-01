@@ -330,6 +330,62 @@ describe('applyProportions: limb length (§4.2, G23)', HEAVY, () => {
     }
   });
 
+  it('the proximal pole does not depend on the order of the chips: cycling nubs · short · medium · long keeps every shoulder and hip within 0.01 in', () => {
+    // The teddy's arm lies along the body: at "nubs" length its lower pole is nearer the body surface (−0.110 in)
+    // than its shoulder (−0.161 in), so the bare SDF comparison of §4.2 would grow the next chip up from the hand.
+    const b = by(teddy);
+    const f = partSdf(b.body);
+    const proximal: Record<string, 0 | 1> = {};
+    for (const id of ['arm_l', 'arm_r', 'leg_l', 'leg_r']) {
+      const [plus, minus] = poles(b[id]);
+      proximal[id] = f(plus) > f(minus) ? 0 : 1;
+    }
+    expect(proximal).toEqual({ arm_l: 0, arm_r: 0, leg_l: 1, leg_r: 1 }); // shoulders up, hips back
+    // Before the rescale (resizeLimbs): every chip in turn, twice round, each from the previous model.
+    const chips = ['nubs', 'short', 'medium', 'long', 'nubs', 'long', 'short', 'nubs', 'medium'] as const;
+    let m = teddy;
+    for (const chip of chips) {
+      const lengths: Record<string, number> = {};
+      for (const id of ['arm_l', 'arm_r']) lengths[id] = LIMB_FACTORS[chip] * 0.25 * H;
+      for (const id of ['leg_l', 'leg_r']) lengths[id] = LIMB_FACTORS[chip] * 0.2 * H;
+      m = resizeLimbs(m, lengths);
+      const now = by(m);
+      for (const id of Object.keys(proximal)) {
+        const k = proximal[id];
+        expect(dist(poles(now[id])[k], poles(b[id])[k]), `${chip}: ${id}`).toBeLessThan(1e-4);
+      }
+    }
+    // After the rescale (applyProportions): any chip, then any other, is the second chip applied directly.
+    const direct = Object.fromEntries((['nubs', 'short', 'medium', 'long'] as const).map((c) => [c, by(applyProportions(teddy, { limbs: c }).model)]));
+    for (const first of ['nubs', 'long'] as const) {
+      const start = applyProportions(teddy, { limbs: first }).model;
+      for (const second of ['nubs', 'short', 'medium', 'long'] as const) {
+        const twice = by(applyProportions(start, { limbs: second }).model);
+        for (const id of ['arm_l', 'arm_r', 'leg_l', 'leg_r', 'foot_pad_l']) {
+          expect(dist(twice[id].position, direct[second][id].position), `${first} → ${second}: ${id}`).toBeLessThan(0.01);
+        }
+      }
+    }
+  });
+
+  it('an explicit attach.openEnd names the proximal end, whatever the parent SDF says', () => {
+    // The arm's +axis pole is inside the body; openEnd 'bottom' says the −axis pole is the one sewn on.
+    const base = modelOf([
+      part('sphere', { r: 1.5 }, { id: 'body', position: [0, 4.5, 0] }),
+      part('capsule', { r: 0.3, length: 2 }, { id: 'arm_l', position: [1.9, 4.6, 0], rotationDeg: [0, 0, 60], attach: { to: 'body' } }),
+    ]);
+    const [plus, minus] = poles(by(base).arm_l);
+    expect(partSdf(by(base).body)(plus)).toBeGreaterThan(partSdf(by(base).body)(minus));
+    const bySdf = by(resizeLimbs(base, { arm_l: 3 })).arm_l;
+    expect(dist(poles(bySdf)[0], plus)).toBeLessThan(1e-5);
+    for (const [openEnd, k] of [['top', 0], ['bottom', 1]] as const) {
+      const open = { ...base, parts: base.parts.map((p) => (p.id === 'arm_l' ? { ...p, attach: { to: 'body', openEnd } } : p)) };
+      const resized = by(resizeLimbs(open, { arm_l: 3 })).arm_l;
+      expect(dist(poles(resized)[k], [plus, minus][k]), openEnd).toBeLessThan(1e-5);
+      expect(limbLength(resized)).toBe(3);
+    }
+  });
+
   it('G23: arm_r is the mirror of arm_l; the attach anchors are kept (the foot pads stay on the leg ends)', () => {
     for (const limbs of ['nubs', 'short', 'medium', 'long'] as const) {
       const { model } = applyProportions(teddy, { limbs });

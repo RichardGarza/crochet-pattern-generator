@@ -206,6 +206,25 @@ describe('invalid models fail with useful messages', () => {
     expect(problems(changed((m) => delete m.parts[8].attach))).toEqual([]);
   });
 
+  it('mirrorOf names a source part of the same type: no mirror loops or chains (not in §3.5.1; see the track notes)', () => {
+    const at = (m: CrochetModelV1, id: string): Part => m.parts.find((p) => p.id === id) as Part;
+    // ear_r mirrors ear_l (§3.6); ear_l mirroring ear_r back is a loop
+    const loop = problems(changed((m) => (at(m, 'ear_l').mirrorOf = 'ear_r')));
+    expect(loop).toHaveLength(2);
+    expect(loop.join('\n')).toMatch(/mirrors "ear_r", which itself mirrors "ear_l": mirrorOf must name a part without mirrorOf/);
+    // a chain: foot_r → foot_l → head (both ellipsoids): foot_r is the one at fault
+    const chain = problems(changed((m) => (at(m, 'foot_l').mirrorOf = 'head')));
+    expect(chain).toHaveLength(1);
+    expect(chain[0]).toMatch(/\(foot_r\)\.mirrorOf: part "foot_r" mirrors "foot_l", which itself mirrors "head"/);
+    // a different type: a mirror image has its source's type
+    const typed = problems(changed((m) => (at(m, 'head').mirrorOf = 'body')));
+    expect(typed).toHaveLength(1);
+    expect(typed[0]).toMatch(/mirrors "body", a lathe/);
+    // the fixtures' pairs are fine
+    expect(validateModel(teddy).ok).toBe(true);
+    expect(validateModel(everyType).ok).toBe(true);
+  });
+
   it('parseModel throws one readable error listing every problem', () => {
     const bad = changed((m) => {
       m.parts[1].color = 'c9';

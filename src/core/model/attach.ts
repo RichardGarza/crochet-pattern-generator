@@ -12,6 +12,7 @@ import { mulMat3, transpose3 } from '../kernel/vec';
 import {
   gapOfVertices,
   gapProbe,
+  gapWithEnclosure,
   type MeshSdf,
   meshSdfOf,
   OVERLAP_MAX_SAMPLES,
@@ -184,6 +185,10 @@ export function chooseRoot(parts: readonly Part[]): number {
  * `overlapIn3` or `gapIn` (a gap above 0.1 in is a `W_GAP`).
  *
  * `o.meshSdf` holds the part-local SDFs of mesh parts, keyed by meshRef (else by part id).
+ *
+ * Precondition, not checked: part ids are unique (§3.5.1; the importer's ids repair runs first). Every kernel
+ * resolves an id to the first part that carries it. With a repeated id the result is still one tree by that
+ * resolution: a later part with the repeated id is never made a parent, nor the root while another part can be.
  */
 export const inferAttach: InferAttachFn = (m, o) => {
   const parts = m.parts.slice();
@@ -236,7 +241,13 @@ export const inferAttach: InferAttachFn = (m, o) => {
   });
   if (roots.length === 1 && dropped.size === 0) return { model: m, repairs: [] };
 
-  const root = roots.length === 1 ? roots[0] : pickRoot(roots);
+  // Ids are meant to be unique (the importer's ids step makes them so). A link names its target by id, and an id
+  // names the FIRST part that carries it, so a later part with a repeated id can never be a link's target: it
+  // is never chosen as a parent, nor as the root while another part can be (a part linked to it would point at
+  // the first part with that id — possibly itself).
+  const referable = parts.map((p, i) => graph.index.get(p.id) === i);
+  const rootCandidates = roots.filter((i) => referable[i]);
+  const root = roots.length === 1 ? roots[0] : pickRoot(rootCandidates.length > 0 ? rootCandidates : roots);
 
   // The tree, in the order parts joined it (the root first).
   const inTree = new Array<boolean>(n).fill(false);
@@ -307,7 +318,9 @@ export const inferAttach: InferAttachFn = (m, o) => {
     let g = gaps.get(key);
     if (g === undefined) {
       const swap = gapProbe(parts[c], parts[p]) === 'parent';
-      g = gapOfVertices(verticesOf(swap ? p : c), sdfOf(swap ? c : p));
+      const probe = swap ? p : c;
+      const solid = swap ? c : p;
+      g = gapWithEnclosure(gapOfVertices(verticesOf(probe), sdfOf(solid)), () => gapOfVertices(verticesOf(solid), sdfOf(probe)));
       if (Number.isNaN(g)) g = Infinity;
       gaps.set(key, g);
     }
@@ -322,10 +335,11 @@ export const inferAttach: InferAttachFn = (m, o) => {
 
     let best: { c: number; p: number; overlap: number; gap: number } | null = null;
     let top = 0;
-    for (const c of pending) for (const p of tree) top = Math.max(top, overlapOf(c, p));
+    const targets = tree.filter((p) => referable[p]);
+    for (const c of pending) for (const p of targets) top = Math.max(top, overlapOf(c, p));
     if (top > 0) {
       for (const c of pending) {
-        for (const p of tree) {
+        for (const p of targets) {
           const v = overlapOf(c, p);
           if (v < top * (1 - OVERLAP_TIE)) continue;
           const order = best === null ? -1 : preferC(c, best.c) || best.overlap - v;
@@ -334,7 +348,7 @@ export const inferAttach: InferAttachFn = (m, o) => {
       }
     } else {
       for (const c of pending) {
-        for (const p of tree) {
+        for (const p of targets) {
           const g = gapOf(c, p);
           // Infinity − Infinity is NaN, whose comparison is false: two unmeasurable gaps tie.
           const order = best === null ? -1 : Math.abs(g - best.gap) > 1e-9 ? g - best.gap : preferC(c, best.c);
@@ -342,7 +356,9 @@ export const inferAttach: InferAttachFn = (m, o) => {
         }
       }
     }
-    // `pending` and `tree` are never empty here, so a pair was always chosen.
+    // `pending` and `targets` are never empty here (the root is referable: a later duplicate has no children, so
+    // when every parentless part were one, every part would be parentless — and the first of each id is not a
+    // later duplicate), so a pair was always chosen.
     const link = best as { c: number; p: number; overlap: number; gap: number };
     const child = parts[link.c];
     const to = parts[link.p];
@@ -466,7 +482,8 @@ function mirroredPose(left: Part, right: Part, posTol: number, rotTolDeg: number
  * Links mirror pairs (§3.7.6): for ids `X_l` / `X_r` (also `left` / `right`, `fl` / `fr`, `bl` / `br`, as any
  * `_`-separated token) with equal type and dims, positions mirrored across x = 0 and rotations (a, b, c) vs
  * (a, −b, −c), sets `mirrorOf: 'X_l'` on `X_r` and logs one `mirror-inferred` repair. A part that already has
- * `mirrorOf`, or whose twin already points at it, is left alone.
+ * `mirrorOf`, that another part already names in `mirrorOf`, or whose twin has `mirrorOf`, is left alone (the
+ * schema allows no mirror chains).
  *
  * `o.tolerance` is the relative tolerance on dims: 1e-6 by default, 0.1 for reconstructions. Positions must
  * agree within max(0.001 in, tolerance × the part's largest extent) and rotations within
@@ -477,19 +494,30 @@ export const inferMirrorPairs: InferMirrorPairsFn = (m, o) => {
   const tol = typeof given === 'number' && given >= 0 ? given : 1e-6;
   const byId = new Map<string, Part>();
   for (const p of m.parts) if (!byId.has(p.id)) byId.set(p.id, p);
+  // The mirror links as they stand, updated as pairs are linked (in parts order), so one pass never makes a chain.
+  const mirrors = new Set<string>(); // ids of parts with mirrorOf
+  const mirrored = new Set<string>(); // ids some part names in mirrorOf
+  for (const p of m.parts) {
+    if (p.mirrorOf === undefined) continue;
+    mirrors.add(p.id);
+    mirrored.add(p.mirrorOf);
+  }
   const repairs: Repair[] = [];
   let changed = false;
   const parts = m.parts.map((right) => {
     if (right.mirrorOf !== undefined) return right;
     const twinId = leftTwinId(right.id);
     const left = twinId === null ? undefined : byId.get(twinId);
-    if (!left || left === right || left.mirrorOf === right.id) return right;
+    // mirrorOf names a source part (schema): the left twin must not mirror anything, the right one must not be a source.
+    if (!left || left === right || mirrors.has(left.id) || mirrored.has(right.id)) return right;
     if (!sameShape(left, right, tol)) return right;
     const size = Math.max(...boundsSize(localBounds(left)));
     const posTol = Math.max(1e-3, tol * (Number.isFinite(size) ? size : 0));
     const rotTol = Math.max(0.5, tol * 90);
     if (!mirroredPose(left, right, posTol, rotTol)) return right;
     changed = true;
+    mirrors.add(right.id);
+    mirrored.add(left.id);
     repairs.push({
       code: 'mirror-inferred',
       part: right.id,

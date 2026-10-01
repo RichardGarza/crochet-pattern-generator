@@ -105,7 +105,7 @@ paint`; any other key next in code-unit order; `x-*` keys last.
 | Export | Signature | What it does |
 |---|---|---|
 | `eulerXYZToMat3` | `(rotationDeg: Vec3 \| undefined) => Mat3` | Rx·Ry·Rz, three.js `'XYZ'`; identity for `undefined` |
-| `mat3ToEulerXYZ` | `(m: Mat3) => Vec3` | Degrees, three.js's algorithm: y ∈ [−90°, 90°]; at gimbal lock z = 0; never −0 |
+| `mat3ToEulerXYZ` | `(m: Mat3) => Vec3` | Degrees, three.js's algorithm: y ∈ [−90°, 90°]; at gimbal lock (cos y ≤ 1e-8) z = 0; never −0. Near (not at) gimbal lock it keeps z where three.js drops it (deviation 19) |
 | `Rigid` | `interface { rotation: Mat3; position: Vec3 }` | `p ↦ rotation·p + position` |
 | `composeRigid` | `(position: Vec3, rotationDeg?: Vec3) => Rigid` | T·R |
 | `decomposeRigid` | `(t: Rigid) => { position: Vec3; rotationDeg: Vec3 }` | |
@@ -152,10 +152,11 @@ paint`; any other key next in code-unit order; `x-*` keys last.
 | `meshSdfOf` | `(part: Part, meshSdf?: Record<string, MeshSdf>) => MeshSdf \| undefined` | Looks a mesh part's SDF up by `dims.meshRef`, then by part id |
 | `overlapVolume` | `OverlapVolumeFn` = `(a: Part, b: Part, o?: { meshSdf?: Record<string, (p: Vec3) => number> }) => number` | Shared volume, in³: cell centers of a regular grid over the intersection of the two world boxes, spacing `min(0.025, smallest extent / 8)`; 0 when the boxes do not intersect |
 | `overlapVolumeWith` | `(a: Part, b: Part, o?: { meshSdf?: Record<string, MeshSdf>; maxSamples?: number; skip?: boolean }) => number` | The same with a cap on the grid cells (default 2 000 000) and `skip: false` = the reference grid without row skipping |
-| `surfaceGap` | `SurfaceGapFn` = `(child: Part, parent: Part) => number` | From the child's builder vertices: the distance from the nearest one to the parent's surface; **≤ 0 when the child touches or enters the parent** (minus the deepest vertex's depth) |
+| `surfaceGap` | `SurfaceGapFn` = `(child: Part, parent: Part) => number` | From the child's builder vertices: the distance from the nearest one to the parent's surface; **≤ 0 when the child touches or enters the parent** (minus the deepest vertex's depth). When no child vertex is inside the parent, the parent's vertices are probed against the child too, so a child that **encloses** its parent is ≤ 0 as well, never a gap (deviation 6) |
 | `surfaceGapWith` | `(child: Part, parent: Part, meshSdf?: Record<string, MeshSdf>) => number` | With the SDFs of mesh parts; a mesh child on a primitive parent is measured the other way round |
 | `gapOfVertices` | `(vertices: ArrayLike<number>, solid: WorldSdf) => number` | `−max sdf` over `[x, y, z, …]`; `Infinity` for none |
 | `gapProbe` | `(child: Part, parent: Part) => 'child' \| 'parent'` | Whose vertices `surfaceGap` uses |
+| `gapWithEnclosure` | `(gap: number, reverse: () => number) => number` | The enclosure correction shared by `surfaceGap` and `inferAttach`: `gap` when it is ≤ 0; else `reverse()` (the other part's vertices against the probe's SDF) when that is ≤ 0; else `gap` |
 | `partWorldVertices` | `(part: Part) => Float64Array<ArrayBuffer>` | The builder vertices in model space (a flat part's without duplicates) |
 | `sdfNormal` | `(f: WorldSdf, p: Vec3, h = 1e-4) => Vec3` | Outward unit normal by central differences; `[0, 1, 0]` without a gradient |
 | `partVolume` | `(given: Part) => number` | Analytic volume, in³ (flat = outline area × thickness; torus arc = tube without caps; mesh = inscribed ellipsoid of `bboxIn`) |
@@ -165,8 +166,8 @@ paint`; any other key next in code-unit order; `x-*` keys last.
 
 | Export | Signature | What it does |
 |---|---|---|
-| `inferAttach` | `InferAttachFn` = `(m: CrochetModelV1, o?: { meshSdf?: Record<string, (p: Vec3) => number> }) => { model: CrochetModelV1; repairs: Repair[] }` | Completes the attach tree: always ONE tree. Keeps valid links, drops dangling / self / cyclic ones, picks the root, grows the tree from it by largest overlap, then smallest gap. Returns the same model object when nothing changes |
-| `inferMirrorPairs` | `InferMirrorPairsFn` = `(m: CrochetModelV1, o?: { tolerance?: number }) => { model: CrochetModelV1; repairs: Repair[] }` | Sets `mirrorOf: X_l` on right-side twins. Same object when nothing changes |
+| `inferAttach` | `InferAttachFn` = `(m: CrochetModelV1, o?: { meshSdf?: Record<string, (p: Vec3) => number> }) => { model: CrochetModelV1; repairs: Repair[] }` | Completes the attach tree: always ONE tree. Keeps valid links, drops dangling / self / cyclic ones, picks the root, grows the tree from it by largest overlap, then smallest gap. Returns the same model object when nothing changes. Precondition (not checked): unique ids; with a repeated id, the later part is never a link target nor (while another part can be) the root, so the result is still one tree and idempotent |
+| `inferMirrorPairs` | `InferMirrorPairsFn` = `(m: CrochetModelV1, o?: { tolerance?: number }) => { model: CrochetModelV1; repairs: Repair[] }` | Sets `mirrorOf: X_l` on right-side twins. Never makes a mirror chain: skips a pair whose left twin has `mirrorOf` or whose right twin is already some part's `mirrorOf` (also within one pass). Same object when nothing changes |
 | `AttachGraph` | `interface { index: Map<string, number>; parent: (number \| null)[]; children: number[][]; roots: number[]; isTree: boolean }` | By part index; `parent` is `null` without `attach` or for a dangling / self link; parts on a cycle are not roots |
 | `attachGraph` | `(parts: readonly Part[]) => AttachGraph` | |
 | `isOneTree` | `(model: Pick<CrochetModelV1, 'parts'>) => boolean` | One root and every part reachable from it (what `generateAmigurumi` requires) |
@@ -193,7 +194,7 @@ re-linked part. `mirror-inferred` repairs carry `data: { mirrorOf }`.
 
 | Export | Signature | What it does |
 |---|---|---|
-| `placeChildOnSurface` | `PlaceChildOnSurfaceFn` = `(parent: Part, child: Part, at: { dir: Vec3 } \| { hit: Vec3; normal: Vec3 }, overlapIn?: number, o?: { meshSdf?: (p: Vec3) => number }) => Part` | The child with a new `position` (rounded to 1e-6): its center on the ray from the parent's center along `dir` (normalized here), or on the line through `hit` along `normal`, where its surface enters the parent's by `overlapIn` (default 0.10; negative = a gap). Rotation, dims and `attach` untouched. `o.meshSdf` is the mesh part's of the pair (the parent's when both are meshes) |
+| `placeChildOnSurface` | `PlaceChildOnSurfaceFn` = `(parent: Part, child: Part, at: { dir: Vec3 } \| { hit: Vec3; normal: Vec3 }, overlapIn?: number, o?: { meshSdf?: (p: Vec3) => number }) => Part` | The child with a new `position` (rounded to 1e-6): its center on the ray from the parent's center along `dir` (normalized here), or on the line through `hit` along `normal`, where its surface enters the parent's by `overlapIn` (default 0.10; negative = a gap). Rotation, dims and `attach` untouched. `o.meshSdf` is the mesh part's of the pair (the parent's when both are meshes). Never writes a non-finite position: a zero or non-finite `dir` / `normal` means +Y, a non-finite `hit` means `{ dir: normal }`, and a child that still cannot be placed (non-finite parent or child numbers) comes back unchanged |
 | `placeChildOnSurfaceWith` | `(parent: Part, child: Part, at: { dir: Vec3 } \| { hit: Vec3; normal: Vec3 }, overlapIn = 0.1, sources?: SurfaceSources) => Part` | The same with the surfaces of any mesh parts |
 | `SurfaceSources` | `interface { meshSdf?: Record<string, MeshSdf>; meshes?: Record<string, ColoredMesh> }` | Mesh-part surfaces by `meshRef`: SDFs, or triangle buffers (ray-cast) |
 | `surfaceExit` | `(part: Part, origin: Vec3, dir: Vec3, sources?: SurfaceSources) => number \| null` | Distance from `origin` along `dir` (normalized) to the OUTERMOST surface point on that ray; `null` when the ray misses |
@@ -210,7 +211,7 @@ re-linked part. `mirror-inferred` repairs carry `data: { mirrorOf }`.
 |---|---|---|
 | `readProportions` | `ReadProportionsFn` = `(m: CrochetModelV1) => ProportionsReading` | `{ headBody?, limbs?, disabled: { headBody?, limbs? } }`: b of "head : body = 1 : b" to two decimals (not clamped to 1…3), the chip nearest to the arms (the legs without arms), and the reasons a control is disabled |
 | `applyProportions` | `ApplyProportionsFn` = `(m: CrochetModelV1, o: { headBody?: number; limbs?: LimbLength }, meshes?: Record<string, ColoredMesh>) => { model: CrochetModelV1; meshes?: Record<string, ColoredMesh> }` | §4.2 (G23), ending with a uniform rescale to the original height; `meshes` comes back (scaled) only when it was passed. A disabled control or an unusable value is ignored (the same model comes back) |
-| `resizeLimbs` | `(model: CrochetModelV1, lengths: Readonly<Record<string, number>>, meshes?: Record<string, ColoredMesh>) => CrochetModelV1` | The limb edit alone, before any rescale: each named limb gets its total length with its proximal pole kept, parents before children, mirror twins alike, children re-anchored |
+| `resizeLimbs` | `(model: CrochetModelV1, lengths: Readonly<Record<string, number>>, meshes?: Record<string, ColoredMesh>) => CrochetModelV1` | The limb edit alone, before any rescale: each named limb gets its total length with its proximal pole kept (rule in deviation 20), parents before children, mirror twins alike, children re-anchored |
 | `LIMB_TEMPLATE` | `LimbTemplate` | `quadruped { arm: 0.25, leg: 0.2 }`, `quadruped-standing { 0.3, 0.3 }`, `biped { 0.3, 0.3 }`, `creature { 0.15, 0.15 }` (fractions of the model height) |
 | `LIMB_FACTORS` | `Readonly<Record<LimbLength, number>>` | `{ nubs: 0.6, short: 1, medium: 1.5, long: 2.2 }` |
 | `limbTemplateRow` | `(m: Pick<CrochetModelV1, 'category' \| 'pose'>) => keyof LimbTemplate` | quadruped + `pose: 'standing'` → `quadruped-standing`; `biped` / `person` → `biped`; `creature` → `creature`; anything else (or none) → `quadruped` |
@@ -275,7 +276,7 @@ fixture URLs. `__tests__/helpers/everyType.ts`: `buildEveryType()`, `readEveryTy
 | `buildModel`: one named mesh per part, finite geometry | `builder.test.ts` | All three models at `unitScale` 1 and 0.0254: names = ids in order, no NaN, positions × unitScale, rotation order `XYZ` |
 | Lathe mesh spans exactly `[y_min, y_max]`, origin at `position` | `builder.test.ts` | Box y equals the profile's min and max to the last float32 digit (§3.6 body, every-type body, an offset profile) |
 | Same scene as the normative code | `claudeDesign.test.ts` | 0 differing numbers in positions and vertex colors (> 40 000 each case) for the §3.6 example, the teddy, every-type without its mesh/paint, and regions without `from`/`to` |
-| Euler ↔ matrix round-trips (incl. gimbal), = three.js `'XYZ'`; compose/decompose | `transforms.test.ts` | Matrices equal three.js to 1e-12; angles equal three.js's `setFromRotationMatrix` to 1e-9 (incl. y = ±90°); `Matrix4.compose`/`decompose` to 1e-12 |
+| Euler ↔ matrix round-trips (incl. gimbal), = three.js `'XYZ'`; compose/decompose | `transforms.test.ts` | Matrices equal three.js to 1e-12; angles equal three.js's `setFromRotationMatrix` to 1e-9 (incl. y = ±90°; outside the near-gimbal band of deviation 19); `Matrix4.compose`/`decompose` to 1e-12. Round trip angles → matrix → angles → matrix, worst element: 1.1e-13 for \|y\| in [89.9°, 89.975°), 7e-16 in [89.975°, 89.9999°), 7.6e-9 in [89.9999°, 90°) (three.js: up to 4.5e-4 in the band) |
 | Each analytic SDF vs brute-force distance to the builder mesh, seeded, stated tolerance, right sign | `sdf.test.ts` | max \| \|sdf\| − d \| over 500 points (tolerance): sphere 2.99e-3 (3.6e-3), capsule 2.72e-3 (3.0e-3), short capsule 4.14e-3 (4.5e-3), cylinder 1.71e-3 (2.0e-3), tapered 1.71e-3 (2.0e-3), cone 1.49e-3 (1.75e-3), torus 4.22e-3 (4.52e-3), box 1.7e-8 (1e-6), lathe 2.57e-3 (3.0e-3), lathe with corners 2.14e-3 (2.5e-3); torus arcs 90°/200°/300° between their ends 2.65e-3 / 3.06e-3 / 3.68e-3 (4.52e-3); flat shapes 0.085–0.127 (bevel ignored, tolerance bevel·√2 + 0.005); ellipsoid bound: 0 sign errors, never above the mesh distance outside. 0 wrong signs everywhere |
 | `inferAttach` on the teddy | `attach.test.ts`, `fixtures.test.ts` | One tree rooted at `body`; head, arms, legs, tail → body (6 links: leg_l, leg_r, arm_l, arm_r, tail, head); head keeps muzzle, eyes, ears; overlaps head 0.0654, legs 1.3425, arms 0.6415, tail 0.1134 in³ (§3.7.3: 0.07 / 1.34 / 0.64 / 0.11); from no links at all (OBJ carrier): the same tree, 16 links |
 | No cycles on any input; idempotent; frozen `Repair` codes | `attach.test.ts` | 60 seeded random models with random, dangling, self and cyclic links: one tree each, idempotent, deterministic, only `attach-inferred`; broken numbers never throw |
@@ -284,7 +285,7 @@ fixture URLs. `__tests__/helpers/everyType.ts`: `buildEveryType()`, `readEveryTy
 | `nameParts` on anonymous parts; `keepIds` | `naming.test.ts` | The parentless, label-less teddy with ids `p00…p16` → body, head, muzzle, ear_l/ear_r, arm_l/arm_r, leg_l/leg_r, tail, part_1…part_7 by volume; kept ids stay and are not reused |
 | `placeChildOnSurface`, every parent type | `place.test.ts` | 9 primitive types, plain and rotated, 9 directions (a torus: 3 in its ring plane, its axis, world +Y): kernel overlap 0.1 ± 8.5e-7; measured on the builder meshes 0.1 ± 0.0034 (flat parents: plus the bevel the SDF ignores, ≤ 0.095); `{ hit, normal }` on every type; mesh parents by SDF and by triangles; every child type |
 | G23 head 1:1 / 1:3 | `proportions.test.ts` | Head fraction 0.50005 / 0.24996 (targets 0.5 / 0.25); height 9.878906 / 9.878905 vs 9.878905 (< 1e-5 %); ear gaps −0.655 / −0.918 in (they enter the head) |
-| G23 limbs "long" | `proportions.test.ts` | arm_l, arm_r 0.55004·H, legs 0.44003·H; proximal poles moved 7.5e-7 in before the rescale; `arm_r` is the exact mirror of `arm_l` |
+| G23 limbs "long" | `proportions.test.ts` | arm_l, arm_r 0.55004·H, legs 0.44003·H; proximal poles moved 7.5e-7 in before the rescale; `arm_r` is the exact mirror of `arm_l`. Chip order does not matter: 9 chips in a row (nubs, short, medium, long, nubs, long, short, nubs, medium) move the shoulders and hips by at most 1.3e-6 in; any chip followed by any other equals the second applied directly to 2.8e-6 in (every part) |
 | G23 `readProportions(teddy)` | `proportions.test.ts` | `{ headBody: 1.3, limbs: 'short', disabled: {} }` (raw 1.2974; arms 3.0/9.879 = 0.304 = 1.21 × 0.25) |
 | Disabled reasons of §4.2 | `proportions.test.ts` | Above, each tested |
 | `applyProportions` ≤ 200 ms | `proportions.test.ts` | 2.8 ms (1:1), 2.2 ms (1:3), 14.5 ms (long), 11.7 ms (both) |
@@ -323,7 +324,11 @@ the analytic surface of its part to 1e-5 in).
    exact skipping (every analytic SDF is a lower bound of the distance outside), so the count equals the full
    grid's (tested on 60 random pairs).
 6. **`surfaceGap` is signed**: positive = gap; zero or negative = the child touches or enters the parent (minus
-   the depth of its deepest vertex). `> 0.1` still means `W_GAP`.
+   the depth of its deepest vertex). `> 0.1` still means `W_GAP`. §3.7.6 says "from the child's builder
+   vertices"; when no child vertex is inside the parent the kernel also probes the parent's vertices against
+   the child, because a child that encloses its parent (every child vertex outside it) would otherwise read as a
+   gap (a shell of r 2 around a core of r 0.5: +1.5 in, now −1.5 in). Parts that are apart keep the child-vertex
+   value. `inferAttach` uses the same measure.
 7. **`inferAttach` repairs bad links itself** (the spec puts "a dangling or cyclic link is removed first" in
    the importer's step before it): a link to a missing part or to the part itself is dropped; a cycle is broken
    at the member the root rule would choose; those parts are linked again. A root that lost such a link gets
@@ -379,6 +384,33 @@ the analytic surface of its part to 1e-5 in).
     tessellated vertices — the spec's own golden (grounding +0.0789) is the analytic one (the OBJ's tessellated
     legs stop at −0.0780). Flat parts use the builder's vertices, bevel included.
 18. **Extra files:** `limits.ts`, `dims.ts`, `fixtures/models/every-type.mesh.json`.
+19. **`mat3ToEulerXYZ` near gimbal lock.** three.js takes its gimbal branch (z = 0) from |m13| ≥ 0.9999999,
+    i.e. |y| ≥ 89.9744°, and loses up to 4.5e-4 of the rotation (≈ 0.025°) for |y| in (89.9744°, 90°). The kernel
+    keeps the general decomposition there, with y = atan2(m13, cos y) instead of the ill-conditioned asin, down to
+    cos y = 1e-8 (where the two branches' errors, 1e-16 / cos y and cos y, balance); below that it is three.js's
+    gimbal branch. So the angles equal three.js's everywhere except inside that band (by the rotation three.js
+    loses), and the round trip is exact to 1e-8 everywhere (measured above).
+20. **The proximal end of a limb (§4.2) is chosen by a fuller rule.** The spec's rule — the pole with the larger
+    parent SDF — follows the limb's length, not its attachment, for a limb that lies along its parent: the teddy's
+    arm touches the body 0.78 in below its shoulder tip and nowhere else, so at "nubs" length (1.48 in, shoulder
+    kept) its lower pole is the nearer one (−0.110 in vs −0.161 in). Re-evaluated on the next chip, the rule then
+    kept the hand and grew the arm up to the neck: `nubs` → `long` put arm_l 3.6 in from where `long` puts it,
+    `short` → `nubs` → `short` 0.99 in away. Any rule that looks only at the current geometry has this problem for
+    such a limb (the nubs arm with its shoulder kept and the nubs arm with its hand kept are the same arm), so the
+    kernel orders the evidence: (1) `attach.openEnd` `'top'` / `'bottom'` — the open end is the end sewn on (as
+    in §2.10.2, `'top'` = the +axis pole; the §3.6 arms); (2) a mesh parent known only by triangles: the pole
+    nearer its center; (3) the larger parent SDF, when the two poles differ by at least 0.25 × the limb's radius;
+    (4) otherwise the pole nearer the model's mirror plane x = 0 (limbs grow away from the body's middle) — a
+    property that keeping that pole and changing the length cannot flip for a limb that heads away from the plane;
+    (5) when both poles are as far from the plane (1e-6 in), the larger parent SDF after all. On the untouched
+    teddy every limb is decided by (3) (arms: −0.161 vs −0.782 in; legs: hip inside the body), so the G23 goldens
+    are unchanged.
+21. **Schema: `mirrorOf` must name a part of the same type that has no `mirrorOf` itself** (no mirror chains or
+    loops). §3.5.1 does not say so; without it `ear_l.mirrorOf = ear_r` with `ear_r.mirrorOf = ear_l` validated,
+    and a later track following `mirrorOf` to the part that carries the pattern never reached a source; a
+    `tail.mirrorOf = body` would make "the same as body" of a different shape. Request 16.
+22. **Kernels are total over non-finite placement input** (`placeChildOnSurface`, see its row): an editor ray can
+    produce a NaN normal, and JSON would write a NaN position as `null`.
 
 ## Ambiguities resolved
 
@@ -391,7 +423,7 @@ the analytic surface of its part to 1e-5 in).
 | §3.5.2 "whole document ≤ 2 MB" | UTF-8 bytes of `JSON.stringify`, 2·1024·1024 |
 | §3.5.2 text fields | Every free string ≤ 2 000 characters; `paint.data` is not a text field: base64 of exactly 4096 bytes |
 | Angles | `azimuthDeg` −360…360, `elevationDeg` −90…90, `spanDeg` (0, 360], `arcDeg` (0, 360], `seamAzimuthDeg` −360…360; `from ≤ to` |
-| References | Part, palette and feature ids unique; `color`, region colors, feature colors must be palette ids; `attach.to`, `mirrorOf`, `feature.on` must be parts; no self links; no attach cycle. **Several roots are valid** (the tree is completed by `inferAttach`). `assembly[].part` / `.to` are free text |
+| References | Part, palette and feature ids unique; `color`, region colors, feature colors must be palette ids; `attach.to`, `mirrorOf`, `feature.on` must be parts; no self links; no attach cycle; `mirrorOf` names a part of the same type without `mirrorOf` (deviation 21). **Several roots are valid** (the tree is completed by `inferAttach`). `assembly[].part` / `.to` are free text |
 | Feature ids | Same pattern as part ids (request 14) |
 | §3.7.6 "prototype keys" | `__proto__`, `constructor`, `prototype` as a KEY anywhere in the document is an error (they are fine as values) |
 | §3.7.6 overlap grid "smallest extent / 8" | The smallest extent of the intersection box |
@@ -401,6 +433,8 @@ the analytic surface of its part to 1e-5 in).
 | §2.11.1 paint grid | Row-major, `row = ⌊v·64⌋`, `column = ⌊u·64⌋` (`uv64Cell`); values index `model.palette` |
 | `meshSdf` records | Keyed by `dims.meshRef` (like `ImportResult.meshes`), else by part id; the functions are part-local |
 | §4.2 limb "proximal end" with no SDF for a mesh parent | The pole nearer the parent's center |
+| §4.2 limb "proximal end" in general | Deviation 20: `openEnd`, else the larger parent SDF when decisive (≥ 0.25·r apart), else the pole nearer x = 0 |
+| §3.5.1 "unique" part ids, for the kernels | A precondition of every kernel (the importer's ids repair runs first). They resolve an id to the FIRST part carrying it; `inferAttach` still returns one tree on repeated ids (its row), the others do not promise anything more |
 | §4.2 limb chip for creatures | `creature` arms and legs both 0.15 (DESIGN v1.3); `limb<n>_*` limbs use the arm value |
 | `withExtensions` | A transform (as the spec describes), so `z.toJSONSchema(crochetModelSchema)` cannot work: use the `…CoreSchema` exports |
 
@@ -439,6 +473,19 @@ the analytic surface of its part to 1e-5 in).
     `eye_l` style and are referenced like part ids). Say so in §3.5.1, and let the importer's "ids: slugify,
     dedupe" repair (§3.7.6) cover feature ids too, or a Claude Design feature id like `Eye-L` fails validation.
 
+15. **§4.2 (spec ambiguity, T6/T7):** "keeping its proximal end fixed (the pole with the larger parent SDF)" is
+    path-dependent for a limb lying along its parent — chip clicks in a different order give a different arm
+    (deviation 20 measured it on the teddy). Please make the rule in §4.2 the ordered one of deviation 20, or name
+    another stable one (e.g. a stored proximal end). §2.10.2's start pole uses the same SDF comparison ("tip
+    first"), so T4 should use the same function for both, or a nubs arm may be started at its shoulder; the kernel
+    can export it (`proximalGrow` is internal for now).
+16. **§3.5.1 `mirrorOf` (T3, T4, T7):** state that `mirrorOf` names a part of the same type without `mirrorOf`
+    (deviation 21), and let the importer's "dims and attach validity" step drop a `mirrorOf` that breaks it (with
+    a repair), or the strict validation at the end of §3.7.6 rejects such a Claude Design model.
+17. **Unique ids are a precondition of every model kernel** (`inferAttach`, `inferMirrorPairs`, `nameParts`,
+    `placeChildOnSurface`'s callers, `applyProportions`): the §3.7.6 ids repair ("slugify, dedupe") must run before
+    them, and reconstruction (§2.9.7) and the editor must never produce a repeated id.
+
 ## Not done, not verified
 
 - `revisions.ts` (`carryOver`) is the state kernel's.
@@ -457,4 +504,5 @@ the analytic surface of its part to 1e-5 in).
 `326848e` notes, schema key-set guard, full eye rule; `bbef767` checks against the real Claude Design exports and
 the normative builder; then the completion commit (normative region defaults, lathe floor in `scaleModel`, torus
 arc against the builder mesh, every hint value in `every-type.json`, explicit timeouts for the heavy suites, these
-notes).
+notes); then the verifier-round-1 fixes (a stable proximal end for limbs, duplicate ids in `inferAttach`, enclosure
+in `surfaceGap`, near-gimbal Euler angles, non-finite placement input, `mirrorOf` chains).

@@ -392,8 +392,16 @@ function checkReferences(model: ParsedModel, issue: (message: string, path: Prop
       else if (!index.has(p.attach.to)) issue(`part "${p.id}" is attached to "${p.attach.to}", which does not exist`, ['parts', i, 'attach', 'to']);
     }
     if (p.mirrorOf !== undefined) {
+      const twinAt = index.get(p.mirrorOf);
+      const twin = twinAt === undefined ? undefined : model.parts[twinAt];
       if (p.mirrorOf === p.id) issue(`part "${p.id}" mirrors itself`, ['parts', i, 'mirrorOf']);
-      else if (!index.has(p.mirrorOf)) issue(`part "${p.id}" mirrors "${p.mirrorOf}", which does not exist`, ['parts', i, 'mirrorOf']);
+      else if (!twin) issue(`part "${p.id}" mirrors "${p.mirrorOf}", which does not exist`, ['parts', i, 'mirrorOf']);
+      // mirrorOf names the source of a mirror pair: never a part that is itself a mirror (no chains, no loops) …
+      else if (twin.mirrorOf !== undefined) {
+        issue(`part "${p.id}" mirrors "${twin.id}", which itself mirrors "${twin.mirrorOf}": mirrorOf must name a part without mirrorOf`, ['parts', i, 'mirrorOf']);
+      }
+      // … and a mirror image has the type of its source.
+      else if (twin.type !== p.type) issue(`part "${p.id}" (a ${p.type}) mirrors "${twin.id}", a ${twin.type}`, ['parts', i, 'mirrorOf']);
     }
   });
 
@@ -462,7 +470,9 @@ function documentLimitIssue(input: unknown): string | null {
 /**
  * The strict schema of a whole model (§3.5.1, limits and semantics of §3.5.2): `parse(x)` deep-equals `x` for a
  * valid model; `x-*` keys on the model and on parts are kept; any other unknown key, a broken reference
- * (palette id, `attach.to`, `mirrorOf`, `feature.on`), a duplicate id or an attach cycle is an error.
+ * (palette id, `attach.to`, `mirrorOf`, `feature.on`), a duplicate id or an attach cycle is an error. `mirrorOf`
+ * must name a part of the same type that has no `mirrorOf` itself (no mirror chains or loops; not in §3.5.1,
+ * see docs/tracks/s0b-model.md).
  */
 export const crochetModelSchema: z.ZodType<CrochetModelV1, unknown> = z.unknown().transform((input, ctx): CrochetModelV1 => {
   const limit = documentLimitIssue(input);

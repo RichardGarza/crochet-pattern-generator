@@ -243,6 +243,23 @@ describe('placeChildOnSurface with { hit, normal } (the editor’s Add part, §4
   });
 });
 
+describe('placeChildOnSurface on input it cannot use', HEAVY, () => {
+  it('never writes a non-finite position: a zero or non-finite direction or normal means +Y, a non-finite hit means { dir: normal }', () => {
+    const parent = part('sphere', { r: 1 }, { id: 'body' });
+    const child = part('sphere', { r: 0.3 }, { id: 'head' });
+    const up = placeChildOnSurface(parent, child, { dir: [0, 1, 0] });
+    expect(up.position).toEqual([0, 1.2, 0]);
+    for (const dir of [[0, 0, 0], [Number.NaN, 1, 0], [Number.POSITIVE_INFINITY, 0, 0]] as Vec3[]) {
+      expect(placeChildOnSurface(parent, child, { dir }).position, String(dir)).toEqual(up.position);
+    }
+    expect(placeChildOnSurface(parent, child, { hit: [0, 1, 0], normal: [0, Number.NaN, 0] }).position).toEqual(up.position);
+    expect(placeChildOnSurface(parent, child, { hit: [Number.NaN, 1, 0], normal: [1, 0, 0] }).position).toEqual([1.2, 0, 0]);
+    // a parent with non-finite numbers: the child stays where it was
+    const broken = { ...parent, position: [Number.NaN, 0, 0] as Vec3 };
+    expect(placeChildOnSurface(broken, child, { dir: [0, 1, 0] })).toBe(child);
+  });
+});
+
 describe('surfaceExit and overlapAlongRay', HEAVY, () => {
   it('surfaceExit is the distance to the outermost surface point on a ray', () => {
     const ball = part('sphere', { r: 2 }, { position: [1, 1, 1] });

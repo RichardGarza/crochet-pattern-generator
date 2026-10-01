@@ -200,24 +200,36 @@ function centerOnSurface(child: Surface, anchor: Vec3, n: Vec3, overlap: number)
   return along(anchor, n, reachBack - overlap);
 }
 
+const isFiniteVec3 = (v: unknown): v is Vec3 =>
+  Array.isArray(v) && v.length >= 3 && Number.isFinite(v[0]) && Number.isFinite(v[1]) && Number.isFinite(v[2]);
+
+/** A unit direction: +Y for a zero, missing or non-finite vector (an editor ray can yield a NaN normal). */
+function unitOrUp(v: Vec3 | undefined): Vec3 {
+  return isFiniteVec3(v) ? normalize(v) : [0, 1, 0];
+}
+
 function placeWith(parent: Part, child: Part, at: { dir: Vec3 } | { hit: Vec3; normal: Vec3 }, overlapIn: number, sources?: SurfaceSources): Part {
   const overlap = Number.isFinite(overlapIn) ? overlapIn : DEFAULT_OVERLAP_IN;
   const childSurface = surfaceOf(child, sources);
   let anchor: Vec3;
   let n: Vec3;
+  // A surface point that is not finite says nothing: place along its normal from the parent's center instead.
+  if (!('dir' in at) && !isFiniteVec3(at.hit)) at = { dir: at.normal };
   if ('dir' in at) {
-    n = normalize(at.dir);
+    n = unitOrUp(at.dir);
     const parentSurface = surfaceOf(parent, sources);
     const hit = parentSurface.exit(parentSurface.center, n);
     // A ray that misses the parent (through the hole of a torus): start from the parent's center.
     anchor = along(parentSurface.center, n, hit?.t ?? 0);
   } else {
-    n = normalize(at.normal);
+    n = unitOrUp(at.normal);
     anchor = [at.hit[0], at.hit[1], at.hit[2]];
   }
   const center = centerOnSurface(childSurface, anchor, n, overlap);
   const mesh = child.type === 'mesh' ? sources?.meshes?.[child.dims.meshRef] : undefined;
-  return { ...child, position: roundVec3(positionForCenter(child, center, mesh)) };
+  const position = roundVec3(positionForCenter(child, center, mesh));
+  // Never write a non-finite position (JSON would turn it into null): a part that cannot be placed stays put.
+  return isFiniteVec3(position) ? { ...child, position } : child;
 }
 
 /**
@@ -229,6 +241,8 @@ function placeWith(parent: Part, child: Part, at: { dir: Vec3 } | { hit: Vec3; n
  * surface has entered the parent's surface by `overlapIn` along that ray.
  * `{ hit, normal }`: the same along the outward `normal` at the surface point `hit` (a click on the parent).
  *
+ * A zero or non-finite `dir` / `normal` means +Y; a non-finite `hit` means `{ dir: normal }`; a position that
+ * still comes out non-finite (a parent or child with non-finite numbers) leaves the child unchanged.
  * `overlapIn` defaults to 0.10 in; a negative value leaves a gap. `o.meshSdf` is the part-local SDF of the mesh
  * part of the pair (the parent's when both are mesh parts); a mesh part without one is the ellipsoid inscribed
  * in its bounding box. The position is rounded to 1e-6 in.

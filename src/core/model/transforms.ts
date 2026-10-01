@@ -59,21 +59,42 @@ export function eulerXYZToMat3(rotationDeg: Vec3 | undefined): Mat3 {
 }
 
 /**
+ * Below this cos(y) a rotation is treated as gimbal-locked (z = 0). At cos(y) = c the two ways of decomposing are
+ * both accurate to about max(1e-16 / c, c): 1e-8 balances them.
+ */
+const GIMBAL_COS = 1e-8;
+
+/**
  * Euler XYZ angles (degrees) of a rotation matrix — the algorithm of three.js `Euler.setFromRotationMatrix`
- * for order 'XYZ', so the result is the one three.js gives: y in [−90°, 90°]; at gimbal lock (|m13| ≈ 1,
- * y = ±90°) z is 0 and x carries the whole turn about the folded axis.
+ * for order 'XYZ', so the result is the one three.js gives: y in [−90°, 90°]; at gimbal lock (y = ±90°) z is 0
+ * and x carries the whole turn about the folded axis.
+ *
+ * One deviation, near (not at) gimbal lock: three.js switches to its gimbal branch (z = 0) as soon as
+ * |m13| ≥ 0.9999999 (|y| ≥ 89.9744°), which loses up to 4.5e-4 (≈ 0.025°) of the rotation for |y| in that band.
+ * Here the band keeps the general decomposition, with y = atan2(m13, cos y) instead of the ill-conditioned
+ * asin, down to cos(y) = 1e-8; so angles → matrix → angles → matrix is exact to about 1e-8 everywhere, and the
+ * angles differ from three.js's only inside the band (by the rotation three.js loses there).
  */
 export function mat3ToEulerXYZ(m: Mat3): Vec3 {
   const m13 = m[2];
-  const y = Math.asin(clamp(m13, -1, 1));
   let x: number;
+  let y: number;
   let z: number;
   if (Math.abs(m13) < 0.9999999) {
+    y = Math.asin(clamp(m13, -1, 1));
     x = Math.atan2(-m[5], m[8]);
     z = Math.atan2(-m[1], m[0]);
   } else {
-    x = Math.atan2(m[7], m[4]);
-    z = 0;
+    const cosY = Math.hypot(m[0], m[1]);
+    if (cosY > GIMBAL_COS) {
+      y = Math.atan2(m13, cosY);
+      x = Math.atan2(-m[5], m[8]);
+      z = Math.atan2(-m[1], m[0]);
+    } else {
+      y = Math.asin(clamp(m13, -1, 1));
+      x = Math.atan2(m[7], m[4]);
+      z = 0;
+    }
   }
   // + 0 turns −0 into 0: atan2(−0, 1) is −0, and angles are compared and serialized downstream.
   return [x * RAD2DEG + 0, y * RAD2DEG + 0, z * RAD2DEG + 0];

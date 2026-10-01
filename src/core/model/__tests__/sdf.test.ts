@@ -5,6 +5,7 @@ import { flatBevelSize } from '../builder';
 import {
   gapOfVertices,
   gapProbe,
+  gapWithEnclosure,
   localSdf,
   meshSdfOf,
   OVERLAP_MAX_SAMPLES,
@@ -549,6 +550,21 @@ describe('surfaceGap (§3.7.6: from the child’s builder vertices)', HEAVY, () 
     expect(surfaceGap(part('sphere', { r: 0.5 }, { position: [0, 1.5, 0] }), body)).toBeCloseTo(0, 6);
     expect(surfaceGap(part('sphere', { r: 0.5 }, { position: [0, 1.3, 0] }), body)).toBeCloseTo(-0.2, 6);
     expect(surfaceGap(part('sphere', { r: 0.1 }, { position: [0, 0, 0] }), body)).toBeCloseTo(-1 + 0.1, 2);
+  });
+
+  it('a child that encloses its parent is no gap: then the parent’s vertices are probed against the child (no false W_GAP)', () => {
+    // every vertex of the shell is outside the core, so the child's vertices alone would read +1.5 in
+    const shell = part('sphere', { r: 2 }, { id: 'shell' });
+    const core = part('sphere', { r: 0.5 }, { id: 'core' });
+    expect(gapOfVertices(partWorldVertices(shell), worldSdf(core))).toBeCloseTo(1.5, 6);
+    expect(surfaceGap(shell, core)).toBeCloseTo(-1.5, 6); // minus the deepest core vertex's depth in the shell
+    expect(surfaceGap(core, shell)).toBeCloseTo(-1.5, 6);
+    // off-center, still enclosed; and the reverse probe never turns a real gap into a contact
+    expect(surfaceGap(shell, { ...core, position: [0.8, 0, 0] })).toBeLessThan(0);
+    expect(surfaceGap(part('sphere', { r: 0.5 }, { position: [0, 2, 0] }), part('sphere', { r: 1 }))).toBeCloseTo(0.5, 6);
+    expect(gapWithEnclosure(-0.2, () => Number.NaN)).toBe(-0.2);
+    expect(gapWithEnclosure(0.3, () => 0.1)).toBe(0.3);
+    expect(gapWithEnclosure(0.3, () => -0.4)).toBe(-0.4);
   });
 
   it('teddy: every part touches its parent (no W_GAP), and a part moved away reports its gap', () => {
