@@ -174,6 +174,10 @@ describe('alignViews: automatic scales from the shared axes', () => {
     const empty: ViewMask = { id: 'e', label: 'left', mask: new Uint8Array(100), w: 10, h: 10 };
     expect(codes([view('f', 'front', s, cam), empty, view('t', 'top', s, cam)])).toEqual([ALIGN_ISSUES.emptyView]);
     expect(codes([view('f', 'front', s, cam), view('f2', 'front', s, cam), view('l', 'left', s, cam)])).toEqual([ALIGN_ISSUES.duplicate]);
+    // Every per-view issue names its photo (Issue.where.view = PhotoView.id, §2.9.1–2.9.2); E_VIEWS names none.
+    expect(alignViews([view('f', 'front', s, cam), empty, view('t', 'top', s, cam)]).issues[0].where).toEqual({ view: 'e' });
+    expect(alignViews([view('f', 'front', s, cam), view('f2', 'front', s, cam), view('l', 'left', s, cam)]).issues[0].where).toEqual({ view: 'f2' });
+    expect(topOnly.issues[0].where).toBeUndefined();
     expect(() => alignViews([{ ...view('f', 'front', s, cam), align: { ...DEFAULT_ALIGN, scale: 0 } }])).toThrow(RangeError);
     expect(() => alignViews([{ ...view('f', 'front', s, cam), label: 'side' as ViewLabel }])).toThrow(RangeError);
     expect(() => alignViews([{ ...view('f', 'front', s, cam), label: 'toString' as ViewLabel }])).toThrow(RangeError);
@@ -364,6 +368,8 @@ describe('plane tables, hull silhouettes, consistency IoU', HEAVY, () => {
     const c = viewConsistency(a, 96);
     expect(c.views.some((v) => v.warn)).toBe(true);
     expect(c.issues.map((i) => i.code)).toContain(ALIGN_ISSUES.iou);
+    const flagged = new Set(c.views.filter((v) => v.warn).map((v) => v.id));
+    for (const issue of c.issues) expect(flagged.has(issue.where?.view as string)).toBe(true);
   });
 
   it('a stray blob that shifts the box center lowers the IoU below 0.9; align.dx restores it', () => {

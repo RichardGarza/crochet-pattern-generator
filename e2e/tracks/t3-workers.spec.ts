@@ -119,11 +119,20 @@ test.describe('T3 workers under npm run dev', () => {
       ctx.fill();
       const blob = await canvas.convertToBlob({ type: 'image/png' });
       try {
-        const { mask, w, h } = await workers.geom.mask(blob);
+        const { mask, w, h, raw, scale, issues } = await workers.geom.mask(blob);
         let area = 0;
         for (const v of mask as Uint8Array) area += v;
         // Mask grid: 512 × 384 (scale 0.8), so the disc has radius 120 px there.
-        return { w, h, area, center: (mask as Uint8Array)[256 + 512 * 192], corner: (mask as Uint8Array)[0] };
+        return {
+          w,
+          h,
+          area,
+          center: (mask as Uint8Array)[256 + 512 * 192],
+          corner: (mask as Uint8Array)[0],
+          rawLength: (raw as Uint8Array | undefined)?.length,
+          scale,
+          issues,
+        };
       } finally {
         workers.terminate();
       }
@@ -133,5 +142,83 @@ test.describe('T3 workers under npm run dev', () => {
     expect(result.center).toBe(1);
     expect(result.corner).toBe(0);
     expect(Math.abs(result.area / (Math.PI * 120 * 120) - 1)).toBeLessThan(0.03);
+    // Design v1.4: the optional raw mask, the scale and the §2.9.1 guards come back too.
+    expect(result.rawLength).toBe(512 * 384);
+    expect(result.scale).toBeCloseTo(0.8, 6);
+    expect(result.issues).toEqual([]);
+  });
+
+  test('geom.worker builds a model (T3.2): N = 64 previews behind the latest-wins channel, N = 128 final', async ({ page }, info) => {
+    const result = await page.evaluate(async () => {
+      const load = new Function('url', 'return import(url)') as (url: string) => Promise<any>;
+      const { workers, isSuperseded } = await load('/src/workers/client.ts');
+      // Three orthographic views of a sphere: discs of radius 150 px on 400² masks.
+      const disc = (): Uint8Array => {
+        const m = new Uint8Array(400 * 400);
+        for (let y = 0; y < 400; y++) for (let x = 0; x < 400; x++) if ((x + 0.5 - 200) ** 2 + (y + 0.5 - 200) ** 2 <= 150 * 150) m[x + 400 * y] = 1;
+        return m;
+      };
+      const views = (['front', 'left', 'top'] as const).map((label) => ({
+        view: { id: label, imageKey: `img:${label}`, label, align: { scale: 1, dx: 0, dy: 0, rot90: 0, mirror: false } },
+        image: { w: 1, h: 1, data: new Uint8ClampedArray(4) },
+        mask: disc(),
+        maskW: 400,
+        maskH: 400,
+      }));
+      const settings = {
+        N: 64,
+        kappa: 0.9,
+        photoView: 'front',
+        backShape: 'mirror',
+        backColors: 'part',
+        oneSidedDetail: true,
+        useDepth: false,
+        keepHoles: false,
+        mergeTouching: false,
+        splitNeck: true,
+        openingFrac: 0.12,
+        fitTolerance: 0.12,
+        targetHeightIn: 6,
+      };
+      const gauge = { cell: { w: 0.22, h: 0.2 }, wSc: 0.22, hSc: 0.2, lscIn: 1, hookMm: 3.5, stretch: 1, tol: 0.1, source: 'default' };
+      try {
+        // Slider ticks: three N = 64 previews, then the N = 128 build on release. Only the last one resolves.
+        const t0 = performance.now();
+        const calls = [64, 64, 64, 128].map((N) => workers.geom.build({ views, settings: { ...settings, N }, gauge }));
+        const outcomes = await Promise.allSettled(calls);
+        const ms = performance.now() - t0;
+        const states = outcomes.map((o) => (o.status === 'fulfilled' ? 'ok' : isSuperseded(o.reason) ? 'superseded' : `error: ${o.reason}`));
+        const last = outcomes[3].status === 'fulfilled' ? outcomes[3].value : null;
+        const t1 = performance.now();
+        const preview = await workers.geom.build({ views, settings, gauge });
+        const previewMs = performance.now() - t1;
+        const summary = (r: any) => {
+          const ref = Object.keys(r.meshes)[0];
+          return {
+            parts: r.model.parts.map((p: any) => p.id),
+            height: r.model.finishedSize.height,
+            triangles: r.meshes[ref].indices.length / 3,
+            report: r.report,
+            sdfDims: r.sdfs[ref].dims,
+            errors: r.issues.filter((i: any) => i.severity === 'error').length,
+          };
+        };
+        return { states, ms, previewMs, final: last && summary(last), preview: summary(preview) };
+      } finally {
+        workers.terminate();
+      }
+    });
+    await attachJson(info, 'geom-build', result);
+    expect(result.states[3]).toBe('ok');
+    expect(result.states.slice(0, 3).every((s: string) => s === 'ok' || s === 'superseded')).toBe(true);
+    expect(result.states.filter((s: string) => s === 'superseded').length).toBeGreaterThanOrEqual(2);
+    for (const r of [result.final!, result.preview]) {
+      expect(r.parts).toEqual(['body']);
+      expect(r.height).toBeCloseTo(6, 6);
+      expect(r.report.parts).toBe(1);
+      expect(r.report.genus).toBe(0);
+      expect(r.errors).toBe(0);
+    }
+    expect(result.final!.triangles).toBeGreaterThan(2 * result.preview.triangles);
   });
 });

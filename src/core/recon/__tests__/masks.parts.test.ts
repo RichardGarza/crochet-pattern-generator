@@ -1,6 +1,7 @@
 // The building blocks of the classical mask ladder (DESIGN.md §2.9.1): downscale, border band, background
 // clusters, flood fill, components, holes, EDT morphology, guards, IoU, brush locks.
 import { describe, expect, it } from 'vitest';
+import type { Issue } from '../../../types/issues';
 import { hexToFeature, oklabFeatures } from '../../kernel/color';
 import { mulberry32 } from '../../kernel/prng';
 import { addNoise, fillRect, fromFn, solid, stripes } from '../../../test/rgba';
@@ -19,6 +20,7 @@ import {
   maskBox,
   maskGridSize,
   maskGuards,
+  withView,
   maskIoU,
   maskStats,
   maskToRgba,
@@ -312,6 +314,13 @@ describe('stats, guards and IoU', () => {
     const big = new Uint8Array(w * h).fill(1);
     expect(maskGuards(big, w, h).map((i) => i.code)).toEqual([MASK_ISSUES.border, MASK_ISSUES.coverage]);
     expect(maskGuards(new Uint8Array(w * h), w, h).map((i) => [i.code, i.severity])).toEqual([[MASK_ISSUES.empty, 'error']]);
+    // `view` = PhotoView.id goes to where.view; withView tags issues the worker returned without an id.
+    for (const issue of maskGuards(big, w, h, 'front', 'photo-1')) expect(issue.where).toEqual({ view: 'photo-1' });
+    expect(maskGuards(big, w, h, 'front').every((i) => i.where === undefined)).toBe(true);
+    const tagged = withView([{ code: 'X', severity: 'warn' as const, message: 'm', where: { part: 'p' } }], 'v2');
+    expect(tagged[0].where).toEqual({ part: 'p', view: 'v2' });
+    const plain: Issue[] = [{ code: 'X', severity: 'warn', message: 'm' }];
+    expect(withView(plain, undefined)[0].where).toBeUndefined();
   });
 
   it('IoU', () => {

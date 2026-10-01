@@ -4,8 +4,11 @@
 import { describe, expect, it } from 'vitest';
 import { addNoise, fromFn } from '../../../test/rgba';
 import { alignViews, viewConsistency } from '../align';
+import { buildRecon } from '../build';
+import { localThickness } from '../inflate';
 import { classicalMask } from '../masks';
-import { renderSilhouette, sphere } from './helpers/views';
+import { request } from './helpers/requests';
+import { centered, renderSilhouette, sphere, TEDDY } from './helpers/views';
 
 const TIMING = { timeout: 120_000, retry: 2 };
 
@@ -40,5 +43,35 @@ describe('T3.1 timings', TIMING, () => {
       h: 512,
     }));
     expect(best(3, () => viewConsistency(alignViews(views), 128))).toBeLessThan(1000);
+  });
+});
+
+async function bestAsync(n: number, fn: () => Promise<unknown>): Promise<number> {
+  let min = Infinity;
+  for (let k = 0; k < n; k++) {
+    const t0 = performance.now();
+    await fn();
+    min = Math.min(min, performance.now() - t0);
+  }
+  return min;
+}
+
+// §5.8: 3D build N = 128 (geometry) < 0.8 s. Measured (Apple M3 Pro, Node 22, seven other agents' suites running):
+// teddy, four 512² views, ≈ 0.5 s; the single-photo build ≈ 0.25 s; N = 64 ≈ 0.35 s / 0.13 s.
+describe('T3.2 timings', TIMING, () => {
+  it('3D build N = 128 from four 512² views in < 0.8 s (§5.8)', async () => {
+    const req = request(centered(TEDDY), ['front', 'left', 'top', 'back'], { N: 128 });
+    expect(await bestAsync(3, () => buildRecon(req))).toBeLessThan(800);
+  });
+
+  it('single-photo build N = 128 in < 0.8 s', async () => {
+    const req = request(centered(TEDDY), ['left'], { N: 128, photoView: 'left' });
+    expect(await bestAsync(3, () => buildRecon(req))).toBeLessThan(800);
+  });
+
+  it('local thickness of a large 512² silhouette in < 400 ms', () => {
+    const m = new Uint8Array(512 * 512);
+    for (let y = 0; y < 512; y++) for (let x = 0; x < 512; x++) if (((x - 256) / 220) ** 2 + ((y - 256) / 160) ** 2 <= 1) m[x + 512 * y] = 1;
+    expect(best(3, () => localThickness(m, 512, 512))).toBeLessThan(400);
   });
 });

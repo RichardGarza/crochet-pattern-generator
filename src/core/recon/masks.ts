@@ -617,10 +617,26 @@ export const MASK_ISSUES = {
 } as const;
 
 /**
- * §2.9.1 guards: the mask touches the photo border (ask for a re-shoot with margin); coverage < 15% or > 90%;
- * an empty mask is an error. `label` (e.g. "front") is used in the messages.
+ * Tags issues with the photo they are about (`where.view = PhotoView.id`, §2.9.1–2.9.2), in place; other `where`
+ * fields are kept. `view` undefined leaves the issues as they are.
  */
-export function maskGuards(mask: ArrayLike<number>, w: number, h: number, label?: string): Issue[] {
+export function withView<T extends Issue[]>(issues: T, view: string | undefined): T {
+  if (view === undefined) return issues;
+  for (const issue of issues) issue.where = { ...issue.where, view };
+  return issues;
+}
+
+/**
+ * §2.9.1 guards: the mask touches the photo border (ask for a re-shoot with margin); coverage < 15% or > 90%;
+ * an empty mask is an error. `label` (e.g. "front") is used in the messages; `view` (the `PhotoView.id`) goes to
+ * every issue's `where.view` (the worker's `mask()` does not know the id: its caller tags the issues with
+ * `withView`).
+ */
+export function maskGuards(mask: ArrayLike<number>, w: number, h: number, label?: string, view?: string): Issue[] {
+  return withView(guards(mask, w, h, label), view);
+}
+
+function guards(mask: ArrayLike<number>, w: number, h: number, label?: string): Issue[] {
   const s = maskStats(mask, w, h);
   const photo = label ? `the ${label} photo` : 'this photo';
   if (s.area === 0) {
