@@ -642,13 +642,52 @@ export function stringifyModel(model: CrochetModelV1): string {
 }
 
 // ---- compile-time guard: the schema and the frozen types describe the same data
+//
+// Mutual assignability catches a changed type, a missing required field and a changed enum; it cannot see an
+// OPTIONAL field that exists on one side only, so the key sets of every object are compared as well.
 
 type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+/** The keys of every member of a union. */
+type Keys<T> = T extends unknown ? keyof T : never;
+type SameKeys<A, B> = [Keys<A>] extends [Keys<B>] ? ([Keys<B>] extends [Keys<A>] ? true : false) : false;
+/** For a union discriminated by `K`: the keys of `Field` agree for every value of the discriminant. */
+type SameKeysPerMember<A, B, K extends string, Field extends string> = {
+  [V in (A | B) extends Record<K, infer D> ? D & string : never]: SameKeys<
+    NonNullable<Extract<A, Record<K, V>>[Field & keyof Extract<A, Record<K, V>>]>,
+    NonNullable<Extract<B, Record<K, V>>[Field & keyof Extract<B, Record<K, V>>]>
+  >;
+}[(A | B) extends Record<K, infer D> ? D & string : never];
 type Guard<T extends true> = T;
+
+type ParsedPart = z.output<typeof partSchema>;
+type ParsedRegion = z.output<typeof regionSchema>;
+type Item<T> = T extends readonly (infer U)[] ? U : never;
+
 export type SchemaMatchesTypes = [
   Guard<MutuallyAssignable<ParsedModel, CrochetModelV1>>,
-  Guard<MutuallyAssignable<z.output<typeof partSchema>, Part>>,
-  Guard<MutuallyAssignable<z.output<typeof regionSchema>, Region>>,
+  Guard<MutuallyAssignable<ParsedPart, Part>>,
+  Guard<MutuallyAssignable<ParsedRegion, Region>>,
   Guard<MutuallyAssignable<z.output<typeof featureSchema>, Feature>>,
   Guard<MutuallyAssignable<z.output<typeof paletteColorSchema>, PaletteColor>>,
+  // key sets
+  Guard<SameKeys<ParsedModel, CrochetModelV1>>,
+  Guard<SameKeys<ParsedModel['axes'], CrochetModelV1['axes']>>,
+  Guard<SameKeys<ParsedModel['finishedSize'], CrochetModelV1['finishedSize']>>,
+  Guard<SameKeys<NonNullable<ParsedModel['yarn']>, NonNullable<CrochetModelV1['yarn']>>>,
+  Guard<SameKeys<NonNullable<ParsedModel['source']>, NonNullable<CrochetModelV1['source']>>>,
+  Guard<SameKeys<Item<NonNullable<ParsedModel['assembly']>>, Item<NonNullable<CrochetModelV1['assembly']>>>>,
+  Guard<SameKeys<z.output<typeof paletteColorSchema>, PaletteColor>>,
+  Guard<SameKeys<z.output<typeof featureSchema>, Feature>>,
+  Guard<SameKeys<ParsedPart, Part>>,
+  Guard<SameKeys<NonNullable<ParsedPart['attach']>, NonNullable<Part['attach']>>>,
+  Guard<SameKeys<NonNullable<ParsedPart['crochet']>, NonNullable<Part['crochet']>>>,
+  Guard<SameKeys<NonNullable<ParsedPart['paint']>, NonNullable<Part['paint']>>>,
+  Guard<SameKeysPerMember<ParsedPart, Part, 'type', 'dims'>>,
+  Guard<SameKeys<ParsedRegion, Region>>,
+  Guard<SameKeysPerRegion>,
 ];
+
+/** Every region kind has the same keys on both sides. */
+type SameKeysPerRegion = {
+  [V in Region['kind']]: SameKeys<Extract<ParsedRegion, { kind: V }>, Extract<Region, { kind: V }>>;
+}[Region['kind']];

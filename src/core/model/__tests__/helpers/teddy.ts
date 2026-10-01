@@ -8,6 +8,7 @@
 import { readFileSync } from 'node:fs';
 import type { Repair } from '../../../../types/importer';
 import type { CrochetModelV1, Part, Vec3 } from '../../../../types/model';
+import { hexToOklab } from '../../../kernel/color';
 import { inferAttach, inferMirrorPairs } from '../../attach';
 import { composeRigid, decomposeRigid, groundModel, modelBounds, multiplyRigid, type Rigid, roundCoord, roundModel } from '../../transforms';
 
@@ -54,8 +55,16 @@ const slug = (name: string): string =>
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
 
-/** §2.10.1 rule 1, by name: the dialect keeps eyes as parts and marks them as safety eyes. */
-const isEyeLike = (p: ObservedPart): boolean => /eye/i.test(p.id) || /eye/i.test(p.name ?? '');
+/**
+ * §2.10.1 rule 1: the id or label contains "eye", or the part is a sphere or ellipsoid at most 0.6 in across with
+ * OKLab L < 0.25 that hangs from another part. The dialect keeps such parts and marks them as safety eyes.
+ */
+function isEyeLike(p: ObservedPart): boolean {
+  if (/eye/i.test(p.id) || /eye/i.test(p.name ?? '')) return true;
+  if (p.parent === null || (p.type !== 'sphere' && p.type !== 'ellipsoid')) return false;
+  const across = 2 * Math.max(...Object.values(p.dimensions));
+  return across <= 0.6 && hexToOklab(p.color)[0] < 0.25;
+}
 
 /** Dims in canonical keys; a capsule's length becomes the TOTAL length (straight section + 2·radius). */
 function canonicalDims(p: ObservedPart): Record<string, number> {

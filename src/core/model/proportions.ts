@@ -15,7 +15,7 @@ import type { ColoredMesh } from '../../types/geometry';
 import type { CrochetModelV1, Part, Vec3 } from '../../types/model';
 import { mulMat3Vec, normalize } from '../kernel/vec';
 import { attachGraph, subtreeIds } from './attach';
-import { anchorPoint, type AttachAnchor, captureAnchor, overlapAlongRay, placeChildOnSurfaceWith, reanchorChildren, type SurfaceSources } from './place';
+import { anchorPoint, captureAnchor, overlapAlongRay, placeChildOnSurfaceWith, reanchorChildren, type SurfaceSources } from './place';
 import { scaleMesh, scaleModel, scalePartDims } from './scale';
 import { worldSdf } from './sdf';
 import { eulerXYZToMat3, localCenter, modelBounds, modelHeight, partAxis, partCenter, roundCoord, roundVec3, worldBounds } from './transforms';
@@ -432,5 +432,3 @@ export const applyProportions: ApplyProportionsFn = (m, o, meshes) => {
   const model = keepMirrors(m, lifted);
   return meshes === undefined ? { model } : { model, meshes: restored.meshes };
 };
-
-export type { AttachAnchor };
