@@ -111,15 +111,19 @@ export interface FeatureFlags {
   mosaic: boolean;
 }
 
+/** The color theme: follow the system (`prefers-color-scheme`), or the one the user picked (Step 0c shell). */
+export type ThemePref = 'system' | 'light' | 'dark';
+
 export interface Prefs {
   units: UnitPref;
   terms: Terms;
   hand: Hand;
   dialect: 'compact' | 'verbose';
+  theme: ThemePref;
   features: FeatureFlags;
 }
 
-export const DEFAULT_PREFS: Prefs = { units: 'in', terms: 'us', hand: 'right', dialect: 'compact', features: { mosaic: false } };
+export const DEFAULT_PREFS: Prefs = { units: 'in', terms: 'us', hand: 'right', dialect: 'compact', theme: 'system', features: { mosaic: false } };
 
 export type PrefsPatch = Partial<Omit<Prefs, 'features'>> & { features?: Partial<FeatureFlags> };
 
@@ -138,6 +142,7 @@ export function sanitizePrefs(stored: unknown, base: Prefs = DEFAULT_PREFS): Pre
     terms: oneOf<Terms>(raw.terms, ['us', 'uk'], base.terms),
     hand: oneOf<Hand>(raw.hand, ['right', 'left'], base.hand),
     dialect: oneOf<Prefs['dialect']>(raw.dialect, ['compact', 'verbose'], base.dialect),
+    theme: oneOf<ThemePref>(raw.theme, ['system', 'light', 'dark'], base.theme),
     features: { mosaic: typeof features.mosaic === 'boolean' ? features.mosaic : base.features.mosaic },
   };
 }

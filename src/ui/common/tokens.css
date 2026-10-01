@@ -1,0 +1,350 @@
+/*
+ * Design tokens and base styles (Step 0c, docs/tracks/s0c-shell.md "Design tokens").
+ *
+ * Every color, radius, shadow, space and type size in the app comes from these custom properties. Tracks use
+ * the tokens in their own CSS (`var(--color-text)`), never raw hex values, so both themes stay right.
+ *
+ * Themes: light by default; dark follows `prefers-color-scheme` unless the user picked a theme, which the
+ * shell writes as `<html data-theme="light|dark">` (no attribute = follow the system).
+ * The contrast pairs are checked by src/ui/common/__tests__/tokens.test.ts (WCAG AA).
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ---- type */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-display: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, ui-serif, serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --text-xs: 0.75rem; /* 12px: captions, badges */
+  --text-sm: 0.8125rem; /* 13px: secondary UI text */
+  --text-md: 0.875rem; /* 14px: default UI text */
+  --text-base: 1rem; /* 16px: reading text */
+  --text-lg: 1.125rem; /* 18px: panel titles */
+  --text-xl: 1.375rem; /* 22px: section titles (display font) */
+  --text-2xl: 1.75rem; /* 28px */
+  --text-3xl: 2.25rem; /* 36px: page titles (display font) */
+
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* ---- space (4 px grid) */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+
+  /* ---- radii */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* ---- sizes */
+  --control-h-sm: 28px;
+  --control-h-md: 36px;
+  --control-h-lg: 44px;
+  --topbar-h: 56px;
+  --tabbar-h: 44px;
+  --statusbar-h: 30px;
+  --sidebar-w: 300px;
+  --inspector-w: 300px;
+  --content-max: 1120px;
+
+  /* ---- motion */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+
+  /* ---- layers */
+  --z-sticky: 10;
+  --z-popover: 50;
+  --z-dialog: 100;
+  --z-toast: 200;
+  --z-tooltip: 300;
+
+  /* ---- colors: light (warm neutrals, terracotta accent) */
+  --color-bg: #f6f3ee;
+  --color-surface: #ffffff;
+  --color-surface-raised: #ffffff;
+  --color-surface-sunken: #efebe4;
+  --color-surface-hover: #f3efe9;
+  --color-border: #e4ddd2;
+  --color-border-strong: #cdc4b6;
+  /* Borders of form controls carry meaning (where to type), so they meet 3:1 against the surface. */
+  --color-border-control: #948a7d;
+
+  --color-text: #27231f;
+  --color-text-muted: #645c53;
+  --color-text-subtle: #776e64;
+  --color-text-inverse: #ffffff;
+
+  --color-accent: #a94b25;
+  --color-accent-hover: #933f1d;
+  --color-accent-active: #7f3517;
+  --color-accent-soft: #f7e7dd;
+  --color-accent-soft-hover: #f2dacb;
+  --color-accent-text: #9a4320;
+  --color-on-accent: #ffffff;
+
+  --color-focus: #a94b25;
+  --color-focus-halo: rgba(169, 75, 37, 0.22);
+
+  --color-success: #2e7a4f;
+  --color-success-soft: #e3f1e7;
+  --color-success-text: #256641;
+  --color-warn: #a36a00;
+  --color-warn-soft: #fbf0d8;
+  --color-warn-text: #7f5200;
+  --color-danger: #b42d22;
+  --color-danger-soft: #fbe5e2;
+  --color-danger-text: #9f261c;
+  --color-danger-hover: #9a251b;
+  --color-info: #2d63a6;
+  --color-info-soft: #e4edf8;
+  --color-info-text: #24538c;
+
+  --color-overlay: rgba(32, 26, 20, 0.42);
+  --color-skeleton: #ebe6de;
+  --color-grid-dot: rgba(120, 100, 80, 0.16);
+
+  --shadow-1: 0 1px 2px rgba(64, 44, 24, 0.06), 0 1px 1px rgba(64, 44, 24, 0.03);
+  --shadow-2: 0 2px 4px rgba(64, 44, 24, 0.05), 0 6px 16px -4px rgba(64, 44, 24, 0.12);
+  --shadow-3: 0 8px 20px -6px rgba(64, 44, 24, 0.18), 0 24px 48px -12px rgba(64, 44, 24, 0.22);
+}
+
+/* Dark: the system asks for it and the user did not pick light ... */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --color-bg: #171513;
+    --color-surface: #201d1a;
+    --color-surface-raised: #29251f;
+    --color-surface-sunken: #131110;
+    --color-surface-hover: #2a2622;
+    --color-border: #39332c;
+    --color-border-strong: #4d463d;
+    --color-border-control: #81776b;
+
+    --color-text: #f3eee7;
+    --color-text-muted: #b6ac9f;
+    --color-text-subtle: #a1978a;
+    --color-text-inverse: #1b1714;
+
+    --color-accent: #e58a60;
+    --color-accent-hover: #ee9c76;
+    --color-accent-active: #f4ae8c;
+    --color-accent-soft: #3b2619;
+    --color-accent-soft-hover: #4a2f1f;
+    --color-accent-text: #f0a481;
+    --color-on-accent: #1e120b;
+
+    --color-focus: #f0a481;
+    --color-focus-halo: rgba(240, 164, 129, 0.25);
+
+    --color-success: #5fb985;
+    --color-success-soft: #1d3326;
+    --color-success-text: #86cfa3;
+    --color-warn: #e0a83a;
+    --color-warn-soft: #372a12;
+    --color-warn-text: #ecc169;
+    --color-danger: #ef7b6f;
+    --color-danger-soft: #3d1e1a;
+    --color-danger-text: #f59b91;
+    --color-danger-hover: #f4958a;
+    --color-info: #75a7e6;
+    --color-info-soft: #1b2a3d;
+    --color-info-text: #9cc0ee;
+
+    --color-overlay: rgba(0, 0, 0, 0.6);
+    --color-skeleton: #2c2823;
+    --color-grid-dot: rgba(230, 210, 190, 0.09);
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 20px -6px rgba(0, 0, 0, 0.5);
+    --shadow-3: 0 10px 24px -6px rgba(0, 0, 0, 0.55), 0 28px 56px -12px rgba(0, 0, 0, 0.6);
+  }
+}
+
+/* ... or the user picked dark. Keep this block identical to the one above. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --color-bg: #171513;
+  --color-surface: #201d1a;
+  --color-surface-raised: #29251f;
+  --color-surface-sunken: #131110;
+  --color-surface-hover: #2a2622;
+  --color-border: #39332c;
+  --color-border-strong: #4d463d;
+  --color-border-control: #81776b;
+
+  --color-text: #f3eee7;
+  --color-text-muted: #b6ac9f;
+  --color-text-subtle: #a1978a;
+  --color-text-inverse: #1b1714;
+
+  --color-accent: #e58a60;
+  --color-accent-hover: #ee9c76;
+  --color-accent-active: #f4ae8c;
+  --color-accent-soft: #3b2619;
+  --color-accent-soft-hover: #4a2f1f;
+  --color-accent-text: #f0a481;
+  --color-on-accent: #1e120b;
+
+  --color-focus: #f0a481;
+  --color-focus-halo: rgba(240, 164, 129, 0.25);
+
+  --color-success: #5fb985;
+  --color-success-soft: #1d3326;
+  --color-success-text: #86cfa3;
+  --color-warn: #e0a83a;
+  --color-warn-soft: #372a12;
+  --color-warn-text: #ecc169;
+  --color-danger: #ef7b6f;
+  --color-danger-soft: #3d1e1a;
+  --color-danger-text: #f59b91;
+  --color-danger-hover: #f4958a;
+  --color-info: #75a7e6;
+  --color-info-soft: #1b2a3d;
+  --color-info-text: #9cc0ee;
+
+  --color-overlay: rgba(0, 0, 0, 0.6);
+  --color-skeleton: #2c2823;
+  --color-grid-dot: rgba(230, 210, 190, 0.09);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 20px -6px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 10px 24px -6px rgba(0, 0, 0, 0.55), 0 28px 56px -12px rgba(0, 0, 0, 0.6);
+}
+
+/* ---- base */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+figure,
+blockquote,
+dl,
+dd {
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  line-height: var(--leading-tight);
+  font-weight: var(--weight-semibold);
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+}
+
+img,
+svg,
+video,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: var(--color-accent-text);
+  text-underline-offset: 2px;
+}
+
+::selection {
+  background: var(--color-accent-soft-hover);
+  color: var(--color-text);
+}
+
+/* One visible focus style everywhere: keyboard focus only. */
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
