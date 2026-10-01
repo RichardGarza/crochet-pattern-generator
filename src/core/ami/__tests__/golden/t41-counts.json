@@ -1,0 +1,438 @@
+{
+  "G5-textbook-sphere": {
+    "what": "textbook sphere k = 6, w/h = 1.0",
+    "gauge": {
+      "wS": 0.2,
+      "hS": 0.2
+    },
+    "generator": "textbook",
+    "rounds": 17,
+    "N": 18,
+    "hEff": 0.2,
+    "L": 3.6,
+    "symmetric": true,
+    "start": {
+      "k": "mr",
+      "n": 6
+    },
+    "counts": [6, 12, 18, 24, 30, 36, 36, 36, 36, 36, 36, 36, 30, 24, 18, 12, 6],
+    "circ": [6, 12, 18, 24, 30, 36, 36, 36, 36, 36, 36, 36, 30, 24, 18, 12, 6],
+    "raw": [6, 12, 18, 24, 30, 36, 36, 36, 36, 36, 36, 36, 30, 24, 18, 12, 6],
+    "ideal": [],
+    "blo": [],
+    "flo": [],
+    "closedEnd": true,
+    "dropped": 0,
+    "appended": 0,
+    "finish": {
+      "kind": "gather",
+      "tailIn": 6,
+      "text": "Fasten off, leaving a 6\" (15 cm) tail; close with the Ultimate Finish (thread the tail through the front loops of the last sts and pull tight)."
+    }
+  },
+  "G5-textbook-sphere-worsted": {
+    "what": "textbook sphere k = 6, worsted defaults (w/h = 1.05, firm)",
+    "gauge": {
+      "wS": 0.20475,
+      "hS": 0.195
+    },
+    "generator": "textbook",
+    "rounds": 18,
+    "N": 19,
+    "hEff": 0.195,
+    "L": 3.6855,
+    "symmetric": true,
+    "start": {
+      "k": "mr",
+      "n": 6
+    },
+    "counts": [6, 12, 18, 24, 30, 36, 36, 36, 36, 36, 36, 36, 36, 30, 24, 18, 12, 6],
+    "circ": [6, 12, 18, 24, 30, 36, 36, 36, 36, 36, 36, 36, 36, 30, 24, 18, 12, 6],
+    "raw": [6, 12, 18, 24, 30, 36, 36, 36, 36, 36, 36, 36, 36, 30, 24, 18, 12, 6],
+    "ideal": [],
+    "blo": [],
+    "flo": [],
+    "closedEnd": true,
+    "dropped": 0,
+    "appended": 0,
+    "finish": {
+      "kind": "gather",
+      "tailIn": 6,
+      "text": "Fasten off, leaving a 6\" (15 cm) tail; close with the Ultimate Finish (thread the tail through the front loops of the last sts and pull tight)."
+    }
+  },
+  "G6-lathe-semicircle-exact": {
+    "what": "lathe semicircle r = 1.5, exact",
+    "gauge": {
+      "wS": 0.2,
+      "hS": 0.2
+    },
+    "generator": "pathA",
+    "rounds": 23,
+    "N": 24,
+    "hEff": 0.196329,
+    "L": 4.711901,
+    "symmetric": true,
+    "start": {
+      "k": "mr",
+      "n": 6
+    },
+    "counts": [6, 12, 18, 24, 29, 33, 37, 41, 44, 46, 46, 47, 46, 46, 44, 41, 37, 33, 29, 24, 18, 12, 6],
+    "circ": [6, 12, 18, 24, 29, 33, 37, 41, 44, 46, 46, 47, 46, 46, 44, 41, 37, 33, 29, 24, 18, 12, 6],
+    "raw": [6, 12, 18, 24, 29, 33, 37, 41, 44, 46, 46, 47, 46, 46, 44, 41, 37, 33, 29, 24, 18, 12, 6],
+    "ideal": [6.1492, 12.1936, 18.0312, 23.5546, 28.6832, 33.3139, 37.375, 40.8105, 43.5241, 45.5075, 46.7144, 47.1092, 46.7144, 45.5075, 43.5241, 40.8105, 37.375, 33.3139, 28.6832, 23.5546, 18.0312, 12.1936, 6.1492],
+    "blo": [],
+    "flo": [],
+    "closedEnd": true,
+    "dropped": 0,
+    "appended": 0,
+    "finish": {
+      "kind": "gather",
+      "tailIn": 6,
+      "text": "Fasten off, leaving a 6\" (15 cm) tail; close with the Ultimate Finish (thread the tail through the front loops of the last sts and pull tight)."
+    }
+  },
+  "G6-lathe-semicircle-classic": {
+    "what": "lathe semicircle r = 1.5, classic",
+    "gauge": {
+      "wS": 0.2,
+      "hS": 0.2
+    },
+    "generator": "pathA",
+    "rounds": 23,
+    "N": 24,
+    "hEff": 0.196329,
+    "L": 4.711901,
+    "symmetric": true,
+    "start": {
+      "k": "mr",
+      "n": 6
+    },
+    "counts": [6, 12, 18, 24, 30, 36, 36, 42, 42, 48, 48, 48, 48, 48, 42, 42, 36, 36, 30, 24, 18, 12, 6],
+    "circ": [6, 12, 18, 24, 30, 36, 36, 42, 42, 48, 48, 48, 48, 48, 42, 42, 36, 36, 30, 24, 18, 12, 6],
+    "raw": [6, 12, 18, 24, 30, 36, 36, 42, 42, 48, 48, 48, 48, 48, 42, 42, 36, 36, 30, 24, 18, 12, 6],
+    "ideal": [6.1492, 12.1936, 18.0312, 23.5546, 28.6832, 33.3139, 37.375, 40.8105, 43.5241, 45.5075, 46.7144, 47.1092, 46.7144, 45.5075, 43.5241, 40.8105, 37.375, 33.3139, 28.6832, 23.5546, 18.0312, 12.1936, 6.1492],
+    "blo": [],
+    "flo": [],
+    "closedEnd": true,
+    "dropped": 0,
+    "appended": 0,
+    "finish": {
+      "kind": "gather",
+      "tailIn": 6,
+      "text": "Fasten off, leaving a 6\" (15 cm) tail; close with the Ultimate Finish (thread the tail through the front loops of the last sts and pull tight)."
+    }
+  },
+  "G6-sphere-exact": {
+    "what": "sphere r = 1.5, exact (the analytic semicircle)",
+    "gauge": {
+      "wS": 0.2,
+      "hS": 0.2
+    },
+    "generator": "pathA",
+    "rounds": 23,
+    "N": 24,
+    "hEff": 0.19635,
+    "L": 4.712389,
+    "symmetric": true,
+    "start": {
+      "k": "mr",
+      "n": 6
+    },
+    "counts": [6, 12, 18, 24, 29, 33, 37, 41, 44, 46, 46, 47, 46, 46, 44, 41, 37, 33, 29, 24, 18, 12, 6],
+    "circ": [6, 12, 18, 24, 29, 33, 37, 41, 44, 46, 46, 47, 46, 46, 44, 41, 37, 33, 29, 24, 18, 12, 6],
+    "raw": [6, 12, 18, 24, 29, 33, 37, 41, 44, 46, 46, 47, 46, 46, 44, 41, 37, 33, 29, 24, 18, 12, 6],
+    "ideal": [6.1509, 12.1966, 18.0335, 23.5619, 28.6872, 33.3216, 37.3859, 40.8105, 43.5368, 45.5182, 46.7207, 47.1239, 46.7207, 45.5182, 43.5368, 40.8105, 37.3859, 33.3216, 28.6872, 23.5619, 18.0335, 12.1966, 6.1509],
+    "blo": [],
+    "flo": [],
+    "closedEnd": true,
+    "dropped": 0,
+    "appended": 0,
+    "finish": {
+      "kind": "gather",
+      "tailIn": 6,
+      "text": "Fasten off, leaving a 6\" (15 cm) tail; close with the Ultimate Finish (thread the tail through the front loops of the last sts and pull tight)."
+    }
+  },
+  "G7-cone-classic": {
+    "what": "cone r = 1, h = 3, openEnd 'bottom' (start at the apex), classic",
+    "gauge": {
+      "wS": 0.2,
+      "hS": 0.2
+    },
+    "generator": "pathA",
+    "rounds": 16,
+    "N": 16,
+    "hEff": 0.197642,
+    "L": 3.162278,
+    "symmetric": false,
+    "start": {
+      "k": "mr",
+      "n": 6
+    },
+    "counts": [6, 6, 6, 6, 12, 12, 12, 18, 18, 18, 24, 24, 24, 30, 30, 30],
+    "circ": [6, 6, 6, 6, 12, 12, 12, 18, 18, 18, 24, 24, 24, 30, 30, 30],
+    "raw": [6, 6, 6, 6, 12, 12, 12, 18, 18, 18, 24, 24, 24, 30, 30, 30],
+    "ideal": [1.9635, 3.927, 5.8905, 7.854, 9.8175, 11.781, 13.7445, 15.708, 17.6715, 19.635, 21.5984, 23.5619, 25.5254, 27.4889, 29.4524, 31.4159],
+    "blo": [],
+    "flo": [],
+    "closedEnd": false,
+    "dropped": 0,
+    "appended": 0,
+    "finish": {
+      "kind": "open",
+      "tailIn": 24,
+      "text": "Fasten off, leaving a 24\" (60 cm) tail for sewing."
+    }
+  },
+  "G7-cone-exact": {
+    "what": "cone r = 1, h = 3, openEnd 'bottom' (start at the apex), exact",
+    "gauge": {
+      "wS": 0.2,
+      "hS": 0.2
+    },
+    "generator": "pathA",
+    "rounds": 16,
+    "N": 16,
+    "hEff": 0.197642,
+    "L": 3.162278,
+    "symmetric": false,
+    "start": {
+      "k": "mr",
+      "n": 5
+    },
+    "counts": [5, 5, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 27, 29, 31],
+    "circ": [5, 5, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 27, 29, 31],
+    "raw": [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 27, 29, 31],
+    "ideal": [1.9635, 3.927, 5.8905, 7.854, 9.8175, 11.781, 13.7445, 15.708, 17.6715, 19.635, 21.5984, 23.5619, 25.5254, 27.4889, 29.4524, 31.4159],
+    "blo": [],
+    "flo": [],
+    "closedEnd": false,
+    "dropped": 0,
+    "appended": 0,
+    "finish": {
+      "kind": "open",
+      "tailIn": 26,
+      "text": "Fasten off, leaving a 26\" (65 cm) tail for sewing."
+    }
+  },
+  "G7-horn": {
+    "what": "horn: cone r = 0.6, h = 1.8, crochet.start 'bottom', closed base disc, exact",
+    "gauge": {
+      "wS": 0.2,
+      "hS": 0.2
+    },
+    "generator": "pathA",
+    "rounds": 10,
+    "N": 12,
+    "hEff": 0.208114,
+    "L": 2.497367,
+    "symmetric": false,
+    "start": {
+      "k": "mr",
+      "n": 7
+    },
+    "counts": [7, 13, 19, 17, 14, 12, 10, 8, 6, 5],
+    "circ": [7, 13, 19, 17, 14, 12, 10, 8, 6, 5],
+    "raw": [7, 13, 19, 17, 14, 12, 10, 8, 6, 4, 2],
+    "ideal": [6.5381, 13.0762, 18.6077, 16.5402, 14.4727, 12.4052, 10.3376, 8.2701, 6.2026, 4.1351, 2.0675],
+    "blo": [4],
+    "flo": [],
+    "closedEnd": true,
+    "dropped": 1,
+    "appended": 0,
+    "finish": {
+      "kind": "gather",
+      "tailIn": 6,
+      "text": "Fasten off, leaving a 6\" (15 cm) tail; close with the Ultimate Finish (thread the tail through the front loops of the last sts and pull tight)."
+    }
+  },
+  "G7-cylinder-exact": {
+    "what": "closed cylinder ⌀1.5 × 2, exact",
+    "gauge": {
+      "wS": 0.2,
+      "hS": 0.2
+    },
+    "generator": "pathA",
+    "rounds": 17,
+    "N": 18,
+    "hEff": 0.194444,
+    "L": 3.5,
+    "symmetric": true,
+    "start": {
+      "k": "mr",
+      "n": 6
+    },
+    "counts": [6, 12, 18, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 18, 12, 6],
+    "circ": [6, 12, 18, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 18, 12, 6],
+    "raw": [6, 12, 18, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 18, 12, 6],
+    "ideal": [6.1087, 12.2173, 18.326, 23.5619, 23.5619, 23.5619, 23.5619, 23.5619, 23.5619, 23.5619, 23.5619, 23.5619, 23.5619, 23.5619, 18.326, 12.2173, 6.1087],
+    "blo": [5, 15],
+    "flo": [],
+    "closedEnd": true,
+    "dropped": 0,
+    "appended": 0,
+    "finish": {
+      "kind": "gather",
+      "tailIn": 6,
+      "text": "Fasten off, leaving a 6\" (15 cm) tail; close with the Ultimate Finish (thread the tail through the front loops of the last sts and pull tight)."
+    }
+  },
+  "G7-cylinder-classic": {
+    "what": "closed cylinder ⌀1.5 × 2, classic",
+    "gauge": {
+      "wS": 0.2,
+      "hS": 0.2
+    },
+    "generator": "pathA",
+    "rounds": 17,
+    "N": 18,
+    "hEff": 0.194444,
+    "L": 3.5,
+    "symmetric": true,
+    "start": {
+      "k": "mr",
+      "n": 6
+    },
+    "counts": [6, 12, 18, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 18, 12, 6],
+    "circ": [6, 12, 18, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 18, 12, 6],
+    "raw": [6, 12, 18, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 18, 12, 6],
+    "ideal": [6.1087, 12.2173, 18.326, 23.5619, 23.5619, 23.5619, 23.5619, 23.5619, 23.5619, 23.5619, 23.5619, 23.5619, 23.5619, 23.5619, 18.326, 12.2173, 6.1087],
+    "blo": [5, 15],
+    "flo": [],
+    "closedEnd": true,
+    "dropped": 0,
+    "appended": 0,
+    "finish": {
+      "kind": "gather",
+      "tailIn": 6,
+      "text": "Fasten off, leaving a 6\" (15 cm) tail; close with the Ultimate Finish (thread the tail through the front loops of the last sts and pull tight)."
+    }
+  },
+  "G19-box-closed-oval": {
+    "what": "box w 2, d 1, h 1.5, exact",
+    "gauge": {
+      "wS": 0.2,
+      "hS": 0.2
+    },
+    "generator": "pathA",
+    "rounds": 12,
+    "N": 13,
+    "hEff": 0.192308,
+    "L": 2.5,
+    "symmetric": true,
+    "start": {
+      "k": "chainOval",
+      "chains": 8
+    },
+    "counts": [16, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 16],
+    "circ": [6, 12, 16, 16, 16, 16, 16, 16, 16, 16, 12, 6],
+    "ovalS": [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5],
+    "raw": [6, 12, 16, 16, 16, 16, 16, 16, 16, 16, 12, 6],
+    "ideal": [6.0415, 12.083, 15.708, 15.708, 15.708, 15.708, 15.708, 15.708, 15.708, 15.708, 12.083, 6.0415],
+    "blo": [4, 11],
+    "flo": [],
+    "closedEnd": true,
+    "dropped": 0,
+    "appended": 0,
+    "finish": {
+      "kind": "flattenSc",
+      "tailIn": 6,
+      "text": "Flatten the opening so its two sides (8 sts each) line up; working through both layers, sc across (8 sc). Fasten off."
+    }
+  },
+  "G19-oval-ellipsoid": {
+    "what": "ellipsoid rx 1.2, ry 0.6, rz 2.0, unattached, exact",
+    "gauge": {
+      "wS": 0.2,
+      "hS": 0.2
+    },
+    "generator": "pathA",
+    "rounds": 21,
+    "N": 22,
+    "hEff": 0.19936,
+    "L": 4.38591,
+    "symmetric": true,
+    "start": {
+      "k": "chainOval",
+      "chains": 5
+    },
+    "counts": [10, 15, 20, 22, 25, 26, 29, 30, 30, 31, 31, 31, 30, 30, 29, 26, 25, 22, 20, 15, 10],
+    "circ": [6, 9, 12, 14, 15, 16, 17, 18, 18, 19, 19, 19, 18, 18, 17, 16, 15, 14, 12, 9, 6],
+    "ovalS": [2, 3, 4, 4, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 5, 4, 4, 3, 2],
+    "raw": [5, 9, 12, 14, 15, 16, 17, 18, 18, 19, 19, 19, 18, 18, 17, 16, 15, 14, 12, 9, 5],
+    "ideal": [5.4674, 9.0888, 11.6693, 13.6309, 15.1629, 16.3649, 17.2949, 17.9895, 18.4716, 18.7557, 18.8496, 18.7557, 18.4716, 17.9895, 17.2949, 16.3649, 15.1629, 13.6309, 11.6693, 9.0888, 5.4674],
+    "blo": [],
+    "flo": [],
+    "closedEnd": true,
+    "dropped": 0,
+    "appended": 0,
+    "finish": {
+      "kind": "flattenSc",
+      "tailIn": 6,
+      "text": "Flatten the opening so its two sides (5 sts each) line up; working through both layers, sc across (5 sc). Fasten off."
+    }
+  },
+  "G20-open-capsule": {
+    "what": "§3.6 arm_l: capsule r 0.32, length 1.4, openEnd 'top', light, worsted",
+    "gauge": {
+      "wS": 0.195,
+      "hS": 0.185714
+    },
+    "generator": "textbook",
+    "rounds": 7,
+    "N": 7,
+    "hEff": 0.185714,
+    "L": 1.345,
+    "symmetric": false,
+    "start": {
+      "k": "mr",
+      "n": 6
+    },
+    "counts": [6, 12, 12, 12, 12, 12, 12],
+    "circ": [6, 12, 12, 12, 12, 12, 12],
+    "raw": [6, 12, 12, 12, 12, 12, 12],
+    "ideal": [],
+    "blo": [],
+    "flo": [],
+    "closedEnd": false,
+    "dropped": 0,
+    "appended": 0,
+    "finish": {
+      "kind": "open",
+      "tailIn": 14,
+      "text": "Fasten off, leaving a 14\" (35 cm) tail for sewing."
+    }
+  },
+  "G20-closed-capsule": {
+    "what": "§3.6 arm_l closed (both ends), light, worsted",
+    "gauge": {
+      "wS": 0.195,
+      "hS": 0.185714
+    },
+    "generator": "textbook",
+    "rounds": 9,
+    "N": 10,
+    "hEff": 0.185714,
+    "L": 1.93,
+    "symmetric": true,
+    "start": {
+      "k": "mr",
+      "n": 6
+    },
+    "counts": [6, 12, 12, 12, 12, 12, 12, 12, 6],
+    "circ": [6, 12, 12, 12, 12, 12, 12, 12, 6],
+    "raw": [6, 12, 12, 12, 12, 12, 12, 12, 6],
+    "ideal": [],
+    "blo": [],
+    "flo": [],
+    "closedEnd": true,
+    "dropped": 0,
+    "appended": 0,
+    "finish": {
+      "kind": "gather",
+      "tailIn": 6,
+      "text": "Fasten off, leaving a 6\" (15 cm) tail; close with the Ultimate Finish (thread the tail through the front loops of the last sts and pull tight)."
+    }
+  }
+}
