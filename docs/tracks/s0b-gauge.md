@@ -16,7 +16,7 @@ no DOM; it imports only `src/types` and its own files, and uses no `Math.random`
 | `round.ts` | The rounding rule the other modules share (not named in §5.1; deviation 1) |
 | `checks.ts` | Small internal checks (the barrel does not export them) |
 | `index.ts` | Barrel: `import { resolveGauge, grid, … } from '…/core/gauge'` |
-| `__tests__/` | 7 test files (361 tests) and `labels.ts` (the 113 label gauges of research 01 Appendix A, checked row by row against the appendix). Printed table values are typed into the tests from the spec and research 01, never read back from the implementation. |
+| `__tests__/` | 7 test files (366 tests) and `labels.ts` (the 113 label gauges of research 01 Appendix A, checked row by row against the appendix). Printed table values are typed into the tests from the spec and research 01, never read back from the implementation. |
 
 The yardage **totals** (per color, per chart, per toy) are not here. They belong to `core/yardage/twoD.ts` (T2) and
 `core/yardage/threeD.ts` (T4), which build them from the blocks below.
@@ -34,8 +34,8 @@ The yardage **totals** (per color, per chart, per toy) are not here. They belong
 | Properties | pass | a larger size never gives fewer columns or rows (one size, both sizes, across the cap, with constraints and borders); count → diameter → count exact for k = 2…80; diameter → count → diameter within half a step of 6 (2000 random balls); a larger diameter never gives fewer stitches or rounds |
 
 Checks at the final commit (Node 22.23.3): `npm run typecheck` and `npm run lint` pass; `npm test` passed twice in a
-row: 27 files, 651 tests (the gauge kernel: 361 tests in 7 files — `resolve` 132, `tables` 57, `grid` 45,
-`sphere` 40, `yarnPerStitch` 39, `checkGauge` 35, `round` 13). The whole kernel runs in about 2 s; the ten random
+row: 27 files, 656 tests (the gauge kernel: 366 tests in 7 files — `resolve` 133, `tables` 57, `grid` 45,
+`sphere` 40, `yarnPerStitch` 40, `checkGauge` 38, `round` 13). The whole kernel runs in about 2 s; the ten random
 sweeps (40 ms to 0.5 s each) carry an explicit 30 s timeout (`SWEEP_TIMEOUT_MS`), so a loaded machine cannot turn
 them into timeouts. No test asserts a duration.
 
@@ -56,7 +56,7 @@ are noted.
 | `resolveGaugeChecked(g: GaugeSpec): { gauge: ResolvedGauge \| undefined; issues: GaugeIssue[] }` | Both in one call, for forms; `gauge` is undefined when an issue is an error. Never throws. |
 | `interface GaugeIssue extends Issue { code: GaugeIssueCode; field: keyof GaugeSpec; hint?: GaugeHint }` | A finding, the `GaugeSpec` field it is about and, when exactly one cause explains it, that cause. Severity `'error'` for `E_*`, `'warn'` for `W_*`. |
 | `type GaugeIssueCode = 'E_GAUGE_INPUT' \| 'W_GAUGE_RANGE' \| 'W_GAUGE_ASPECT' \| 'W_GAUGE_ROWS' \| 'W_GAUGE_HOOK' \| 'W_GAUGE_CARRIED' \| 'W_GAUGE_LSC'` | The codes (request 2). |
-| `type GaugeHint = 'cm-as-inches' \| 'inches-as-cm' \| 'diameter-as-circumference' \| 'half-circumference' \| 'taller-stitch' \| 'other-technique' \| 'tapestry-or-novelty' \| 'ten-stitches' \| 'whole-tile'` | The fix to offer: divide the entered length by 2.54 / multiply it by 2.54 / multiply the circumference by π / double it / a taller stitch than sc was measured or unravelled (hdc or dc, e.g. a UK pattern's "dc" worked as US dc) / the swatch is of another stitch / carried strands, a novelty yarn or hdc / divide the yarn length by the stitch count / a whole C2C tile was entered as one sc. |
+| `type GaugeHint = 'cm-as-inches' \| 'inches-as-cm' \| 'diameter-as-circumference' \| 'half-circumference' \| 'per-2-in' \| 'stitches-not-tiles' \| 'taller-stitch' \| 'other-technique' \| 'tapestry-or-novelty' \| 'ten-stitches' \| 'whole-tile'` | The fix to offer: divide the entered length by 2.54 / multiply it by 2.54 / multiply the circumference by π / double it / a gauge stated per 2 in was typed over 4 in (enter 2 in) / a C2C swatch was counted in stitches, not tiles / a taller stitch than sc was measured or unravelled (hdc or dc, e.g. a UK pattern's "dc" worked as US dc) / the swatch is of another stitch / carried strands, a novelty yarn or hdc / divide the yarn length by the stitch count / a whole C2C tile was entered as one sc. |
 | `defaultHookMm(cyc: Cyc, technique: TechniqueId): number` | Table A hook, or the Table E hook for amigurumi (throws for CYC 0 with amigurumi). |
 | `defaultCell(cyc: Cyc, technique: TechniqueId, o?: { hookMm?: number; carried?: number; yarnUnder?: boolean }): Cell` | The table cell without any measurement (§2.2.5 step 2), e.g. for "difference from the default" displays. `carried` is read for tapestry only, `yarnUnder` for amigurumi only. |
 | `type GaugeMeasurement = 'swatch' \| 'c2cSwatch' \| 'testBall'` | The three measurement fields of `GaugeSpec`. |
@@ -89,17 +89,18 @@ Table A hook for `wSc`/`hSc` and every 2D cell, and the Table E hook for the ami
 hook-scaled, and a swatch ignores `carried` (it was made with the strands carried).
 
 **Invalid input** (`RangeError` from `resolveGauge`, `E_GAUGE_INPUT` from `checkGauge`): a weight that is not an
-integer 0–7 given as a number; an unknown technique; CYC 0 with amigurumi; a hook outside 0.1–100 mm; a `yarnUnder`
-that is not a boolean; the technique's own measurement without positive finite numbers, or giving a stitch (or tile,
+integer 0–7 given as a number; an unknown technique; CYC 0 with amigurumi; a hook outside 0.1–100 mm; for amigurumi,
+a `yarnUnder` that is not a boolean; the technique's own measurement without positive finite numbers, or giving a stitch (or tile,
 or test-ball stitch and its round height) outside 0.001–100 in; for tapestry without a swatch, `carried` outside
 0–100; a calibrated yarn outside 0.001–1000 in. Fields the technique does not read are not checked (a leftover C2C
-swatch in an sc project is ignored). `null` is read as "not set" (a spec read back from JSON).
+swatch in an sc project is ignored, and so is a `yarnUnder` that is not a boolean in a 2D project: only amigurumi
+reads it). `null` is read as "not set" (a spec read back from JSON).
 
 **Warnings** (`checkGauge`):
 
 | Code | When | `hint` |
 |---|---|---|
-| `W_GAUGE_RANGE` | A count per 4 in of the measurement in use (stitches, rows, tiles, test-ball stitches) more than 35% outside the CYC range carried to that count, or a count inside that range that a cm/inch slip explains clearly better than the yarn does. | the slip, when exactly one fits |
+| `W_GAUGE_RANGE` | A count per 4 in of the measurement in use (stitches, rows, tiles, test-ball stitches) more than 35% outside the CYC range carried to that count, or a count inside that range that a cm/inch slip explains clearly better than the yarn does. | the slip, when one fits clearly better (by more than 15%) than every other candidate. Candidates: swatch `cm-as-inches`, `inches-as-cm`, `per-2-in`; C2C swatch the same and `stitches-not-tiles`; test ball `cm-as-inches`, `inches-as-cm`, `diameter-as-circumference`, `half-circumference`. Only the cm/inch slips raise the warning by themselves (inside the accepted range); the others only explain a count that is already off, or compete for the hint. `stitches-not-tiles` (÷ 2.6) and `inches-as-cm` (÷ 2.54) always tie, so a C2C swatch counted in stitches, or converted as centimetres, gets the generic advice, which names both. |
 | `W_GAUGE_ASPECT` | A swatch whose `w/h` is outside 0.75–1.5 (flat sc) or outside the technique's own window (tapestry, hdc, mosaic). | `taller-stitch` (sc, too tall), `other-technique` |
 | `W_GAUGE_ROWS` | An `sc_graphgan` swatch with fewer rows than stitches. | `tapestry-or-novelty` |
 | `W_GAUGE_HOOK` | A hook more than 2× or less than ½ the default hook of the weight and technique. | — |
@@ -109,8 +110,14 @@ swatch in an sc project is ignored). `null` is read as "not set" (a spec read ba
 Checked against the 113 published label gauges of research 01 Appendix A (`__tests__/labels.ts`): entered with
 their hook, none raises a range, aspect or hook warning (one novelty yarn, Cover Story 300g, has fewer rows than
 stitches); entered without the hook, only the two 2-stitch Jumbo yarns worked on 25 mm hooks are questioned;
-measured over 10 cm and typed as 10 in, all 113 are flagged with `cm-as-inches` (with and without the hook); measured
-over 4 in and converted as centimetres, 111 are flagged (2 sts × 2.54 is an ordinary Jumbo gauge). A plain sc
+measured over 10 cm and typed as 10 in, all 113 are flagged — with the hook 66 named `cm-as-inches`, 45 without a
+hint, 2 tight yarns named `per-2-in` (without the hook 86 / 23 / 4); measured over 4 in and converted as
+centimetres, 111 are flagged (2 sts × 2.54 is an ordinary Jumbo gauge), 109 with `inches-as-cm`. Stated per 2 in
+and typed over 4 in, with the hook 58 are named `per-2-in`, 25 get no hint, 5 loose yarns are named `cm-as-inches`
+and 25 tight ones stay inside the accepted range (without the hook 70 / 21 / 8 / 14). The factors 2 and 2.54 are
+24% apart and label gauges spread about as much around Table A, so the hint is named only where the yarn's gauge is
+close enough to the table to tell the two apart; before `per-2-in` was a candidate, 84 of the halved gauges were
+named `cm-as-inches`. A plain sc
 swatch left over in a tapestry project is caught for 72 of the 113, in an hdc project for 101, in a mosaic project
 for none.
 
@@ -278,6 +285,9 @@ round height, or a size whose arithmetic overflows.
      "cm entered as inches" can land inside it (it does for 6 of the 113 label gauges); the slip is flagged when
      undoing it leaves every count acceptable and brings the stitch count closer to the table value by more than
      15%;
+   - *a hint names the slip that explains a range finding*, when one candidate fits clearly better than the others:
+     the cm/inch slips, a gauge stated per 2 in (research 01 §10.2), a C2C swatch counted in stitches (§2.2.5
+     "wrong technique"), and for the test ball the width across or half the way around;
    - *`W_GAUGE_ASPECT` for tapestry, hdc and mosaic swatches*, with the sc window 0.75–1.5 moved to each
      technique's aspect;
    - *`W_GAUGE_HOOK`, `W_GAUGE_CARRIED`, `W_GAUGE_LSC`*: plausibility of the hook (beyond 2× the default the 0.75
@@ -328,7 +338,7 @@ round height, or a size whose arithmetic overflows.
 | §2.3.3 size of 0 / border wider than the piece | The normative `snap` floor applies: the smallest chart, reported by `gridIssues`. |
 | §2.3.3 "crop must match" vs "offer ±1 row/column" | Two warnings: `W_GRID_PROPORTIONS` when both sizes are given and the request itself is more than 2.5% off the picture; `W_GRID_ASPECT` when only rounding causes the error. |
 | §2.3.3, width only with a border | The chart inside the border keeps the picture's aspect (normative `Hg = Wg · a`); the finished piece with its border does not (40 in wide, 1 in border, 4:5 picture → 128 × 190, 39.9 × 49.5 in). |
-| §2.8 buffer precedence | The higher buffer wins: C2C and tapestry use 0.20 even with one color; > 50 strands 0.20; otherwise one color 0.10, else 0.15. Amigurumi is always 0.15. The 61.9 yd golden states its buffer (0.15) itself, i.e. it is one color of a multi-color piece. |
+| §2.8 buffer precedence | The higher buffer wins: C2C and tapestry use 0.20 even with one color; > 50 strands 0.20; otherwise one color 0.10, else 0.15. Amigurumi is always 0.15. The 61.9 yd golden states its buffer (0.15) itself, i.e. it is one color of a multi-color piece; as a one-color piece it would be 59.2 yd (request 14). |
 | §2.8 "single-color piece" | `colors ≤ 1`, passed by the caller. |
 | §2.2.4 "6.5 · 0.2267 = 1.47 in" | `w_sc` is 0.226751 (0.2267 is cut, not rounded); the products 1.47 and 1.474 are right (request 12). |
 | Table D, residue | Three printed cells sit exactly half a unit from the computed value and are printed inconsistently (1.625 → 1.62, 9.425 → 9.42, 0.845 → 0.85); all are inside the ±0.01 the spec asks the tests for. |
@@ -378,6 +388,13 @@ round height, or a size whose arithmetic overflows.
 12. **§2.2.4:** "6.5 · 0.2267" → 0.2268 (or 0.22675).
 13. **`entryPoints.check.ts` (0c):** `resolveGauge(g: GaugeSpec): ResolvedGauge` and `grid(c, req)` could be added to
     the signature guard; their shapes are those of §2.2.5 and §2.3.3.
+14. **G11 (§2.8, §2.13): "1000 sc of one color with one strand (2 tails), buffer 0.15 ⇒ 61.9 yd".** §2.8 also says
+    "buffer 0.10 single-color piece". Built as a one-color chart, with the buffer taken from the piece's own rule
+    (`yardageBuffer({ technique: 'sc_graphgan', colors: 1, strands: 1 })` = 0.10), the same stitches give
+    (1925.926 + 12) / 36 × 1.10 = **59.2 yd**, and T2's acceptance test of G11 would fail. This kernel reads the
+    golden as one color of a multi-color piece (both readings are pinned in `yarnPerStitch.test.ts`). Request: reword
+    G11 to "one color of a multi-color chart: 1000 sc … buffer 0.15 ⇒ 61.9 yd", or keep the one-color piece and
+    change the result to buffer 0.10 ⇒ 59.2 yd.
 
 ## Not done (outside this kernel)
 

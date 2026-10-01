@@ -17,6 +17,7 @@ import type { Cyc, Inches } from '../../types/units';
 import { fmt, isCyc, isObject, isTapestry, isTechnique, nonNegative, positive, present, show } from './checks';
 import {
   AMI_ASPECT,
+  C2C_TILE_WIDTH_MULT,
   CM_PER_IN,
   CYC_RANGE,
   GAUGE_SPAN_IN,
@@ -129,6 +130,8 @@ export type GaugeIssueCode =
  * - `inches-as-cm`: a length in inches was converted as if it were centimetres (multiply it by 2.54);
  * - `diameter-as-circumference`: the width across the test ball was entered (multiply it by π);
  * - `half-circumference`: half the way around the test ball was entered (double it);
+ * - `per-2-in`: the counts of a gauge stated per 2 in were entered over 4 in (enter 2 in as the length);
+ * - `stitches-not-tiles`: a C2C swatch was counted in stitches (the label's sc gauge, or dc) instead of tiles;
  * - `taller-stitch`: a taller stitch than sc — hdc or dc, or a UK pattern whose "dc" is US sc;
  * - `other-technique`: the stitch proportions do not fit the technique chosen;
  * - `tapestry-or-novelty`: fewer rows than stitches — carried strands, a novelty yarn or hdc;
@@ -140,6 +143,8 @@ export type GaugeHint =
   | 'inches-as-cm'
   | 'diameter-as-circumference'
   | 'half-circumference'
+  | 'per-2-in'
+  | 'stitches-not-tiles'
   | 'taller-stitch'
   | 'other-technique'
   | 'tapestry-or-novelty'
@@ -176,10 +181,11 @@ function inputErrors(g: GaugeSpec): GaugeIssue[] {
   if (present(g.hookMm) && !(positive(g.hookMm) && inside(g.hookMm, HOOK_LIMITS_MM))) {
     err('hookMm', `The hook must be a size in mm between ${HOOK_LIMITS_MM[0]} and ${HOOK_LIMITS_MM[1]}, got ${show(g.hookMm)}.`);
   }
-  if (present(g.yarnUnder) && typeof g.yarnUnder !== 'boolean') {
-    err('yarnUnder', `Yarn under must be true or false, got ${show(g.yarnUnder)}.`);
-  }
   if (techOk) {
+    // `yarnUnder` is read by amigurumi only.
+    if (g.technique === 'amigurumi_sc' && present(g.yarnUnder) && typeof g.yarnUnder !== 'boolean') {
+      err('yarnUnder', `Yarn under must be true or false, got ${show(g.yarnUnder)}.`);
+    }
     // A measurement needs positive numbers, and the stitch they give must be a size a stitch can have (a
     // quotient of two representable numbers can still overflow or vanish).
     const stitch = (size: number): boolean => positive(size) && inside(size, STITCH_LIMITS_IN);
@@ -283,8 +289,8 @@ function compute(g: GaugeSpec): ResolvedGauge {
  * (`stuffingStretch`). Every number returned is finite and above zero.
  *
  * Throws a RangeError on a spec that `checkGauge` reports as `E_GAUGE_INPUT` (and on no other): a weight
- * outside 0–7, an unknown technique, CYC 0 for amigurumi, a hook outside 0.1–100 mm, a `yarnUnder` that is not a
- * boolean, a measurement without positive numbers or giving a stitch outside 0.001–100 in, more than 100
+ * outside 0–7, an unknown technique, CYC 0 for amigurumi, a hook outside 0.1–100 mm, for amigurumi a `yarnUnder`
+ * that is not a boolean, a measurement without positive numbers or giving a stitch outside 0.001–100 in, more than 100
  * carried strands, a calibrated yarn outside 0.001–1000 in. Fields the technique does not read are not checked.
  */
 export function resolveGauge(g: GaugeSpec): ResolvedGauge {
@@ -343,6 +349,18 @@ const UNIT_SLIPS: readonly Slip[] = [
   { hint: 'cm-as-inches', factor: CM_PER_IN, alone: true },
   { hint: 'inches-as-cm', factor: 1 / CM_PER_IN, alone: true },
 ];
+/**
+ * A gauge stated per 2 in (Lion Brand states many that way) typed into the 4 in field halves every count
+ * (research 01 §10.2). Its factor, 2, is 24% from 2.54: the closer of the two is named, or neither.
+ */
+const PER_2_IN: Slip = { hint: 'per-2-in', factor: 2, alone: false };
+const SWATCH_SLIPS: readonly Slip[] = [...UNIT_SLIPS, PER_2_IN];
+/**
+ * A C2C swatch counted in stitches (the yarn label's sc gauge, or dc) is off by the tile width, 2.6 sc — 2% from
+ * the factor 2.54 of inches read as centimetres. The two cannot be told apart, so neither is named (§2.2.5 "wrong
+ * technique") and the advice names both.
+ */
+const C2C_SLIPS: readonly Slip[] = [...SWATCH_SLIPS, { hint: 'stitches-not-tiles', factor: 1 / C2C_TILE_WIDTH_MULT, alone: false }];
 const BALL_SLIPS: readonly Slip[] = [
   ...UNIT_SLIPS,
   { hint: 'diameter-as-circumference', factor: 1 / Math.PI, alone: false },
@@ -371,11 +389,13 @@ const SLIP_ADVICE: Partial<Record<GaugeHint, string>> = {
   'inches-as-cm': 'The numbers fit a measurement in inches: was the length entered in inches but read as centimetres?',
   'diameter-as-circumference': 'The numbers fit the width across the ball: enter the circumference, measured around the widest round (π times the width).',
   'half-circumference': 'The numbers fit half the circumference: measure all the way around the widest round.',
+  'per-2-in': 'The numbers fit a gauge stated per 2 in: was a "per 2 in" gauge entered over 4 in? Enter 2 in as the length.',
+  'stitches-not-tiles': 'The numbers fit a count of stitches, not tiles: count the C2C tiles (each tile is one ch-3 space with its 3 dc).',
 };
 
 const GENERIC_ADVICE: Record<GaugeMeasurement, string> = {
-  swatch: 'Check the unit (cm entered as inches?), the stitch names (in UK patterns "dc" means US sc), the hook, and that it was worked in this technique.',
-  c2cSwatch: 'Check the unit (cm entered as inches?), the hook, and that whole tiles were counted.',
+  swatch: 'Check the unit (cm entered as inches?), that the counts were taken over the length entered (some labels give a gauge per 2 in), the stitch names (in UK patterns "dc" means US sc), the hook, and that it was worked in this technique.',
+  c2cSwatch: 'Check the unit (cm or inches?), that the tiles were counted over the length entered, that whole tiles were counted and not stitches, and the hook.',
   testBall: 'Check the unit, the hook, and that the circumference was measured all the way around the widest round.',
 };
 
@@ -385,10 +405,14 @@ const GENERIC_ADVICE: Record<GaugeMeasurement, string> = {
  * A count is off when it is more than 35% outside the CYC range (§2.2.5). That accepted range is wider than the
  * factor 2.54, so a unit slip can land inside it. A slip "fits" when undoing it leaves every count acceptable
  * and brings the stitch count clearly closer (by more than 15%) to every table value than it is now; a unit
- * slip that fits is flagged even when no count is off. Checked against the 113 published label gauges of
- * research 01 Appendix A: none is flagged as measured when its hook is given (two 2-stitch Jumbo yarns worked on
- * 25 mm hooks are, at the default 15 mm hook), and every one is flagged, with the hint, after a cm-as-inches
- * slip.
+ * slip that fits is flagged even when no count is off. The other slips (`alone: false`) only explain a count
+ * that is already off or flagged; they compete for the hint all the same, so a per-2-in gauge is not named a
+ * cm slip, and a C2C swatch counted in stitches is not named an inch slip.
+ *
+ * Checked against the 113 published label gauges of research 01 Appendix A: none is flagged as measured when its
+ * hook is given (two 2-stitch Jumbo yarns worked on 25 mm hooks are, at the default 15 mm hook), and every one is
+ * flagged after a cm-as-inches slip. The factors 2 and 2.54 are only 24% apart, so the hint is named only where
+ * the yarn's own gauge is close enough to the table to tell them apart (`checkGauge.test.ts` pins the counts).
  */
 function rangeIssue(g: GaugeSpec, field: GaugeMeasurement, subject: string, counts: Count[], slips: readonly Slip[]): GaugeIssue | undefined {
   const primary = counts.filter((c) => c.primary);
@@ -513,7 +537,7 @@ export function checkGauge(g: GaugeSpec): GaugeIssue[] {
         { label: 'sts', value: sts4, expected: cells.map((c) => GAUGE_SPAN_IN / c.w), primary: true },
         { label: 'rows', value: rows4, expected: cells.map((c) => GAUGE_SPAN_IN / c.h), primary: false },
       ],
-      UNIT_SLIPS,
+      SWATCH_SLIPS,
     );
     if (range) out.push(range);
 
@@ -562,7 +586,7 @@ export function checkGauge(g: GaugeSpec): GaugeIssue[] {
       'c2cSwatch',
       'This C2C swatch',
       [{ label: 'tiles', value: per4(s.tiles, s.spanIn), expected: cells.map((c) => GAUGE_SPAN_IN / c.w), primary: true }],
-      UNIT_SLIPS,
+      C2C_SLIPS,
     );
     if (range) out.push(range);
   } else if (measurement === 'testBall' && present(g.testBall)) {

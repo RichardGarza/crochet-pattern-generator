@@ -420,6 +420,19 @@ describe('G11 — the yardage goldens are reachable from the building blocks (§
     expect(yardageBuffer({ technique: 'sc_graphgan', colors: 3, strands: 12 })).toBe(0.15);
   });
 
+  it('G11 states its buffer: 0.15 is one color of a multi-color piece; a one-color piece gets 0.10 ⇒ 59.2 yd (request 14)', () => {
+    // §2.8 also says "buffer 0.10 single-color piece": built as a one-color chart, the same 1000 sc give
+    // (1925.926 + 12) / 36 × 1.10 = 59.21 yd, not 61.9. The golden is read as one color of a multi-color piece.
+    const g = resolveGauge({ cyc: 4, technique: 'sc_graphgan' });
+    const inches = 1000 * yarnPerCellIn('sc_graphgan', g.lscIn) + tailsIn(1);
+    const oneColor = yardageBuffer({ technique: 'sc_graphgan', colors: 1, strands: 1 });
+    expect(oneColor).toBe(0.1);
+    expect(inchesToYards(inches, oneColor).toFixed(1)).toBe('59.2');
+    const multiColor = yardageBuffer({ technique: 'sc_graphgan', colors: 2, strands: 2 });
+    expect(multiColor).toBe(0.15);
+    expect(inchesToYards(inches, multiColor).toFixed(1)).toBe('61.9');
+  });
+
   it('2D with a swatch or the calibration the band narrows: 55.7–68.1 yd, then 58.8–65.0 yd', () => {
     const yards = 61.906;
     const measured = yardRange(yards, yardageBand({ technique: 'sc_graphgan', source: 'swatch' }));

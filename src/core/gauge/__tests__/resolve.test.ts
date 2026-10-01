@@ -535,6 +535,15 @@ describe('resolveGauge — invalid input is rejected (§2.2.5)', () => {
     expect(checkGauge({ cyc: 4, technique: 'amigurumi_sc', yarnUnder: 1 as unknown as boolean }).map((i) => i.field)).toEqual(['yarnUnder']);
   });
 
+  it('does not check a field the technique does not read: a leftover yarnUnder in a 2D spec', () => {
+    // only amigurumi reads yarnUnder (like `carried`, read only by tapestry without a swatch)
+    for (const technique of TECHNIQUES_2D) {
+      const spec = { cyc: 4, technique, yarnUnder: 'x' as unknown as boolean } as GaugeSpec;
+      expect(resolveGauge(spec)).toEqual(resolveGauge({ cyc: 4, technique }));
+      expect(checkGauge(spec)).toEqual([]);
+    }
+  });
+
   it('CYC 0 is fine for every 2D technique', () => {
     for (const technique of TECHNIQUES_2D) expect(() => resolveGauge({ cyc: 0, technique })).not.toThrow();
   });

@@ -81,9 +81,10 @@ describe('W_GAUGE_RANGE — a count outside the CYC range ±35% (§2.2.5)', () =
     expect(at(7.5)).toEqual([]);
     expect(at(18.8)).toEqual([]);
     expect(at(19.0)).toEqual([['W_GAUGE_RANGE', undefined]]);
-    expect(at(7.1)).toEqual([['W_GAUGE_RANGE', 'cm-as-inches']]);
+    // 7.1 × 2 = 14.2 fits the table's 13.5 better than 7.1 × 2.54 = 18.0: a per-2-in gauge, not centimetres
+    expect(at(7.1)).toEqual([['W_GAUGE_RANGE', 'per-2-in']]);
     expect(checkGauge(sc(19, 19 * 1.18))[0].message).toBe(
-      'This swatch has 19 sts (usually 11–14) and 22.4 rows (usually 13–16.6) per 4 in, more than 35% outside the usual range for Medium (worsted) yarn. Check the unit (cm entered as inches?), the stitch names (in UK patterns "dc" means US sc), the hook, and that it was worked in this technique.',
+      'This swatch has 19 sts (usually 11–14) and 22.4 rows (usually 13–16.6) per 4 in, more than 35% outside the usual range for Medium (worsted) yarn. Check the unit (cm entered as inches?), that the counts were taken over the length entered (some labels give a gauge per 2 in), the stitch names (in UK patterns "dc" means US sc), the hook, and that it was worked in this technique.',
     );
   });
 
@@ -103,7 +104,8 @@ describe('W_GAUGE_RANGE — a count outside the CYC range ±35% (§2.2.5)', () =
     // Lace: 32–42 ⇒ 20.8–56.7
     expect(at(0, 22, 26)).toEqual([]);
     expect(at(0, 21, 25)).toEqual([]);
-    expect(at(0, 20.5, 25)).toEqual([['W_GAUGE_RANGE', undefined]]);
+    // 20.5 × 2 = 41 is close to the table's 34; × 2.54 = 52 is not
+    expect(at(0, 20.5, 25)).toEqual([['W_GAUGE_RANGE', 'per-2-in']]);
   });
 
   it('the expected counts follow the technique', () => {
@@ -118,7 +120,7 @@ describe('W_GAUGE_RANGE — a count outside the CYC range ±35% (§2.2.5)', () =
     expect(tiles(7.2)).toEqual([]);
     expect(tiles(7.4)).toEqual([['W_GAUGE_RANGE', undefined]]);
     expect(checkGauge({ cyc: 4, technique: 'c2c', c2cSwatch: { tiles: 7.4, spanIn: 4 } })[0].message).toBe(
-      'This C2C swatch has 7.4 tiles (usually 4.2–5.4) per 4 in, more than 35% outside the usual range for Medium (worsted) yarn. Check the unit (cm entered as inches?), the hook, and that whole tiles were counted.',
+      'This C2C swatch has 7.4 tiles (usually 4.2–5.4) per 4 in, more than 35% outside the usual range for Medium (worsted) yarn. Check the unit (cm or inches?), that the tiles were counted over the length entered, that whole tiles were counted and not stitches, and the hook.',
     );
   });
 
@@ -174,26 +176,31 @@ describe('W_GAUGE_RANGE — unit slips (§2.2.5 "cm entered as inches")', () => 
 
   it('a slip that lands inside the accepted range is still caught: the corrected count fits the yarn clearly better', () => {
     // Patons Grace, labelled DK: 21 sc × 24 rows per 4 in. Counted over 10 cm and typed as 10 in it reads
-    // 8.4 sts — inside DK's accepted 7.8–22.95, but 21 sts is far closer to the table's 16 than 8.4 is.
+    // 8.4 sts — inside DK's accepted 7.8–22.95, but 21 sts is far closer to the table's 16 than 8.4 is, so it is
+    // flagged. The hint names the closer fit: 8.4 × 2 = 16.8 (a per-2-in gauge of an average DK) explains it
+    // better than 21.3 (centimetres, of a tight one); the numbers alone cannot tell which happened.
     const issues = checkGauge({ cyc: 3, technique: 'sc_graphgan', swatch: { sts: 21, rows: 24, spanIn: 10 } });
     expect(issues).toEqual([
       {
         code: 'W_GAUGE_RANGE',
         severity: 'warn',
         field: 'swatch',
-        hint: 'cm-as-inches',
+        hint: 'per-2-in',
         message:
-          'This swatch has 8.4 sts (usually 12–17) per 4 in, far from what Light (DK) yarn usually gives. The numbers fit a measurement in centimetres: was the length entered in cm but read as inches?',
+          'This swatch has 8.4 sts (usually 12–17) per 4 in, far from what Light (DK) yarn usually gives. The numbers fit a gauge stated per 2 in: was a "per 2 in" gauge entered over 4 in? Enter 2 in as the length.',
       },
     ]);
-    // worsted: 7.15–7.44 sts is accepted by the range, and explained better by a slipped 18.2–18.9
-    expect(brief(sc(7.2, 7.2 * 1.18))).toEqual([['W_GAUGE_RANGE', 'cm-as-inches']]);
+    // worsted: 7.15–7.44 sts is accepted by the range, and flagged because a slipped 18.2–18.9 fits better; the
+    // per-2-in 14.4 fits better still
+    expect(brief(sc(7.2, 7.2 * 1.18))).toEqual([['W_GAUGE_RANGE', 'per-2-in']]);
+    // a per-2-in slip alone never raises the warning: 8 sts (× 2 = 16) is accepted and stays unflagged
+    expect(brief(sc(8, 8 * 1.18))).toEqual([]);
     expect(brief(sc(7.5, 7.5 * 1.18))).toEqual([]); // × 2.54 = 19.05 would itself be out of range
     // Jumbo, 1 st per 4 in: no lower limit, but 2.5 sts is what the yarn gives
     expect(brief({ ...sc(1, 1.1), cyc: 7 })).toEqual([['W_GAUGE_RANGE', 'cm-as-inches']]);
     expect(brief({ ...sc(8, 8.5), cyc: 7 })).toEqual([['W_GAUGE_RANGE', 'inches-as-cm']]);
     // C2C and the test ball the same way
-    expect(brief({ cyc: 4, technique: 'c2c', c2cSwatch: { tiles: 2.8, spanIn: 4 } })).toEqual([['W_GAUGE_RANGE', 'cm-as-inches']]);
+    expect(brief({ cyc: 4, technique: 'c2c', c2cSwatch: { tiles: 2.8, spanIn: 4 } })).toEqual([['W_GAUGE_RANGE', 'per-2-in']]);
     expect(brief({ cyc: 4, technique: 'amigurumi_sc', testBall: { maxSts: 36, circumferenceIn: 13.5 } })).toEqual([['W_GAUGE_RANGE', 'cm-as-inches']]);
     expect(brief({ cyc: 4, technique: 'amigurumi_sc', testBall: { maxSts: 36, circumferenceIn: 11.5 } })).toEqual([]);
   });
@@ -217,6 +224,44 @@ describe('W_GAUGE_RANGE — unit slips (§2.2.5 "cm entered as inches")', () => 
     expect(ball.map((i) => [i.code, i.field, i.hint])).toEqual([['W_GAUGE_RANGE', 'testBall', 'cm-as-inches']]);
     expect(ball[0].message).toContain('This test ball has 7.7 sts (usually 15.9–20.3) per 4 in');
     expect(brief({ cyc: 4, technique: 'amigurumi_sc', testBall: { maxSts: 36, circumferenceIn: 14.2 } })).toEqual([['W_GAUGE_RANGE', 'cm-as-inches']]);
+  });
+
+  it('a gauge stated per 2 in and typed over 4 in is named per-2-in, not cm-as-inches (research 01 §10.2)', () => {
+    // worsted "6.75 sc and 8 rows = 2 in" typed over 4 in: × 2 gives the table's 13.5 × 16 exactly; the cm fix
+    // (× 2.54) would give 17.1 sts, 27% off
+    const issues = checkGauge(sc(6.75, 8));
+    expect(issues.map((i) => [i.code, i.field, i.hint])).toEqual([['W_GAUGE_RANGE', 'swatch', 'per-2-in']]);
+    expect(issues[0].message).toBe(
+      'This swatch has 6.8 sts (usually 11–14) and 8 rows (usually 13–16.6) per 4 in, more than 35% outside the usual range for Medium (worsted) yarn. The numbers fit a gauge stated per 2 in: was a "per 2 in" gauge entered over 4 in? Enter 2 in as the length.',
+    );
+    // with the length corrected the warning is gone
+    expect(checkGauge(sc(6.75, 8, 2))).toEqual([]);
+    // the Table A gauge of every weight, halved
+    for (const cyc of CYCS) {
+      const c = defaultCell(cyc, 'sc_graphgan');
+      expect(brief({ cyc, technique: 'sc_graphgan', swatch: { sts: 2 / c.w, rows: 2 / c.h, spanIn: 4 } }), `CYC ${cyc}`).toEqual([['W_GAUGE_RANGE', 'per-2-in']]);
+    }
+    // tapestry and C2C the same way
+    expect(brief({ cyc: 4, technique: 'sc_tapestry', swatch: { sts: 6.75, rows: 6, spanIn: 4 } })).toEqual([['W_GAUGE_RANGE', 'per-2-in']]);
+    const c2c = defaultCell(4, 'c2c');
+    expect(brief({ cyc: 4, technique: 'c2c', c2cSwatch: { tiles: 2 / c2c.w, spanIn: 4 } })).toEqual([['W_GAUGE_RANGE', 'per-2-in']]);
+  });
+
+  it('C2C: stitches counted instead of tiles cannot be told from inches read as centimetres, so neither is named (§2.2.5 "wrong technique")', () => {
+    // the label's "13.5 sc = 4 in" typed as tiles is 2.6× the 5.19 tiles of worsted; inches read as centimetres
+    // is 2.54×: the two explanations are 2% apart
+    const generic = 'Check the unit (cm or inches?), that the tiles were counted over the length entered, that whole tiles were counted and not stitches, and the hook.';
+    for (const tiles of [13.5, 18]) {
+      // 13.5 sc, or 18 dc (3 dc per tile, 3.5 per tile width)
+      const issues = checkGauge({ cyc: 4, technique: 'c2c', c2cSwatch: { tiles, spanIn: 4 } });
+      expect(issues.map((i) => [i.code, i.hint]), `${tiles}`).toEqual([['W_GAUGE_RANGE', undefined]]);
+      expect(issues[0].message).toContain(generic);
+    }
+    // the same holds for a real inch slip: the tile count of every weight converted as centimetres
+    for (const cyc of CYCS) {
+      const c = defaultCell(cyc, 'c2c');
+      expect(brief({ cyc, technique: 'c2c', c2cSwatch: { tiles: 4 / c.w, spanIn: cmToIn(4) } }), `CYC ${cyc}`).toEqual([['W_GAUGE_RANGE', undefined]]);
+    }
   });
 
   it('test ball: the width across, or half the way around, entered as the circumference', () => {
@@ -269,20 +314,55 @@ describe('checkGauge against the 113 published label gauges (research 01 Appendi
     }
     expect(warned).toEqual([
       'Lion Brand Cover Story 300g: W_GAUGE_ROWS tapestry-or-novelty',
-      'Bernat Blanket Big: W_GAUGE_RANGE cm-as-inches',
-      'Bernat Blanket Extra Thick: W_GAUGE_RANGE cm-as-inches',
+      'Bernat Blanket Big: W_GAUGE_RANGE per-2-in',
+      'Bernat Blanket Extra Thick: W_GAUGE_RANGE per-2-in',
     ]);
   });
 
-  it('every one of them is caught, with the hint, when measured over 10 cm and entered as 10 in', () => {
-    for (const withHook of [true, false]) {
-      for (const [cyc, sts, rows, hookMm, yarn] of LABEL_GAUGES) {
-        // the label's counts are per 4 in; over 10 cm the crocheter counts (10 / 10.16) of them
-        const spec = swatch(cyc, (sts * 10) / 10.16, (rows * 10) / 10.16, 10, withHook ? hookMm : undefined);
-        const range = checkGauge(spec).filter((i) => i.code === 'W_GAUGE_RANGE');
-        expect(range.map((i) => i.hint), yarn).toEqual(['cm-as-inches']);
-      }
+  /** The `W_GAUGE_RANGE` hint of every label gauge after a slip: hint → count, or the yarns when there are few. */
+  const hints = (withHook: boolean, slip: (sts: number, rows: number) => [number, number, number]): Record<string, number | string[]> => {
+    const out: Record<string, string[]> = {};
+    for (const [cyc, sts, rows, hookMm, yarn] of LABEL_GAUGES) {
+      const range = checkGauge(swatch(cyc, ...slip(sts, rows), withHook ? hookMm : undefined)).filter((i) => i.code === 'W_GAUGE_RANGE');
+      const key = range.length === 0 ? 'not flagged' : (range[0].hint ?? 'no hint');
+      (out[key] ??= []).push(yarn);
     }
+    return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, k === 'not flagged' || v.length > 8 ? v.length : v]));
+  };
+
+  it('every one of them is caught when measured over 10 cm and entered as 10 in; the hint is cm-as-inches or none, except for two tight yarns', () => {
+    // the label's counts are per 4 in; over 10 cm the crocheter counts (10 / 10.16) of them. A tight yarn
+    // slipped by 2.54 can look like an average one slipped by 2 (per 2 in): those get no hint, or the other one.
+    const cm = (sts: number, rows: number): [number, number, number] => [(sts * 10) / 10.16, (rows * 10) / 10.16, 10];
+    expect(hints(true, cm)).toEqual({ 'cm-as-inches': 66, 'no hint': 45, 'per-2-in': ['Patons Grace', 'Lion Brand Nuboo'] });
+    expect(hints(false, cm)).toEqual({ 'cm-as-inches': 86, 'no hint': 23, 'per-2-in': ['Patons Grace', 'Lion Brand Nuboo', 'Caron Simply Me', 'Red Heart Grande'] });
+  });
+
+  it('a per-2-in label gauge typed over 4 in is mostly named per-2-in; cm-as-inches only for yarns far looser than the table (research 01 §10.2)', () => {
+    // before per-2-in was a candidate, 84 (with the hook) and 87 (without) of these were named cm-as-inches.
+    // A loose yarn halved can look like an average one in centimetres: those get no hint, or the other one.
+    const half = (sts: number, rows: number): [number, number, number] => [sts / 2, rows / 2, 4];
+    expect(hints(true, half)).toEqual({
+      'per-2-in': 58,
+      'no hint': 25,
+      'not flagged': 25, // tight yarns: half of them is still inside the accepted range
+      'cm-as-inches': ['Bernat Pipsqueak', 'Lion Brand Feels Like Sherpa', 'Bernat Blanket Big', 'Bernat Blanket Extra Thick', 'Red Heart Irresistible'],
+    });
+    expect(hints(false, half)).toEqual({
+      'per-2-in': 70,
+      'no hint': 21,
+      'not flagged': 14,
+      'cm-as-inches': [
+        'Lion Brand Comfy Cotton Blend',
+        'Lion Brand Basic Stitch Premium',
+        'Bernat Pipsqueak',
+        'Lion Brand Feels Like Sherpa',
+        'Patons Cobbles',
+        'Bernat Blanket Big',
+        'Bernat Blanket Extra Thick',
+        'Red Heart Irresistible',
+      ],
+    });
   });
 
   it('measured over 4 in and converted as centimetres, all but the two 2-stitch Jumbo yarns are caught', () => {
@@ -324,7 +404,7 @@ describe('W_GAUGE_ASPECT and W_GAUGE_ROWS — the shape of the stitch (§2.2.5)'
     const [range, aspect, rows] = issues;
     expect(range.hint).toBeUndefined();
     expect(range.message).toBe(
-      'This swatch has 7.6 rows (usually 13–16.6) per 4 in, more than 35% outside the usual range for Medium (worsted) yarn. Check the unit (cm entered as inches?), the stitch names (in UK patterns "dc" means US sc), the hook, and that it was worked in this technique.',
+      'This swatch has 7.6 rows (usually 13–16.6) per 4 in, more than 35% outside the usual range for Medium (worsted) yarn. Check the unit (cm entered as inches?), that the counts were taken over the length entered (some labels give a gauge per 2 in), the stitch names (in UK patterns "dc" means US sc), the hook, and that it was worked in this technique.',
     );
     expect(aspect.hint).toBe('taller-stitch');
     expect(aspect.message).toBe(
