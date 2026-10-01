@@ -6,7 +6,6 @@
 // `projectStore.update` (`yarnSize.ts`).
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { amiHookMm, type AmiCyc } from '../../core/gauge';
-import { modelHeight } from '../../core/model/transforms';
 import { notify } from '../../app/toasts';
 import { useProjectStore } from '../../state/projectStore';
 import type { AmiSettings } from '../../types/ami';
@@ -25,8 +24,6 @@ import {
   LEAN_LIMIT,
   LEAN_TUBE_ROUNDS,
   leanFromTube,
-  scaleBlockedReason,
-  scaleModelToHeight,
   setAmi,
   setGauge,
   setTargetHeight,
@@ -45,6 +42,25 @@ import {
 } from './yarnSize';
 import './yarnSize.css';
 
+type ModelTools = typeof import('./yarnSizeModel');
+let toolsPromise: Promise<ModelTools> | null = null;
+
+/** The model-dependent half (`yarnSizeModel.ts`, which needs three.js to measure a model), loaded on first use. */
+function useModelTools(): ModelTools | null {
+  const [tools, setTools] = useState<ModelTools | null>(null);
+  useEffect(() => {
+    let live = true;
+    toolsPromise ??= import('./yarnSizeModel');
+    void toolsPromise.then((m) => {
+      if (live) setTools(m);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return tools;
+}
+
 export type { YarnSizePanelProps } from '../../types/ui';
 
 const READ_ONLY = 'This project is read-only';
@@ -57,6 +73,7 @@ export function YarnSizePanel({ context, onDone }: YarnSizePanelProps) {
   const model = threeD?.model;
   const units: UnitPref = doc?.units ?? 'in';
   const [cleared, setCleared] = useState<ClearedField[]>([]);
+  const tools = useModelTools();
 
   // §4.5 / §3.7.7: after an import into a project the import created, the panel pre-fills from `model.yarn`
   // (never over a gauge somebody set: otherwise it only offers it).
@@ -83,7 +100,8 @@ export function YarnSizePanel({ context, onDone }: YarnSizePanelProps) {
 
   const disabled = readOnly;
   const cyc = gauge.cyc as AmiCyc;
-  const heightIn = model ? modelHeight(model) : threeD.recon?.targetHeightIn;
+  // Until the measuring code has loaded, the model's stated height stands in.
+  const heightIn = model ? (tools ? tools.modelHeight(model) : model.finishedSize.height) : threeD.recon?.targetHeightIn;
   const estimate = heightIn ? sizeEstimate(gauge, heightIn) : null;
   const ami = threeD.ami;
 
@@ -157,7 +175,7 @@ export function YarnSizePanel({ context, onDone }: YarnSizePanelProps) {
       <Panel title="Finished size" icon="ruler">
         <div className="ysp-stack">
           {estimate ? <SizeSummary estimate={estimate} units={units} /> : null}
-          {model ? <ScaleField key={heightIn} heightIn={heightIn ?? 0} units={units} disabled={disabled} /> : <TargetField units={units} disabled={disabled} has={!!threeD.recon} value={threeD.recon?.targetHeightIn} />}
+          {model ? <ScaleField key={model.revision} heightIn={heightIn ?? 0} units={units} disabled={disabled} tools={tools} /> : <TargetField units={units} disabled={disabled} has={!!threeD.recon} value={threeD.recon?.targetHeightIn} />}
           <SegmentedControl<AmiSettings['defaultStuffing']>
             label="Stuffing"
             size="sm"
@@ -262,17 +280,19 @@ function SizeSummary({ estimate, units }: { estimate: SizeEstimate; units: UnitP
   );
 }
 
-function ScaleField({ heightIn, units, disabled }: { heightIn: number; units: UnitPref; disabled: boolean }) {
+function ScaleField({ heightIn, units, disabled, tools }: { heightIn: number; units: UnitPref; disabled: boolean; tools: ModelTools | null }) {
   const model = useProjectStore((s) => s.doc?.threeD?.model);
-  // Keyed by the height: a new model height starts the field over.
-  const [want, setWant] = useState<number>(heightIn);
+  // What was typed (null: nothing yet, the field shows the model's height). Keyed by the model revision, so a new
+  // model (a scale, an undo) starts the field over.
+  const [typed, setTyped] = useState<number | null>(null);
+  const want = typed ?? heightIn;
   const [busy, setBusy] = useState(false);
   const changed = Math.abs(want - heightIn) > 0.005;
-  const blocked = disabled ? READ_ONLY : model ? scaleBlockedReason(model, want) : 'No model';
+  const blocked = disabled ? READ_ONLY : !model ? 'No model' : !tools ? 'Loading…' : tools.scaleBlockedReason(model, want);
   const go = async () => {
     setBusy(true);
     try {
-      await scaleModelToHeight(want);
+      await tools?.scaleModelToHeight(want);
     } catch (e) {
       notify.error(`The toy could not be resized: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -289,7 +309,7 @@ function ScaleField({ heightIn, units, disabled }: { heightIn: number; units: Un
         min={HEIGHT_LIMITS_IN[0]}
         max={HEIGHT_LIMITS_IN[1]}
         disabled={disabled}
-        onChange={(v) => v !== null && setWant(v)}
+        onChange={(v) => v !== null && setTyped(v)}
         hint="Every part grows or shrinks together; one undo step."
       />
       <Button size="sm" loading={busy} disabledReason={!changed ? 'Type a new height first' : (blocked ?? undefined)} onClick={() => void go()}>

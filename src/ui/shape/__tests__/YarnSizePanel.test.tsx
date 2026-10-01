@@ -4,7 +4,7 @@
 // (pre-model, post-import, shape, pattern), clears the hook and the measurements when the weight changes, takes the
 // test ball, the 10-stitch yarn calibration and the spiral lean from the test tube, shows the size band, and scales
 // the model to a height as one step and a new revision.
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { isImplemented } from '../../../core/stub';
 import { modelHeight } from '../../../core/model/transforms';
@@ -14,13 +14,13 @@ import type { ProjectDoc } from '../../../types/project';
 import type { ReconSettings } from '../../../types/geometry';
 import { PatternTab } from '../../pattern/PatternTab';
 import { YarnSizePanel } from '../YarnSizePanel';
+import { scaleBlockedReason } from '../yarnSizeModel';
 import {
   amigurumiGauge,
   hookChoices,
   isPristineGauge,
   LACE_NOTE,
   leanFromTube,
-  scaleBlockedReason,
   sizeEstimate,
   usesModelYarn,
   withHook,
@@ -199,6 +199,8 @@ describe('YarnSizePanel', () => {
     render(<YarnSizePanel context="shape" />);
     const revisions = doc().threeD!.revisions.length;
     commit(screen.getByRole('spinbutton', { name: /Resize the whole toy to/ }), '12');
+    // The measuring code loads on demand.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Scale to 12 in' }).getAttribute('aria-disabled')).toBeNull());
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Scale to 12 in' }));
     });
