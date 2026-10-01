@@ -19,9 +19,9 @@ export function HeartChartArt({ cell = 13, gap = 2 }: { cell?: number; gap?: num
             width={cell}
             height={cell}
             rx={2.5}
-            className={c === 'X' ? 'shell-art__on' : c === 'O' ? 'shell-art__light' : 'shell-art__off'}
+            className={c === 'X' ? 'shell-art__on' : 'shell-art__light'}
           />
-        )),
+        )).filter((_, k) => row[k] !== '.'),
       )}
     </svg>
   );

@@ -8,7 +8,7 @@ import { Badge } from '../../common/Badge';
 import { CardButton } from '../../common/Card';
 import { NEW_PROJECT_OPTIONS, type NewProjectKind } from '../newProject';
 import { createProject } from '../projectSession';
-import { HeartChartArt, ToyArt } from './ChartArt';
+import { HeartChartArt } from './ChartArt';
 
 export function NewProjectCards() {
   const [busy, setBusy] = useState<NewProjectKind | null>(null);
@@ -27,14 +27,17 @@ export function NewProjectCards() {
   };
 
   const [picture, ...threeD] = NEW_PROJECT_OPTIONS;
-  const tone = { photos: 'accent', 'one-photo': 'accent', describe: 'info', 'claude-design': 'info' } as const;
+  const tone = { photos: 'accent', 'one-photo': 'accent', describe: 'neutral', 'claude-design': 'neutral' } as const;
 
   return (
     <div className="shell-new">
       <section className="shell-new__group shell-new__group--2d" aria-labelledby="new-2d-title">
         <h2 className="shell-new__label" id="new-2d-title">
           Colorwork chart
-          <span className="shell-new__label-mode">2D</span>
+          <span className="shell-new__label-mode" aria-hidden="true">
+            2D
+          </span>
+          <span className="ui-visually-hidden"> (2D)</span>
         </h2>
         <CardButton
           className="shell-new__feature"
@@ -60,10 +63,10 @@ export function NewProjectCards() {
       <section className="shell-new__group shell-new__group--3d" aria-labelledby="new-3d-title">
         <h2 className="shell-new__label" id="new-3d-title">
           Amigurumi toy
-          <span className="shell-new__label-mode">3D</span>
-          <span className="shell-new__label-art">
-            <ToyArt size={34} />
+          <span className="shell-new__label-mode" aria-hidden="true">
+            3D
           </span>
+          <span className="ui-visually-hidden"> (3D)</span>
         </h2>
         <div className="shell-new__grid">
           {threeD.map((o) => (

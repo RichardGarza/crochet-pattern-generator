@@ -2,14 +2,15 @@
 // wizard route) · status bar. Each tab renders inside its own error boundary and Suspense (its chunk loads on
 // first use). A project route without a tab, or with a tab this project does not show, is redirected to the
 // project's default tab.
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { ErrorBoundary } from '../../app/ErrorBoundary';
 import { navigate } from '../../app/router';
-import { defaultRouteTab, findTab, qaWizard, visibleTabs } from '../../app/tabs';
+import { TABS_2D, TABS_3D, defaultRouteTab, qaWizard, visibleTabs } from '../../app/tabs';
 import type { ProjectRoute } from '../../state/appStore';
 import { useProjectStore } from '../../state/projectStore';
 import { Button } from '../common/Button';
 import { EmptyState } from '../common/EmptyState';
+import { Icon } from '../common/Icon';
 import { Spinner } from '../common/Progress';
 import { TabPanel, Tabs } from '../common/Tabs';
 import { ProjectBanners } from './ProjectBanners';
@@ -17,6 +18,7 @@ import { openProject } from './projectSession';
 import { ShortcutsDialog } from './ShortcutsDialog';
 import { StatusBar } from './StatusBar';
 import { TopBar } from './TopBar';
+import { useFocusOnArrival } from './focusOnArrival';
 import { useWorkspaceShortcuts } from './shortcuts';
 
 const ID_BASE = 'ws';
@@ -76,12 +78,19 @@ function MissingProject() {
 }
 
 function OpenWorkspace({ route }: { route: ProjectRoute }) {
-  const doc = useProjectStore((s) => s.doc);
+  // Primitive selections only: the frame re-renders when the name, the mode or the visible tabs change, not on
+  // every edit of the document (a drag that updates the model 60 times a second).
+  const id = useProjectStore((s) => s.doc?.id);
+  const name = useProjectStore((s) => s.doc?.name);
+  const mode = useProjectStore((s) => s.doc?.mode);
+  const tabKey = useProjectStore((s) => (s.doc ? visibleTabs(s.doc).map((t) => t.id).join(',') : ''));
+  const defaultTab = useProjectStore((s) => (s.doc ? defaultRouteTab(s.doc) : null));
   const [helpOpen, setHelpOpen] = useState(false);
   const onHelp = useCallback(() => setHelpOpen(true), []);
   useWorkspaceShortcuts({ onHelp });
+  const mainRef = useRef<HTMLElement>(null);
+  useFocusOnArrival(mainRef);
 
-  const name = doc?.name;
   useEffect(() => {
     if (name) document.title = `${name} · Crochet Pattern Generator`;
     return () => {
@@ -89,41 +98,44 @@ function OpenWorkspace({ route }: { route: ProjectRoute }) {
     };
   }, [name]);
 
-  const tabs = doc ? visibleTabs(doc) : [];
+  const shown = tabKey.split(',');
+  const tabs = (mode === '2d' ? TABS_2D : TABS_3D).filter((t) => shown.includes(t.id));
   const isQa = route.tab === 'qa';
-  const tab = doc && !isQa ? findTab(doc, route.tab) : undefined;
-  const needsRedirect = !!doc && !isQa && !tab;
+  const tab = isQa ? undefined : tabs.find((t) => t.id === route.tab);
+  const needsRedirect = !!id && !isQa && !tab;
 
   useEffect(() => {
-    if (needsRedirect && doc) navigate({ screen: 'project', projectId: doc.id, tab: defaultRouteTab(doc) }, { replace: true });
-  }, [needsRedirect, doc]);
+    if (needsRedirect && id && defaultTab) navigate({ screen: 'project', projectId: id, tab: defaultTab }, { replace: true });
+  }, [needsRedirect, id, defaultTab]);
 
-  if (!doc) return null;
+  if (!id) return null;
   const Body = isQa ? qaWizard.Component : tab?.Component;
   const where = isQa ? 'the Q&A wizard' : tab ? `the ${tab.label} tab` : 'this view';
 
   return (
     <StatusBar>
-      <TopBar projectId={doc.id} onHelp={onHelp} />
+      <TopBar projectId={id} onHelp={onHelp} />
       <ProjectBanners />
-      <nav className="shell-tabbar" aria-label="Project">
+      <div className="shell-tabbar">
+        {isQa ? (
+          <span className="shell-tabbar__route" aria-current="page">
+            <Icon name="message" size={17} />
+            Describe your toy
+          </span>
+        ) : null}
         <Tabs
           idBase={ID_BASE}
           ariaLabel="Project views"
           items={tabs.map((t) => ({ id: t.id, label: t.label, icon: t.icon }))}
           value={tab?.id ?? null}
-          onChange={(id) => navigate({ screen: 'project', projectId: doc.id, tab: id })}
+          onChange={(next) => navigate({ screen: 'project', projectId: id, tab: next })}
         />
-        {isQa ? (
-          <span className="shell-tabbar__route">
-            <span className="shell-tabbar__route-dot" aria-hidden="true" />
-            Describe your toy
-          </span>
-        ) : null}
-      </nav>
-      <main className="shell-workspace__body" id="main" tabIndex={-1}>
+      </div>
+      <main className="shell-workspace__body" id="main" tabIndex={-1} ref={mainRef}>
+        {/* The page's h1: the name in the top bar is an input, not a heading. */}
+        <h1 className="ui-visually-hidden">{name}</h1>
         {Body ? (
-          <ErrorBoundary where={where} resetKey={`${doc.id}/${route.tab ?? ''}`}>
+          <ErrorBoundary where={where} resetKey={`${id}/${route.tab ?? ''}`}>
             <Suspense fallback={<TabLoading />}>
               {tab ? (
                 <TabPanel idBase={ID_BASE} id={tab.id} className="shell-workspace__panel">

@@ -1,6 +1,6 @@
 // Toast: one short, passing message (bottom right). `ToastStack` lays out several. The data and timers live in
-// appStore / app/toasts.ts; this is only the view. Keep the stack mounted while the app runs: it is the polite
-// live region; errors are role="alert".
+// appStore / app/toasts.ts; this is only the view. Announcements are not the view's job: the shell's
+// ToastRegion keeps two hidden live regions (polite, and assertive for errors), so each toast is read once.
 import type { ReactNode } from 'react';
 import { Button, IconButton } from './Button';
 import { Icon, type IconName } from './Icon';
@@ -23,8 +23,6 @@ export function ToastView({ tone, message, action, onDismiss, onPause }: ToastVi
   return (
     <div
       className={cx('ui-toast', `ui-toast--${tone}`)}
-      // The stack is a polite live region (always mounted, so additions are announced); errors interrupt.
-      role={tone === 'error' ? 'alert' : undefined}
       onMouseEnter={() => onPause?.(true)}
       onMouseLeave={() => onPause?.(false)}
       onFocus={() => onPause?.(true)}
@@ -54,7 +52,7 @@ export function ToastView({ tone, message, action, onDismiss, onPause }: ToastVi
 
 export function ToastStack({ children, label = 'Notifications' }: { children: ReactNode; label?: string }) {
   return (
-    <section className="ui-toast-stack" aria-label={label} aria-live="polite" aria-relevant="additions">
+    <section className="ui-toast-stack" aria-label={label}>
       {children}
     </section>
   );

@@ -33,7 +33,8 @@ describe('Step 0 stub tabs', () => {
     it.runIf(!isImplemented(Component))(`${name} renders a labelled placeholder for track ${track}`, () => {
       const { container } = render(<Component />);
       const el = container.querySelector(`[data-stub="${name}"]`);
-      expect(el?.textContent).toContain(`Coming in track ${track}`);
+      expect(el?.getAttribute('data-track')).toBe(track);
+      expect(el?.textContent).toContain('Coming soon');
       expect(el?.querySelector('h2')?.textContent).toBeTruthy();
     });
   }

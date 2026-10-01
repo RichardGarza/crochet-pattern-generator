@@ -9,12 +9,21 @@
 //   hrefFor(route)       the `href` for a link.
 import { appStore, formatHash, parseHash, sameRoute, useAppStore, type Route } from '../state/appStore';
 
+let navigated = false;
+
+/** True once the route changed after the page loaded (a navigation, Back / Forward, a typed hash). */
+export const hasNavigated = (): boolean => navigated;
+
 /** Starts following `location.hash`. Returns a function that stops it. */
 export function startRouter(): () => void {
   const sync = () => appStore.getState().setRoute(parseHash(window.location.hash));
+  const onHashChange = () => {
+    navigated = true;
+    sync();
+  };
   sync();
-  window.addEventListener('hashchange', sync);
-  return () => window.removeEventListener('hashchange', sync);
+  window.addEventListener('hashchange', onHashChange);
+  return () => window.removeEventListener('hashchange', onHashChange);
 }
 
 /**
@@ -23,6 +32,7 @@ export function startRouter(): () => void {
  */
 export function navigate(route: Route, o: { replace?: boolean } = {}): void {
   const hash = formatHash(route);
+  navigated = true;
   if (o.replace) {
     if (window.location.hash !== hash) window.history.replaceState(window.history.state, '', hash);
     appStore.getState().setRoute(parseHash(hash));

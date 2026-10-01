@@ -70,6 +70,7 @@ export const projectBackend = (): ProjectBackend => backend;
 /** Replaces the backend (integration: the repository one; tests: their own). */
 export function setProjectBackend(next: ProjectBackend): void {
   backend = next;
+  editedInMemory.clear();
 }
 
 const newId = (): string =>
@@ -77,10 +78,24 @@ const newId = (): string =>
     ? crypto.randomUUID()
     : `p-${Date.now().toString(36)}-${Math.floor(performance.now() * 1000).toString(36)}`;
 
+/** Projects of this tab (memory backend) that were changed: a reload or a closed tab would lose them. */
+const editedInMemory = new Set<string>();
+
+/**
+ * True when closing or reloading the page would lose work: the memory backend holds a project that was
+ * changed, or the open one has changes. (With a repository backend, persistence decides; T8 flushes on hide.)
+ */
+export function hasUnsavedWork(): boolean {
+  if (backend.kind !== 'memory') return false;
+  const s = projectStore.getState();
+  return editedInMemory.size > 0 || (s.doc !== null && s.changeId !== s.savedChangeId);
+}
+
 /** Keeps the open project (its current state) with the backend and closes it. */
 export async function leaveProject(): Promise<void> {
   const s = projectStore.getState();
   if (!s.doc) return;
+  if (backend.kind === 'memory' && s.changeId !== s.savedChangeId) editedInMemory.add(s.doc.id);
   await backend.leave(s.doc, s.assets);
   if (backend.kind === 'memory') appStore.getState().upsertSummary(summaryOf(s.doc, new Date().toISOString()));
   // The backend holds the changes now (memory) or has flushed them (repository).

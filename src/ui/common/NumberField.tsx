@@ -124,6 +124,8 @@ export function NumberField({
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') commit();
     else if (e.key === 'Escape') {
+      // Escape first drops a half-typed value (and keeps a surrounding dialog open); a clean field lets it through.
+      if (text !== toShown(value) || invalid) e.preventDefault();
       setText(toShown(value));
       setInvalid(false);
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
@@ -159,6 +161,12 @@ export function NumberField({
           className={cx('ui-input', `ui-input--${size}`, 'ui-input--number')}
           type="text"
           inputMode="decimal"
+          // A spin button: ↑/↓ step the value (announced with its range).
+          role="spinbutton"
+          aria-valuenow={value === null ? undefined : Number(toShown(value))}
+          aria-valuemin={min === undefined ? undefined : Number(toShown(min))}
+          aria-valuemax={max === undefined ? undefined : Number(toShown(max))}
+          aria-valuetext={value === null ? undefined : `${toShown(value)}${unitText ? ` ${unitText}` : ''}`}
           autoComplete="off"
           spellCheck={false}
           value={text}

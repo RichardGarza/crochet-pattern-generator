@@ -58,12 +58,14 @@ export function ProjectGrid({ summaries, onOpen, renderActions, thumbnailUrl, em
     <ul className="shell-projects" aria-label="Your projects">
       {list.map((s) => (
         <li key={s.id} className="shell-project">
-          <button type="button" className="shell-project__open" onClick={() => onOpen(s.id)} aria-label={`Open ${s.name}`} data-project-id={s.id}>
+          <button type="button" className="shell-project__open" onClick={() => onOpen(s.id)} data-project-id={s.id}>
             <span className="shell-project__thumb">
               <Thumb summary={s} url={thumbnailUrl?.(s)} />
             </span>
             <span className="shell-project__info">
-              <span className="shell-project__name">{s.name}</span>
+              <span className="shell-project__name" title={s.name}>
+                {s.name}
+              </span>
               <span className="shell-project__meta">
                 <Icon name={s.mode === '2d' ? 'chart' : 'cube'} size={13} />
                 <span>{s.mode === '2d' ? '2D chart' : '3D toy'}</span>

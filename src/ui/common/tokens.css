@@ -112,10 +112,10 @@
   --color-warn: #a36a00;
   --color-warn-soft: #fbf0d8;
   --color-warn-text: #7f5200;
-  --color-danger: #b42d22;
-  --color-danger-soft: #fbe5e2;
-  --color-danger-text: #9f261c;
-  --color-danger-hover: #9a251b;
+  --color-danger: #b3243b;
+  --color-danger-soft: #fbe4e8;
+  --color-danger-text: #a01f35;
+  --color-danger-hover: #9a1e33;
   --color-info: #2d63a6;
   --color-info-soft: #e4edf8;
   --color-info-text: #24538c;
@@ -127,6 +127,8 @@
   --shadow-1: 0 1px 2px rgba(64, 44, 24, 0.06), 0 1px 1px rgba(64, 44, 24, 0.03);
   --shadow-2: 0 2px 4px rgba(64, 44, 24, 0.05), 0 6px 16px -4px rgba(64, 44, 24, 0.12);
   --shadow-3: 0 8px 20px -6px rgba(64, 44, 24, 0.18), 0 24px 48px -12px rgba(64, 44, 24, 0.22);
+  /* A 1 px top highlight that gives dark surfaces an edge; none in light. */
+  --highlight-top: inset 0 0 0 0 transparent;
 }
 
 /* Dark: the system asks for it and the user did not pick light ... */
@@ -134,12 +136,12 @@
   :root:not([data-theme='light']) {
     color-scheme: dark;
     --color-bg: #171513;
-    --color-surface: #201d1a;
-    --color-surface-raised: #29251f;
+    --color-surface: #24201c;
+    --color-surface-raised: #2d2823;
     --color-surface-sunken: #131110;
-    --color-surface-hover: #2a2622;
-    --color-border: #39332c;
-    --color-border-strong: #4d463d;
+    --color-surface-hover: #2f2a25;
+    --color-border: #433b33;
+    --color-border-strong: #564d43;
     --color-border-control: #81776b;
 
     --color-text: #f3eee7;
@@ -164,10 +166,10 @@
     --color-warn: #e0a83a;
     --color-warn-soft: #372a12;
     --color-warn-text: #ecc169;
-    --color-danger: #ef7b6f;
-    --color-danger-soft: #3d1e1a;
-    --color-danger-text: #f59b91;
-    --color-danger-hover: #f4958a;
+    --color-danger: #f27d8f;
+    --color-danger-soft: #3d1c23;
+    --color-danger-text: #f7a1ae;
+    --color-danger-hover: #f592a2;
     --color-info: #75a7e6;
     --color-info-soft: #1b2a3d;
     --color-info-text: #9cc0ee;
@@ -179,6 +181,8 @@
     --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-2: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 20px -6px rgba(0, 0, 0, 0.5);
     --shadow-3: 0 10px 24px -6px rgba(0, 0, 0, 0.55), 0 28px 56px -12px rgba(0, 0, 0, 0.6);
+  --highlight-top: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+    --highlight-top: inset 0 1px 0 rgba(255, 255, 255, 0.045);
   }
 }
 
@@ -186,12 +190,12 @@
 :root[data-theme='dark'] {
   color-scheme: dark;
   --color-bg: #171513;
-  --color-surface: #201d1a;
-  --color-surface-raised: #29251f;
+  --color-surface: #24201c;
+  --color-surface-raised: #2d2823;
   --color-surface-sunken: #131110;
-  --color-surface-hover: #2a2622;
-  --color-border: #39332c;
-  --color-border-strong: #4d463d;
+  --color-surface-hover: #2f2a25;
+  --color-border: #433b33;
+  --color-border-strong: #564d43;
   --color-border-control: #81776b;
 
   --color-text: #f3eee7;
@@ -216,10 +220,10 @@
   --color-warn: #e0a83a;
   --color-warn-soft: #372a12;
   --color-warn-text: #ecc169;
-  --color-danger: #ef7b6f;
-  --color-danger-soft: #3d1e1a;
-  --color-danger-text: #f59b91;
-  --color-danger-hover: #f4958a;
+  --color-danger: #f27d8f;
+  --color-danger-soft: #3d1c23;
+  --color-danger-text: #f7a1ae;
+  --color-danger-hover: #f592a2;
   --color-info: #75a7e6;
   --color-info-soft: #1b2a3d;
   --color-info-text: #9cc0ee;
@@ -231,6 +235,7 @@
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 20px -6px rgba(0, 0, 0, 0.5);
   --shadow-3: 0 10px 24px -6px rgba(0, 0, 0, 0.55), 0 28px 56px -12px rgba(0, 0, 0, 0.6);
+  --highlight-top: inset 0 1px 0 rgba(255, 255, 255, 0.045);
 }
 
 /* ---- base */
@@ -346,5 +351,12 @@ a {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  /* Busy indicators keep signalling "working", slowly. */
+  .ui-spinner svg,
+  .ui-progress__fill--indeterminate {
+    animation-duration: 2s !important;
+    animation-iteration-count: infinite !important;
   }
 }

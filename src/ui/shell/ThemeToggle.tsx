@@ -1,22 +1,25 @@
-// Theme toggle: one button that cycles System → Light → Dark; its label says what it is and what comes next.
+// Theme switch: System · Light · Dark as three icon segments (one tab stop, arrows choose), each named and with
+// a tooltip, so every choice is visible and one click always does what it says.
 import { useAppStore, type ThemePref } from '../../state/appStore';
-import { IconButton } from '../common/Button';
-import type { IconName } from '../common/Icon';
-import { nextTheme, setTheme } from './theme';
+import { SegmentedControl } from '../common/SegmentedControl';
+import { setTheme } from './theme';
 
-const ICON: Record<ThemePref, IconName> = { system: 'monitor', light: 'sun', dark: 'moon' };
-const NAME: Record<ThemePref, string> = { system: 'System', light: 'Light', dark: 'Dark' };
+const OPTIONS = [
+  { value: 'system', icon: 'monitor', ariaLabel: 'System theme', label: '' },
+  { value: 'light', icon: 'sun', ariaLabel: 'Light theme', label: '' },
+  { value: 'dark', icon: 'moon', ariaLabel: 'Dark theme', label: '' },
+] as const;
 
-export function ThemeToggle({ tooltipPlacement }: { tooltipPlacement?: 'top' | 'bottom' }) {
+export function ThemeToggle() {
   const theme = useAppStore((s) => s.prefs.theme);
-  const next = nextTheme(theme);
   return (
-    <IconButton
-      icon={ICON[theme]}
-      label={`Theme: ${NAME[theme]} (switch to ${NAME[next]})`}
-      tooltipPlacement={tooltipPlacement}
-      onClick={() => setTheme(next)}
-      data-testid="theme-toggle"
+    <SegmentedControl<ThemePref>
+      ariaLabel="Theme"
+      size="sm"
+      value={theme}
+      onChange={setTheme}
+      options={OPTIONS.map((o) => ({ ...o, tooltip: o.ariaLabel }))}
+      className="shell-theme"
     />
   );
 }

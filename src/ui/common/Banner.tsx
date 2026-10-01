@@ -5,9 +5,9 @@ import { IconButton } from './Button';
 import { Icon, type IconName } from './Icon';
 import { cx } from './cx';
 
-export type BannerTone = 'info' | 'success' | 'warn' | 'danger' | 'accent';
+export type BannerTone = 'neutral' | 'info' | 'success' | 'warn' | 'danger' | 'accent';
 
-const BANNER_ICON: Record<BannerTone, IconName> = { info: 'info', success: 'success', warn: 'warning', danger: 'error', accent: 'sparkles' };
+const BANNER_ICON: Record<BannerTone, IconName> = { neutral: 'info', info: 'info', success: 'success', warn: 'warning', danger: 'error', accent: 'sparkles' };
 
 export interface BannerProps {
   tone?: BannerTone;

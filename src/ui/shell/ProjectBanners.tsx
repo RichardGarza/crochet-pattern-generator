@@ -1,5 +1,6 @@
 // The banner slot above the tab bar (§5.3, §5.7): banners posted by persistence (banners.ts), the shell's own
 // read-only notice, and "Waiting for your Claude Design result" (F4 step 3) while doc.qa.awaiting is set.
+import { useEffect, useState } from 'react';
 import { navigate } from '../../app/router';
 import { notify } from '../../app/toasts';
 import { projectStore, useProjectStore } from '../../state/projectStore';
@@ -14,6 +15,7 @@ function PostedBanner({ banner }: { banner: ProjectBanner }) {
       tone={banner.tone}
       title={banner.title}
       onDismiss={banner.dismissible ? () => dismissProjectBanner(banner.id) : undefined}
+      dismissLabel={`Dismiss: ${banner.title}`}
       actions={
         banner.actions?.length ? (
           <>
@@ -31,7 +33,18 @@ function PostedBanner({ banner }: { banner: ProjectBanner }) {
   );
 }
 
+/** The current time, refreshed every minute (for "… minutes ago"). */
+function useMinuteClock(): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  return now;
+}
+
 function AwaitingBanner({ projectId, since }: { projectId: string; since: string }) {
+  const now = useMinuteClock();
   const dismiss = () => {
     const changed = projectStore.getState().update('Stop waiting for Claude Design', (d) => {
       if (d.qa) delete d.qa.awaiting;
@@ -40,7 +53,7 @@ function AwaitingBanner({ projectId, since }: { projectId: string; since: string
   };
   return (
     <Banner
-      tone="accent"
+      tone="neutral"
       icon="hourglass"
       title="Waiting for your Claude Design result"
       actions={
@@ -48,16 +61,17 @@ function AwaitingBanner({ projectId, since }: { projectId: string; since: string
           <Button size="sm" variant="primary" icon="import" onClick={() => navigate({ screen: 'project', projectId, tab: 'import' })}>
             Import Claude Design result
           </Button>
+          {/* The prompt is built by the wizard (T7): this opens it at the step with "Copy prompt again". */}
           <Button size="sm" variant="ghost" icon="copy" onClick={() => navigate({ screen: 'project', projectId, tab: 'qa' })}>
-            Copy prompt again
+            Copy prompt again…
           </Button>
-          <Button size="sm" variant="ghost" onClick={dismiss}>
+          <Button size="sm" variant="ghost" onClick={dismiss} aria-label="Dismiss: stop waiting for Claude Design">
             Dismiss
           </Button>
         </>
       }
     >
-      Prompt copied {formatRelativeTime(since)}. You can close the app meanwhile — nothing is lost.
+      Prompt copied {formatRelativeTime(since, now)}. You can close the app meanwhile — nothing is lost.
     </Banner>
   );
 }

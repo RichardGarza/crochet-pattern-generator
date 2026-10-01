@@ -49,7 +49,8 @@ export function ProjectName() {
         }}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') input.current?.blur();
+          // Enter renames and keeps the focus here (blurring would drop it on <body>).
+          if (e.key === 'Enter') commit();
           else if (e.key === 'Escape') {
             // Drop the edit; focus stays.
             setText(name);

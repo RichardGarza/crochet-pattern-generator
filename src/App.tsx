@@ -9,6 +9,7 @@ import { Spinner } from './ui/common/Progress';
 import { ToastRegion } from './ui/shell/ToastRegion';
 import { Workspace } from './ui/shell/Workspace';
 import { useApplyTheme } from './ui/shell/theme';
+import { useUnloadGuard } from './ui/shell/unloadGuard';
 
 let probed: Promise<void> | null = null;
 
@@ -46,6 +47,7 @@ function Loading() {
 export function App() {
   useApplyTheme();
   useCapabilities();
+  useUnloadGuard();
   const route = useRoute();
   const StartScreen = startScreen.Component;
   return (

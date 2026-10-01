@@ -40,6 +40,8 @@ describe('Button and IconButton', () => {
     );
     const button = screen.getByRole('button', { name: 'Export' });
     expect(button.getAttribute('aria-disabled')).toBe('true');
+    // The reason is always referenced, before any tooltip shows.
+    expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toBe('Add a picture first');
     expect(button.hasAttribute('disabled')).toBe(false);
     fireEvent.click(button);
     expect(onClick).not.toHaveBeenCalled();
@@ -77,7 +79,8 @@ describe('Button and IconButton', () => {
       const tip = screen.getByRole('tooltip');
       expect(tip.textContent).toContain('Undo');
       expect(tip.textContent).toContain('⌘Z');
-      expect(button.getAttribute('aria-describedby')).toBe(tip.id);
+      // The tooltip repeats the label, so it is not added as a description (it would be read twice).
+      expect(button.hasAttribute('aria-describedby')).toBe(false);
       fireEvent.keyDown(window, { key: 'Escape' });
       expect(screen.queryByRole('tooltip')).toBeNull();
     } finally {

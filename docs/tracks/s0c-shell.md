@@ -21,7 +21,7 @@ design system (`src/ui/common`), the app shell (`src/App.tsx`, `src/main.tsx`, `
 | `src/ui/shell/` | Start screen frame and cards, project grid, workspace (top bar, banners, tab bar, body, status bar), project session, theme, shortcuts, placeholders |
 | stub entries | `ui/library/StartScreen` (delegates, see below) · `ui/twoD/SourceTab`, `ChartTab` · `ui/pattern/PatternTab`, `MaterialsTab` · `ui/photos/PhotosTab` · `ui/import/ImportTab` · `ui/qa/QaWizard` · `ui/shape/ShapeTab`, `YarnSizePanel` · `ui/export/ExportTab` — each `__stub: true`, frozen props |
 | `src/state/appStore.ts` | `Prefs.theme: 'system' \| 'light' \| 'dark'` (default `'system'`), sanitized like the other prefs (deviation 1) |
-| `e2e/smoke.spec.ts` | 16 browser tests (below); `e2e/workers/*.worker.ts` test-only workers; `e2e/gallery/` dev/test-only component gallery |
+| `e2e/smoke.spec.ts` | 15 browser tests (below); `e2e/workers/*.worker.ts` test-only workers; `e2e/gallery/` dev/test-only component gallery |
 | `e2e/screenshots/*.png` | Light + dark: start screen, 2D workspace, 3D workspace (Pattern tab with the Yarn & size slot), component gallery |
 
 Tests added: `src/ui/common/__tests__/{tokens,units,components}`, `src/app/__tests__/{tabs,router}`,
@@ -57,7 +57,7 @@ identical (also tested).
 | Focus | `--color-focus` (2 px outline, offset 2), `--color-focus-halo` (field glow) |
 | Status | `--color-{success,warn,danger,info}` (icons, fills), `…-soft` (backgrounds), `…-text` (text on soft or surface); `--color-danger-hover` |
 | Misc | `--color-overlay` (dialog backdrop), `--color-skeleton`, `--color-grid-dot` (graph-paper backdrop) |
-| Shadows | `--shadow-1` (resting cards, buttons), `--shadow-2` (hover, raised cards), `--shadow-3` (dialogs, toasts) |
+| Shadows | `--shadow-1` (resting cards, buttons), `--shadow-2` (hover, raised cards), `--shadow-3` (dialogs, toasts), `--highlight-top` (a 1 px top edge for cards in dark; none in light — add it after the shadow: `box-shadow: var(--shadow-1), var(--highlight-top)`) |
 
 Themes: light by default; dark follows `prefers-color-scheme` unless the user picked one, written as
 `<html data-theme="light|dark">`. The choice is `appStore.prefs.theme`; the shell mirrors it to
@@ -71,9 +71,9 @@ everything interactive; color never alone (status tones always have text and an 
 
 | Component | Props (besides normal HTML attributes where noted) | Usage |
 |---|---|---|
-| `Button` | `variant?: 'primary' \| 'secondary' \| 'ghost' \| 'danger'` (default secondary) · `size?: 'sm' \| 'md' \| 'lg'` · `icon?`, `iconEnd?: IconName` · `loading?` (spinner, aria-busy, clicks ignored) · `disabledReason?: string` (stays focusable, aria-disabled, tooltip shows why) · `fullWidth?` · `ref?` · all `<button>` attributes | `<Button variant="primary" icon="share" onClick={…}>Export</Button>` — one primary per view |
+| `Button` | `variant?: 'primary' \| 'secondary' \| 'ghost' \| 'danger'` (default secondary) · `size?: 'sm' \| 'md' \| 'lg'` · `icon?`, `iconEnd?: IconName` · `loading?` (spinner, aria-busy, clicks ignored) · `disabledReason?: string` (stays focusable with a full-strength focus ring, aria-disabled, the reason is its aria-description at all times and its tooltip) · `fullWidth?` · `ref?` · all `<button>` attributes | `<Button variant="primary" icon="share" onClick={…}>Export</Button>` — one primary per view |
 | `IconButton` | `icon: IconName` · `label: string` (required: name + tooltip) · `shortcut?` ("⌘Z", shown in the tooltip) · `pressed?` (aria-pressed toggle) · `showTooltip?` (default true) · `tooltipPlacement?` · `variant?` (default ghost) · `size?` · `disabledReason?` | `<IconButton icon="undo" label="Undo" shortcut="⌘Z" onClick={undo} />` |
-| `Tooltip` | `content` · `shortcut?` · `placement?: 'top' \| 'bottom'` (flips when no room) · `delay?` (ms, default 350) · `disabled?` · `children`: ONE focusable element | Hover after the delay, keyboard focus at once, Escape hides; portal + fixed position; sets aria-describedby while shown. Never the only copy of needed information |
+| `Tooltip` | `content` · `shortcut?` · `placement?: 'top' \| 'bottom'` (flips when no room) · `delay?` (ms, default 350) · `disabled?` · `describe?` (default true: aria-describedby while shown; pass false when the anchor already says it) · `children`: ONE focusable element | Hover after the delay, keyboard focus at once, Escape hides; portal + fixed position. Never the only copy of needed information |
 | `Card` | `padding?: 'none' \| 'sm' \| 'md' \| 'lg'` · `elevation?: 'flat' \| 'raised'` · `as?: 'div' \| 'section' \| 'article' \| 'li'` · div attributes | `<Card padding="lg">…</Card>` |
 | `CardHeader` | `title` · `subtitle?` · `icon?` · `actions?` · `level?: 2 \| 3 \| 4` | First child of a Card |
 | `CardButton` | `title: string` (accessible name) · `description?` (aria-describedby) · `icon?` · `tone?: 'accent' \| 'neutral' \| 'info' \| 'success'` (icon tile) · `footer?` · `children` (e.g. an illustration) · button attributes | A whole card that is one button (start screen) |
@@ -84,12 +84,12 @@ everything interactive; color never alone (status tones always have text and an 
 | `Select<T>` | `label` · `value: T` · `onChange(v: T)` · `options: { value, label, disabled? }[]` or `groups: { label, options }[]` · `hint?`, `error?`, `labelHidden?`, `disabled?`, `size?` | Native `<select>` (platform keyboard and screen-reader behavior). `T` is inferred from `value` (`NoInfer` on options and onChange) |
 | `Slider` | `label` · `value` · `onChange(v)` (while dragging) · `onCommit?(v)` (on release / key up / blur) · `min`, `max`, `step?` · `format?(v)` (shown value + aria-valuetext) · `endLabels?: [string, string]` · `hint?`, `disabled?`, `labelHidden?` | Use `onCommit` for full-quality recomputes (F2 step 6) |
 | `Switch` | `label` · `checked` · `onChange(checked)` · `description?` · `showState?` ("On"/"Off" text) · `disabled?` · `size?` | role="switch", for settings that apply at once |
-| `SegmentedControl<T>` | `value: T` · `onChange(v)` · `options: { value, label, icon?, ariaLabel?, disabled? }[]` · `label?` (visible) or `ariaLabel?` · `size?` · `fullWidth?` · `disabled?` | Radio group for 2–5 short choices: one tab stop, arrows move and select |
+| `SegmentedControl<T>` | `value: T` · `onChange(v)` · `options: { value, label, icon?, ariaLabel?, tooltip?, disabled? }[]` · `label?` (visible) or `ariaLabel?` · `size?` · `fullWidth?` · `disabled?` | Radio group for 2–5 short choices: one tab stop, arrows move and select |
 | `Field` + `useFieldIds(id?)`, `describedBy(ids, hint, error)` | `ids`, `label`, `labelHidden?`, `hint?`, `error?`, `aside?`, `required?` | Wrap a custom control in the standard label/hint/error frame with the aria wiring |
 | `Dialog` | `open` · `onClose()` · `title` · `description?` · `children?` · `footer?` (primary action last) · `size?: 'sm' \| 'md' \| 'lg'` · `dismissible?` (Escape + backdrop; default true) · `initialFocus?: RefObject` | Native `<dialog>` modal + Tab wrap; focuses the first field (or `initialFocus`); returns focus on close |
 | `ConfirmDialog` | `open` · `title` · `children?` · `confirmLabel` · `cancelLabel?` · `tone?: 'danger' \| 'primary'` · `onConfirm()` · `onCancel()` | Destructive confirms start focused on Cancel |
 | `ToastView`, `ToastStack` | `tone`, `message`, `action?`, `onDismiss`, `onPause?` | Views only: show toasts with `notify.*` (`app/toasts.ts`); the shell renders them |
-| `Banner` | `tone?: 'info' \| 'success' \| 'warn' \| 'danger' \| 'accent'` · `icon?` · `title?` · `children?` · `actions?` · `onDismiss?`, `dismissLabel?` · `role?` | In-page messages. Project-level banners go through `showProjectBanner` (below) |
+| `Banner` | `tone?: 'neutral' \| 'info' \| 'success' \| 'warn' \| 'danger' \| 'accent'` · `icon?` · `title?` · `children?` · `actions?` · `onDismiss?`, `dismissLabel?` · `role?` | In-page messages. Project-level banners go through `showProjectBanner` (below) |
 | `Badge` | `tone?: 'neutral' \| 'accent' \| 'success' \| 'warn' \| 'danger' \| 'info'` · `icon?: IconName \| null` (status tones default to their icon) · `variant?: 'soft' \| 'solid' \| 'outline'` · `size?: 'sm' \| 'md'` | `<Badge tone="success">Counts OK</Badge>` (validator badges, mode labels) |
 | `Chip` | `children` · `tone?` · `icon?` · `swatch?` (color dot, always next to text) · `onClick?` (toggle button, `selected?`) · `onRemove?`, `removeLabel?` · `title?` | Palette entries ("A · Cherry"), auto-repair chips, filters |
 | `EmptyState` | `icon?` or `art?` · `title` · `children?` · `actions?` · `variant?: 'plain' \| 'panel'` (dashed frame) · `size?` · `level?: 1–4` | What a view shows before it has content |
@@ -128,9 +128,13 @@ model and no prompt out, else the first visible tab. A track implements its tab 
 (same export name, same props, drop `__stub`); the registry never changes.
 
 **Workspace frame** (`ui/shell/Workspace.tsx`, top to bottom): top bar (Projects, editable name — rename is one
-undo step "Rename project" —, 2D/3D badge, save chip, undo/redo with the history labels, keyboard shortcuts,
-theme, Print / PDF, Export) · project banners · tab bar · the tab (inside its own `ErrorBoundary` and
-`Suspense`) · status bar.
+undo step "Rename project", Enter keeps the focus —, 2D/3D label, save chip, undo/redo with the history labels,
+keyboard shortcuts, the System · Light · Dark theme switch, Print / PDF, Export — all secondary: the accent is
+left to each tab's main action) · project banners · tab bar · the tab (inside its own `ErrorBoundary` and
+`Suspense`; the `<main>` carries a visually hidden h1 with the project name) · status bar. After a navigation
+that unmounts the focused control (a start card, "Projects"), the new screen's `<main>` takes focus
+(`focusOnArrival.ts`; not on the first page load, so the skip link stays the first stop). The frame selects only
+primitives from the store (id, name, mode, the visible-tab key), so edits to the document do not re-render it.
 
 **Filling a tab**: render one `TabLayout`:
 
@@ -172,9 +176,9 @@ export function ChartTab() {
   field the browser's text undo runs); "?" lists the shortcuts. Coalesce drags with `{ coalesceKey }` and call
   `endCoalescing()` on pointer-up so one drag is one undo step.
 
-**Start screen**: `StartLayout` (shell) = header (logo, folder-mirror chip from the §5.5.4 probe, theme) · hero ·
-the five cards (`NewProjectCards`: creation is the shell's) · "Your projects" with a `library` slot and
-`libraryActions`. `ProjectGrid` renders `ProjectSummary` cards (thumbnail or a mode illustration, name, mode,
+**Start screen**: `StartLayout` (shell) = header (logo, theme switch) · hero ·
+the five cards (`NewProjectCards`: creation is the shell's) · "Your projects" with a `library` slot,
+`libraryActions`, and a note line with "Folder mirror on/off" from the §5.5.4 probe. `ProjectGrid` renders `ProjectSummary` cards (thumbnail or a mode illustration, name, mode,
 "Edited …", the "Waiting for Claude Design" badge, `renderActions` for duplicate/export/delete, `thumbnailUrl`,
 `summaries === null` = loading skeletons). **Decision:** the `#/` entry stays T8's `ui/library/StartScreen`; the
 Step 0 stub delegates to `StartLayout` + `ProjectGrid` with the summaries of this tab. T8 replaces the stub,
@@ -185,12 +189,13 @@ keeps `StartLayout`, and passes its grid (with actions and thumbnails) and "Rest
 `AmiSettings`, no model) → `projectStore.open` → the default route. The backend is a memory one: projects of this
 tab only; leaving a project (library, another project) keeps its document AND assets in memory and closes it
 (`discardUnsaved` is safe because the backend holds the changes); the library lists them. The save chip says
-"Not saved yet" with the reason in its tooltip. When T8's `useAutosave` is implemented the chip switches to it by
+"Not saved yet" (amber) with the reason in its tooltip, and while any project of the tab has changes, closing
+or reloading the tab asks first (`beforeunload`, `unloadGuard.ts` / `hasUnsavedWork()`; never lose user data). When T8's `useAutosave` is implemented the chip switches to it by
 itself (`ui/shell/saveStatus.ts`, chosen at module scope).
 
 ## The smoke test (`e2e/smoke.spec.ts`)
 
-16 tests, every one failing on any console error or page error: the start screen (five cards, projects section,
+15 tests, every one failing on any console error or page error: the start screen (five cards, projects section,
 "Folder mirror off" from `HEAD /__projects` → 204 + `x-cpg-mirror: off`); each of the five cards opens a workspace
 with exactly the expected tabs, its stub, the "Not saved yet" chip, and every tab opens; default-tab redirect and
 an unknown project; rename + undo/redo by buttons and keyboard + the library card reopening the project; the
@@ -217,8 +222,10 @@ Screenshots are attached to every run and written to `e2e/screenshots/` only whe
    photo" project has no views yet, and the Photos tab is where they are added, so the predicate is "a photo
    project (origin `multiview` or `single`) or any project with photo views" (a Claude Design project that got
    photos shows it too).
-3. **"Copy prompt again"** in the waiting banner goes to the wizard route (`#/p/<id>/qa`, which opens at the
-   import step with "Copy prompt again", F4 step 1) instead of copying directly: building the prompt is T7's.
+3. **"Copy prompt again…"** in the waiting banner (with an ellipsis: it opens more UI) goes to the wizard route
+   (`#/p/<id>/qa`, which opens at the import step with "Copy prompt again", F4 step 1) instead of copying
+   directly: building the prompt is T7's. The banner is neutral (sunken surface, accent icon) so it does not
+   compete with warnings.
 4. **Print / PDF** stays disabled (focusable, with the reason as a tooltip) until `buildPdf` is implemented and the
    project has a pattern without `error` issues; then it builds the PDF and opens it in a new tab (F8 "Print opens
    the same PDF in a new tab").
@@ -226,7 +233,11 @@ Screenshots are attached to every run and written to `e2e/screenshots/` only whe
 6. **e2e helpers outside `smoke.spec.ts`**: `e2e/workers/progress.worker.ts`, `e2e/workers/nested.worker.ts`
    (test-only workers, as the brief allows) and `e2e/gallery/` (a dev/test-only page that renders every common
    component, used for the component screenshots). `e2e/**` is integration-owned; these are clearly marked.
-7. **`useAutosave().status` has no "unsaved"** (s0b-state request 11): the shell's chip has its own status
+7. **Theme switch**: three icon segments (System / Light / Dark) in the start header and the top bar, not a
+   cycling button (the reviewer found that a cycle starting at "System" changes nothing visible on a light
+   system).
+8. **"Folder mirror off"** (§5.5.4: "the app shows …") is a quiet note under "Your projects", not a header chip.
+9. **`useAutosave().status` has no "unsaved"** (s0b-state request 11): the shell's chip has its own status
    `'not-saved'` for the memory backend.
 
 ## Ambiguities resolved
@@ -246,7 +257,8 @@ Screenshots are attached to every run and written to `e2e/screenshots/` only whe
 1. **Wire T8 into the shell** when it lands: `setProjectBackend(…)` with a backend on `createProjectRepository`
    (`create` = first save or `saveAsCopy`, `open` = `repo.open(id, 'edit')` + cached assets, `leave` =
    `useAutosave().flush()` semantics) — `ui/shell/projectSession.ts` is the one place; and `appStore.library` from
-   `repo.list()`. The save chip switches to `useAutosave` by itself.
+   `repo.list()`. The save chip switches to `useAutosave` by itself. The `beforeunload` guard
+   (`hasUnsavedWork()`) is off for a repository backend: T8's flush on `visibilitychange`/`pagehide` takes over.
 2. **T8's StartScreen** keeps `StartLayout` (the five cards create projects through the shell) and passes
    `ProjectGrid` with `renderActions`/`thumbnailUrl` and the restore button.
 3. **T8 banners**: post read-only / conflict-copy / reload / save-failed banners with `showProjectBanner` (kinds
@@ -263,6 +275,48 @@ Screenshots are attached to every run and written to `e2e/screenshots/` only whe
 7. **Icon additions** belong to the S0 lane (`ui/common/Icon.tsx`); tracks that need an icon before then can use
    their own inline SVG in the same style (24 grid, 1.75 stroke, currentColor).
 
+## Independent review
+
+A separate agent reviewed the screenshots, the code and the live dev server as a product designer and an
+accessibility reviewer (keyboard walk, focus screenshots, contrast measurements, DOM roles), against §5.3 and
+§5.7. It found no focus traps and the registry, predicates, banner slot, top bar and start screen conform. Its
+findings, and what was done:
+
+| Finding | Severity | Outcome |
+|---|---|---|
+| Reload / tab close loses in-memory projects without warning; "Not saved yet" looked like a neutral fact | blocker | `beforeunload` guard while a project of the tab has changes (`hasUnsavedWork`, tested); the chip is amber |
+| Focus dropped to `<body>` after Enter on a card, "Projects", redirects | major | the new screen's `<main>` takes focus (`focusOnArrival.ts`; e2e asserts it) |
+| No h1 in the workspace | major | visually hidden h1 with the project name in `<main>` |
+| Focus ring at ~50 % on focusable disabled buttons (2.19:1) | major | disabled buttons dim their content, not themselves; the ring keeps full strength |
+| Accent and danger nearly the same color (1.11:1) | major | danger is crimson now (`#b3243b` / dark `#f27d8f`); the waiting banner is neutral |
+| "Copy prompt again" navigates | major | label "Copy prompt again…" (opens the wizard step); the copy itself is T7's (request 4) |
+| Selected segment / pill tab not distinguishable at 3:1 | major | control-border ring + semibold on the selected option |
+| 1100 px breakpoint stacked the start cards | major | stacks at 900 px; 1100–1180 px only narrows the gutters |
+| Developer wording ("track T2", "placeholder in the app shell", "dev or preview server") | major | "Coming soon"; the track stays in `data-track`; footnote removed; user wording elsewhere |
+| Whole workspace re-rendered on every edit (`useProjectStore(s => s.doc)`) | major | primitive selectors only |
+| Theme cycle, save-chip semantics, disabled reasons announced late, dialog focus ring / backdrop focus loss / Escape in a field, Enter-rename blur, chatty status live region, card names hiding details, mode badge vs chip, Export as primary, yarn icon, blue tiles, flat dark theme, Q&A marker placement, read-only reasons on undo/redo, banner close names, NumberField semantics, mirror chip in the header | minor | all applied (segmented theme switch, plain chip text, always-present reason descriptions, `describe` flag, dialog `:focus` outline off + click-to-close + Escape yields to fields, Enter keeps focus, percentages aria-hidden, project cards named by their content with `title`, mode as muted text, Export secondary, redrawn yarn icon, neutral tiles, `--color-surface` #24201c / `--color-border` #433b33 + `--highlight-top`, a selected-tab-style marker before the tabs, "Read-only: …" reasons, "Dismiss: <title>", `role="spinbutton"` with `aria-value*`, note under "Your projects") |
+| Nits: gutters, Restore alignment, top-bar padding, placeholder alignment, heart art, heading names, Select ellipsis, card double ring, name field width fallback, spinners under reduced motion, double-announced error toasts, stale "… ago", `<nav>` around the tab list | nit | all applied (toasts now announce through two hidden live regions, one polite, one assertive) |
+
 ## How it was verified
 
-(Filled in at the end of the sprint — see the final section.)
+- `npm run typecheck` and `npm run lint` exit 0 (no warnings).
+- `npm test`: 1 530 tests passed, 3 skipped (pre-existing), 78 files — two consecutive runs, the same. This part
+  adds 10 test files (tokens, units, components, tabs, router, newProject, projectSession, helpers, app, stubs) and
+  one theme case in `appStore.test.ts`.
+- `npm run e2e`: 15 passed (about 40 s), including the §5.4 checks and the cold-cache dev smoke (one document
+  load, no re-optimization message, all six workers answered).
+- `npm run build`: green (index chunk 307 kB / 99 kB gzip; each stub tab its own small chunk).
+- Cold-cache smoke run by hand too (a throw-away script, the same steps as the spec, plus the negative attempts of
+  request 6).
+- **Worktree HMR** (§6.2 acceptance), on this worktree's dev server (`CPG_TEST=1`, temp projects folder, port
+  5209): an edit to `src/ui/shell/start/StartLayout.tsx` updated the open page by Fast Refresh with no navigation;
+  an edit to `src/main.tsx` was picked up by a full reload (one more navigation). Both files restored.
+- Screenshots looked at in both themes at 1280 × 800 after every round of changes (start, 2D workspace, 3D Pattern
+  tab with the Yarn & size slot, the component gallery, the dialog), and at 1100 px.
+
+## Not done / not verified
+
+- Persistence, library actions, PDF and the prompt copy are other tracks' (stubs or disabled with reasons).
+- Safari and Firefox were not tried (Chromium only, as the Playwright config).
+- The cold-cache test's failure mode could not be reproduced on Vite 8.3.2 (request 6).
+- No screen-reader run (VoiceOver); the semantics were checked in the DOM and by the reviewer's walk.

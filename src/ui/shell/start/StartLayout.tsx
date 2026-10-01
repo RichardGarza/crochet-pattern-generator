@@ -1,31 +1,27 @@
 // The start screen's frame (§5.7): app header, the five "new / import" cards, and the "Your projects" section,
 // whose content (`library`) and header buttons (`libraryActions`, e.g. "Restore from folder or backup") come
 // from the library entry (ui/library/StartScreen, T8).
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { useAppStore } from '../../../state/appStore';
-import { Badge } from '../../common/Badge';
+import { Icon } from '../../common/Icon';
 import { Tooltip } from '../../common/Tooltip';
 import { Logo } from '../Logo';
 import { ThemeToggle } from '../ThemeToggle';
+import { useFocusOnArrival } from '../focusOnArrival';
 import { NewProjectCards } from './NewProjectCards';
 
+/** The folder mirror state of §5.5.4, as a quiet note under "Your projects". */
 function MirrorStatus() {
   const mirror = useAppStore((s) => s.capabilities.folderMirror);
   if (mirror === null) return null;
-  return mirror ? (
-    <Tooltip content="Every project is also copied to the projects folder on this computer, with dated backups.">
-      <span tabIndex={0} className="shell-header__status">
-        <Badge tone="success" icon="folder" size="sm">
-          Folder mirror on
-        </Badge>
-      </span>
-    </Tooltip>
-  ) : (
-    <Tooltip content="Projects are kept in this browser only. The folder copy works when the app runs from its own dev or preview server.">
-      <span tabIndex={0} className="shell-header__status">
-        <Badge tone="neutral" icon="folder" size="sm" variant="outline">
-          Folder mirror off
-        </Badge>
+  const tip = mirror
+    ? 'Every project is also copied to the projects folder on this computer, with dated backups.'
+    : 'Projects are not copied to a folder on this computer. That copy is made only when the app is started from its project folder.';
+  return (
+    <Tooltip content={tip}>
+      <span tabIndex={0} className="shell-mirror" data-mirror={mirror ? 'on' : 'off'}>
+        <Icon name="folder" size={14} />
+        {mirror ? 'Folder mirror on' : 'Folder mirror off'}
       </span>
     </Tooltip>
   );
@@ -41,18 +37,19 @@ export interface StartLayoutProps {
 }
 
 export function StartLayout({ library, libraryActions, libraryNote }: StartLayoutProps) {
+  const mainRef = useRef<HTMLElement>(null);
+  useFocusOnArrival(mainRef);
   return (
     <div className="shell-start">
       <header className="shell-header">
         <div className="shell-header__inner">
           <Logo />
           <div className="shell-header__end">
-            <MirrorStatus />
             <ThemeToggle />
           </div>
         </div>
       </header>
-      <main className="shell-start__main" id="main" tabIndex={-1}>
+      <main className="shell-start__main" id="main" tabIndex={-1} ref={mainRef}>
         <section className="shell-hero" aria-labelledby="start-title">
           <h1 className="shell-hero__title" id="start-title">
             What would you like to make?
@@ -66,7 +63,10 @@ export function StartLayout({ library, libraryActions, libraryNote }: StartLayou
               <h2 className="shell-library__title" id="library-title">
                 Your projects
               </h2>
-              {libraryNote ? <p className="shell-library__note">{libraryNote}</p> : null}
+              <div className="shell-library__note">
+                {libraryNote ? <span>{libraryNote}</span> : null}
+                <MirrorStatus />
+              </div>
             </div>
             {libraryActions ? <div className="shell-library__actions">{libraryActions}</div> : null}
           </div>

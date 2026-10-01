@@ -117,7 +117,7 @@ main:focus {
 .shell-new {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-  gap: var(--space-6);
+  gap: var(--space-4);
   align-items: stretch;
 }
 
@@ -183,7 +183,8 @@ main:focus {
 }
 
 .shell-art__light {
-  fill: color-mix(in srgb, var(--color-accent) 45%, var(--color-surface));
+  /* A highlight stitch: a lighter terracotta in both themes (mixing toward the surface reads as a hole in dark). */
+  fill: color-mix(in srgb, var(--color-accent) 50%, #fff3ea);
 }
 
 .shell-art__off {
@@ -226,7 +227,24 @@ main:focus {
 }
 
 .shell-library__note {
-  margin-top: 2px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.shell-library__note:empty {
+  display: none;
+}
+
+.shell-mirror {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: var(--radius-xs);
   color: var(--color-text-muted);
   font-size: var(--text-sm);
 }
@@ -234,6 +252,8 @@ main:focus {
 .shell-library__actions {
   display: flex;
   gap: var(--space-2);
+  /* Ghost buttons: line the label up with the grid's right edge. */
+  margin-right: -10px;
 }
 
 .shell-projects {
@@ -383,7 +403,7 @@ main:focus {
   justify-content: space-between;
   gap: var(--space-4);
   height: var(--topbar-h);
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-4) 0 var(--space-3);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface);
 }
@@ -419,7 +439,13 @@ main:focus {
 }
 
 .shell-topbar__mode {
+  display: inline-flex;
   flex: none;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
 }
 
 .shell-name {
@@ -445,6 +471,12 @@ main:focus {
   transition:
     border-color var(--duration-fast) var(--ease-out),
     background-color var(--duration-fast) var(--ease-out);
+}
+
+@supports not (field-sizing: content) {
+  .shell-name__input {
+    width: 24ch;
+  }
 }
 
 .shell-name__input:hover:not(:read-only) {
@@ -494,6 +526,11 @@ main:focus {
   color: var(--color-text-muted);
 }
 
+.shell-savechip--warn {
+  background: var(--color-warn-soft);
+  color: var(--color-warn-text);
+}
+
 .shell-savechip--success {
   background: var(--color-success-soft);
   color: var(--color-success-text);
@@ -518,8 +555,7 @@ main:focus {
   display: flex;
   flex: none;
   align-items: stretch;
-  justify-content: space-between;
-  gap: var(--space-3);
+  gap: var(--space-1);
   height: var(--tabbar-h);
   padding: 0 var(--space-3);
   border-bottom: 1px solid var(--color-border);
@@ -527,18 +563,30 @@ main:focus {
 }
 
 .shell-tabbar__route {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  color: var(--color-accent-text);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
+  gap: 7px;
+  padding: 0 12px;
+  margin-right: var(--space-2);
+  color: var(--color-text);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
 }
 
-.shell-tabbar__route-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.shell-tabbar__route .ui-icon {
+  color: var(--color-accent-text);
+}
+
+.shell-tabbar__route::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  bottom: 0;
+  left: 10px;
+  height: 2.5px;
+  border-radius: 2px 2px 0 0;
   background: var(--color-accent);
 }
 
@@ -616,10 +664,10 @@ main:focus {
 
 .shell-placeholder {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
   min-height: 100%;
-  padding-top: var(--space-4);
+  padding-block: var(--space-4) var(--space-8);
 }
 
 .shell-placeholder__card {
@@ -822,11 +870,21 @@ main:focus {
 
 /* ---------------------------------------------------------------- narrower windows */
 
-@media (max-width: 1100px) {
+@media (max-width: 1180px) {
+  .shell-header__inner,
+  .shell-start__main {
+    padding-right: var(--space-6);
+    padding-left: var(--space-6);
+  }
+}
+
+@media (max-width: 900px) {
   .shell-new {
     grid-template-columns: minmax(0, 1fr);
   }
+}
 
+@media (max-width: 1100px) {
   :root {
     --sidebar-w: 264px;
     --inspector-w: 248px;

@@ -1,7 +1,7 @@
 // Button and IconButton. Variants: primary (one per view: the main action), secondary, ghost (toolbars),
 // danger (destructive; confirm first). `disabledReason` keeps a button focusable and explains why it cannot be
 // used (a native `disabled` button gets no hover or focus, so its reason would be invisible).
-import type { ButtonHTMLAttributes, MouseEvent, ReactNode, Ref } from 'react';
+import { useId, type ButtonHTMLAttributes, type MouseEvent, type ReactNode, type Ref } from 'react';
 import { Icon, type IconName } from './Icon';
 import { Spinner } from './Progress';
 import { Tooltip } from './Tooltip';
@@ -44,6 +44,9 @@ export function Button({
   ...rest
 }: ButtonProps) {
   const unavailable = !!disabledReason || loading;
+  // The reason is always in the accessibility tree (a tooltip appears only after focus, too late to be read).
+  const reasonId = useId();
+  const describedBy = [rest['aria-describedby'], disabledReason ? reasonId : undefined].filter(Boolean).join(' ') || undefined;
   const handleClick = (e: MouseEvent<HTMLButtonElement>) => {
     if (unavailable) {
       e.preventDefault();
@@ -60,13 +63,26 @@ export function Button({
       aria-busy={loading || undefined}
       onClick={handleClick}
       {...rest}
+      aria-describedby={describedBy}
     >
       {loading ? <Spinner size={ICON_SIZE[size]} /> : icon ? <Icon name={icon} size={ICON_SIZE[size]} /> : null}
       {children !== undefined && children !== null ? <span className="ui-btn__label">{children}</span> : null}
       {iconEnd ? <Icon name={iconEnd} size={ICON_SIZE[size]} /> : null}
     </button>
   );
-  return disabledReason ? <Tooltip content={disabledReason}>{button}</Tooltip> : button;
+  // The reason sits next to the button (inside, it would become part of the button's name).
+  return disabledReason ? (
+    <Tooltip content={disabledReason} describe={false}>
+      <>
+        {button}
+        <span id={reasonId} className="ui-visually-hidden">
+          {disabledReason}
+        </span>
+      </>
+    </Tooltip>
+  ) : (
+    button
+  );
 }
 
 export interface IconButtonProps extends Omit<ButtonProps, 'children' | 'icon' | 'iconEnd' | 'fullWidth'> {
@@ -93,8 +109,10 @@ export function IconButton({
   size = 'md',
   disabledReason,
   className,
+  onClick,
   ...rest
 }: IconButtonProps) {
+  const reasonId = useId();
   const button = (
     <Button
       {...rest}
@@ -104,16 +122,28 @@ export function IconButton({
       aria-label={label}
       aria-pressed={pressed}
       className={cx('ui-icon-btn', className)}
-      // The tooltip below shows the reason; the button keeps aria-disabled.
+      // The tooltip below shows the reason; the button keeps aria-disabled and an always-present description.
       aria-disabled={disabledReason ? true : rest['aria-disabled']}
-      onClick={disabledReason ? (e) => e.preventDefault() : rest.onClick}
+      aria-describedby={[rest['aria-describedby'], disabledReason ? reasonId : undefined].filter(Boolean).join(' ') || undefined}
+      onClick={disabledReason ? (e) => e.preventDefault() : onClick}
     />
   );
-  if (!showTooltip && !disabledReason) return button;
+  const withReason = disabledReason ? (
+    <>
+      {button}
+      <span id={reasonId} className="ui-visually-hidden">
+        {disabledReason}
+      </span>
+    </>
+  ) : (
+    button
+  );
+  if (!showTooltip && !disabledReason) return withReason;
   const tip = disabledReason ? `${label} — ${disabledReason}` : label;
   return (
-    <Tooltip content={tip} shortcut={disabledReason ? undefined : shortcut} placement={tooltipPlacement}>
-      {button}
+    // The label is the button's name and the reason its description, so the tooltip adds nothing to read.
+    <Tooltip content={tip} shortcut={disabledReason ? undefined : shortcut} placement={tooltipPlacement} describe={false}>
+      {withReason}
     </Tooltip>
   );
 }

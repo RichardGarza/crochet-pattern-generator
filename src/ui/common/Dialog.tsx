@@ -60,8 +60,12 @@ export function Dialog({ open, onClose, title, description, children, footer, si
     [],
   );
 
+  const pressOnBackdrop = useRef(false);
+
   const onKeyDown = (e: KeyboardEvent<HTMLDialogElement>) => {
     if (e.key === 'Escape') {
+      // A control that used Escape itself (a field restoring its value) prevented it.
+      if (e.defaultPrevented) return;
       e.preventDefault();
       if (dismissible) onCloseRef.current();
       return;
@@ -98,7 +102,12 @@ export function Dialog({ open, onClose, title, description, children, footer, si
       }}
       onMouseDown={(e) => {
         // A press on the backdrop lands on the <dialog> element itself, outside its content box.
-        if (dismissible && e.target === ref.current) onCloseRef.current();
+        pressOnBackdrop.current = e.target === ref.current;
+      }}
+      onClick={(e) => {
+        // Close on the click (not the press), so the focus we give back is not taken by the press.
+        if (dismissible && pressOnBackdrop.current && e.target === ref.current) onCloseRef.current();
+        pressOnBackdrop.current = false;
       }}
     >
       {open ? (

@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { appStore } from '../../../state/appStore';
 import { projectStore } from '../../../state/projectStore';
-import { createMemoryBackend, createProject, leaveProject, openProject, projectBackend, setProjectBackend, summaryOf } from '../projectSession';
+import { createMemoryBackend, createProject, hasUnsavedWork, leaveProject, openProject, projectBackend, setProjectBackend, summaryOf } from '../projectSession';
 
 describe('projectSession (memory backend)', () => {
   beforeEach(() => {
@@ -57,6 +57,19 @@ describe('projectSession (memory backend)', () => {
     expect([x, y]).toEqual([true, true]);
     // close (leave) + open = two session steps, not four.
     expect(projectStore.getState().session).toBe(session + 2);
+  });
+
+  it('knows when a reload would lose work (the unload guard asks first)', async () => {
+    await createProject('picture');
+    expect(hasUnsavedWork()).toBe(false); // an untouched new project
+    projectStore.getState().update('Rename project', (d) => {
+      d.name = 'Edited';
+    });
+    expect(hasUnsavedWork()).toBe(true);
+    await createProject('photos'); // the edited one moves into memory: still at risk
+    expect(hasUnsavedWork()).toBe(true);
+    setProjectBackend({ ...createMemoryBackend(), kind: 'repository' });
+    expect(hasUnsavedWork()).toBe(false); // persistence decides then
   });
 
   it('the summary carries the Claude Design wait', async () => {

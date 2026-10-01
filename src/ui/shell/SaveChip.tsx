@@ -14,7 +14,7 @@ const VIEW: Record<SaveChipStatus, { text: string; icon: IconName | 'spinner'; t
   'not-saved': {
     text: 'Not saved yet',
     icon: 'cloud-off',
-    tone: 'neutral',
+    tone: 'warn',
     tip: 'Saving is not switched on yet: this project lasts until you close or reload this tab.',
   },
 };
@@ -23,9 +23,10 @@ export function SaveChip({ status }: { status: SaveChipStatus }) {
   const v = VIEW[status];
   return (
     <Tooltip content={v.tip}>
-      <span className={cx('shell-savechip', `shell-savechip--${v.tone}`)} tabIndex={0} role="status" aria-label={`${v.text}. ${v.tip}`} data-testid="save-chip">
+      {/* Focusable so keyboard users get the explanation too; the tooltip is its description. */}
+      <span className={cx('shell-savechip', `shell-savechip--${v.tone}`)} tabIndex={0} data-testid="save-chip">
         {v.icon === 'spinner' ? <Spinner size={13} /> : <Icon name={v.icon} size={14} strokeWidth={2} />}
-        <span aria-hidden="true">{v.text}</span>
+        <span>{v.text}</span>
       </span>
     </Tooltip>
   );

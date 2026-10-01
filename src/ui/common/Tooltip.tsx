@@ -13,15 +13,20 @@ export interface TooltipProps {
   placement?: 'top' | 'bottom';
   /** Hover delay in ms; default 350. */
   delay?: number;
-  /** One focusable element (a Button, IconButton, link …). */
+  /** One focusable element (or, with describe={false}, any element whose first child is the anchor). */
   children: ReactElement;
   disabled?: boolean;
+  /**
+   * Link the tooltip to its anchor with aria-describedby while it shows (default true). Pass false when the
+   * anchor already says the same thing (an IconButton whose tooltip is its label) or describes itself.
+   */
+  describe?: boolean;
 }
 
 const GAP = 8;
 const MARGIN = 8;
 
-export function Tooltip({ content, shortcut, placement = 'bottom', delay = 350, children, disabled }: TooltipProps) {
+export function Tooltip({ content, shortcut, placement = 'bottom', delay = 350, children, disabled, describe = true }: TooltipProps) {
   const id = useId();
   const anchorRef = useRef<HTMLSpanElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -82,7 +87,7 @@ export function Tooltip({ content, shortcut, placement = 'bottom', delay = 350, 
 
   if (!isValidElement(children)) return children;
   const child = children as ReactElement<{ 'aria-describedby'?: string }>;
-  const describedBy = [child.props['aria-describedby'], open ? id : undefined].filter(Boolean).join(' ') || undefined;
+  const describedBy = [child.props['aria-describedby'], open && describe ? id : undefined].filter(Boolean).join(' ') || undefined;
 
   return (
     <span
@@ -97,7 +102,7 @@ export function Tooltip({ content, shortcut, placement = 'bottom', delay = 350, 
       onBlur={hide}
       onPointerDown={hide}
     >
-      {cloneElement(child, { 'aria-describedby': describedBy })}
+      {describe ? cloneElement(child, { 'aria-describedby': describedBy }) : child}
       {open && typeof document !== 'undefined'
         ? createPortal(
             <div

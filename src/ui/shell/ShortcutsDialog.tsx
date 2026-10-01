@@ -14,7 +14,7 @@ const ROWS: { keys: string[][]; what: string }[] = [
 
 export function ShortcutsDialog({ open, onClose }: { open: boolean; onClose(): void }) {
   return (
-    <Dialog open={open} onClose={onClose} title="Keyboard shortcuts" description="Work without the mouse. Tracks add their own tool shortcuts here as they arrive." size="sm">
+    <Dialog open={open} onClose={onClose} title="Keyboard shortcuts" description="Work without the mouse." size="sm">
       <dl className="shell-shortcuts">
         {ROWS.map((row) => (
           <div key={row.what} className="shell-shortcuts__row">

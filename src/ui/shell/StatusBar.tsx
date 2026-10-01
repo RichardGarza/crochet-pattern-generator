@@ -26,7 +26,8 @@ function JobStatus({ name, job }: { name: string; job: JobState }) {
         <Spinner size={13} />
         <span>
           {jobLabel(name)}
-          {pct === null ? '…' : ` ${pct}%`}
+          {/* Percentages are shown, not announced: the live region reports only start, end and failure. */}
+          <span aria-hidden="true">{pct === null ? '…' : ` ${pct}%`}</span>
         </span>
         {pct === null ? null : (
           <span className="shell-status__meter" aria-hidden="true">

@@ -164,8 +164,13 @@
 .ui-btn:disabled,
 .ui-btn[aria-disabled='true'] {
   cursor: not-allowed;
-  opacity: 0.5;
   box-shadow: none;
+}
+
+/* Dim the content, not the button: a focusable unavailable button keeps a full-strength focus ring. */
+.ui-btn:disabled > *,
+.ui-btn[aria-disabled='true'] > * {
+  opacity: 0.45;
 }
 
 .ui-btn--primary:disabled,
@@ -351,11 +356,11 @@
 }
 
 .ui-card--raised {
-  box-shadow: var(--shadow-2);
+  box-shadow: var(--shadow-2), var(--highlight-top);
 }
 
 .ui-card--flat {
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--shadow-1), var(--highlight-top);
 }
 
 .ui-card--pad-none {
@@ -424,7 +429,7 @@
   padding: var(--space-5);
   font: inherit;
   cursor: pointer;
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--shadow-1), var(--highlight-top);
   transition:
     border-color var(--duration-fast) var(--ease-out),
     box-shadow var(--duration-normal) var(--ease-out),
@@ -433,7 +438,7 @@
 
 .ui-card--interactive:hover {
   border-color: var(--color-border-strong);
-  box-shadow: var(--shadow-2);
+  box-shadow: var(--shadow-2), var(--highlight-top);
   transform: translateY(-2px);
 }
 
@@ -444,7 +449,6 @@
 .ui-card--interactive:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
-  border-color: var(--color-accent);
 }
 
 .ui-card__tile {
@@ -729,6 +733,16 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.ui-banner--neutral {
+  background: var(--color-surface-sunken);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.ui-banner--neutral .ui-banner__icon {
+  color: var(--color-accent-text);
 }
 
 .ui-banner--info {
@@ -1037,6 +1051,10 @@
 }
 
 .ui-select .ui-input {
+  min-width: 8ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   height: var(--control-h-md);
   padding-right: 34px;
   border: 1px solid var(--color-border-control);
@@ -1315,9 +1333,11 @@
 .ui-segmented__option--selected {
   background: var(--color-surface-raised);
   color: var(--color-text);
+  font-weight: var(--weight-semibold);
+  /* The control-border ring makes the selected segment stand out at 3:1 (WCAG 1.4.11), not only its fill. */
   box-shadow:
     var(--shadow-1),
-    0 0 0 1px var(--color-border);
+    0 0 0 1px var(--color-border-control);
 }
 
 .ui-segmented__option:focus-visible {
@@ -1419,7 +1439,10 @@
 .ui-tabs--pill .ui-tab--selected {
   background: var(--color-surface-raised);
   color: var(--color-text);
-  box-shadow: var(--shadow-1);
+  font-weight: var(--weight-semibold);
+  box-shadow:
+    var(--shadow-1),
+    0 0 0 1px var(--color-border-control);
 }
 
 .ui-tabs--sm .ui-tab {
@@ -1442,6 +1465,11 @@
   color: var(--color-text);
   box-shadow: var(--shadow-3);
   overflow: hidden;
+}
+
+.ui-dialog:focus,
+.ui-dialog:focus-visible {
+  outline: none;
 }
 
 .ui-dialog--sm {

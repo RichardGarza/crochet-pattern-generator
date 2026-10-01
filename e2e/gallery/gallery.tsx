@@ -38,7 +38,7 @@ import {
 const theme = new URLSearchParams(location.search).get('theme');
 if (theme === 'dark' || theme === 'light') document.documentElement.setAttribute('data-theme', theme);
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+export function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <Card padding="md">
       <CardHeader title={title} level={2} />
@@ -47,7 +47,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Gallery() {
+export function Gallery() {
   const [units, setUnits] = useState<'in' | 'cm'>('in');
   const [width, setWidth] = useState<number | null>(36);
   const [thick, setThick] = useState(0.9);
@@ -143,7 +143,7 @@ function Gallery() {
       </Section>
       <Section title="Banners and toasts">
         <Stack gap={2}>
-          <Banner tone="accent" icon="hourglass" title="Waiting for your Claude Design result" actions={<Button size="sm" variant="primary">Import</Button>} />
+          <Banner tone="neutral" icon="hourglass" title="Waiting for your Claude Design result" actions={<Button size="sm" variant="primary">Import</Button>} />
           <Banner tone="warn" icon="lock" title="Read-only">
             Open in another tab.
           </Banner>

@@ -137,7 +137,7 @@ test.describe('app shell', () => {
     await expect(name).toHaveValue('Heart blanket');
     // The library card follows the name; the project opens again from it.
     await page.getByRole('button', { name: 'Projects' }).click();
-    await page.getByRole('button', { name: 'Open Heart blanket' }).click();
+    await page.getByRole('button', { name: /^Heart blanket/ }).click();
     await expect(name).toHaveValue('Heart blanket');
   });
 
@@ -156,6 +156,8 @@ test.describe('app shell', () => {
     expect(outline).toBe('solid');
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(/#\/p\/[^/]+\/source$/);
+    // Focus moved into the new screen (not dropped on <body>).
+    await expect(page.locator('main#main')).toBeFocused();
     await page.getByRole('tab', { name: 'Source' }).focus();
     await page.keyboard.press('ArrowRight');
     await expect(page).toHaveURL(/\/chart$/);
@@ -170,18 +172,22 @@ test.describe('app shell', () => {
     await expect(dialog).toBeHidden();
   });
 
-  test('the theme toggle cycles System → Light → Dark and survives a reload', async ({ page }) => {
+  test('the theme switch: System, Light, Dark; the choice survives a reload', async ({ page }) => {
     await openStart(page);
     const html = page.locator('html');
-    const toggle = page.getByTestId('theme-toggle');
+    const theme = page.getByRole('radiogroup', { name: 'Theme' });
+    await expect(theme.getByRole('radio', { name: 'System theme' })).toBeChecked();
     await expect(html).not.toHaveAttribute('data-theme');
-    await toggle.click();
+    await theme.getByRole('radio', { name: 'Light theme' }).click();
     await expect(html).toHaveAttribute('data-theme', 'light');
-    await toggle.click();
+    await theme.getByRole('radio', { name: 'Dark theme' }).click();
     await expect(html).toHaveAttribute('data-theme', 'dark');
     await page.reload();
     await expect(html).toHaveAttribute('data-theme', 'dark');
-    await page.getByTestId('theme-toggle').click();
+    await expect(page.getByRole('radio', { name: 'Dark theme' })).toBeChecked();
+    // Keyboard: arrows move the choice.
+    await page.getByRole('radio', { name: 'Dark theme' }).focus();
+    await page.keyboard.press('ArrowRight');
     await expect(html).not.toHaveAttribute('data-theme');
   });
 

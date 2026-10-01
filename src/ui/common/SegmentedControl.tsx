@@ -2,6 +2,7 @@
 // Verbose). A radio group: one tab stop, ←/→ (and ↑/↓) move and select, Home/End jump.
 import { useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { Icon, type IconName } from './Icon';
+import { Tooltip } from './Tooltip';
 import { cx } from './cx';
 
 export interface SegmentOption<T extends string> {
@@ -10,6 +11,8 @@ export interface SegmentOption<T extends string> {
   icon?: IconName;
   /** Accessible name when `label` is not text (icon-only segments). */
   ariaLabel?: string;
+  /** A tooltip (icon-only segments). */
+  tooltip?: string;
   disabled?: boolean;
 }
 
@@ -59,7 +62,7 @@ export function SegmentedControl<T extends string>({ ariaLabel, label, value, on
         const selected = i === current;
         // The selected segment is the tab stop; with nothing selected, the first enabled one is.
         const tabStop = selected || (current < 0 && i === enabled[0]);
-        return (
+        const button = (
           <button
             key={o.value}
             ref={(el) => {
@@ -78,6 +81,13 @@ export function SegmentedControl<T extends string>({ ariaLabel, label, value, on
             {o.icon ? <Icon name={o.icon} size={size === 'sm' ? 14 : 16} /> : null}
             {o.label !== undefined && o.label !== null && o.label !== '' ? <span>{o.label}</span> : null}
           </button>
+        );
+        return o.tooltip ? (
+          <Tooltip key={o.value} content={o.tooltip} describe={false}>
+            {button}
+          </Tooltip>
+        ) : (
+          button
         );
       })}
     </div>

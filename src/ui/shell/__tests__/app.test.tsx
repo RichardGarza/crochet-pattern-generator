@@ -45,7 +45,7 @@ describe('app shell', () => {
     expect(await screen.findByRole('heading', { name: 'Materials' })).toBeTruthy();
     // Back to the library: the project is listed and opens again.
     fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Open Untitled chart' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Untitled chart/ }));
     await screen.findByTestId('workspace');
   });
 
@@ -62,7 +62,7 @@ describe('app shell', () => {
     expect(await screen.findByText('Waiting for your Claude Design result')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Import Claude Design result' }));
     await waitFor(() => expect(window.location.hash).toMatch(/\/import$/));
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss: stop waiting for Claude Design' }));
     await waitFor(() => expect(screen.queryByText('Waiting for your Claude Design result')).toBeNull());
     expect(projectStore.getState().history.past.at(-1)?.label).toBe('Stop waiting for Claude Design');
   });
@@ -126,13 +126,13 @@ describe('toasts', () => {
         notify.success('Copied', { action: { label: 'Undo', run } });
         notify.error('Could not read that file');
       });
-      expect(screen.getByText('Copied')).toBeTruthy();
-      expect(screen.getByRole('alert').textContent).toContain('Could not read that file');
+      expect(screen.getAllByText('Copied').length).toBe(2); // the toast and its polite announcement
+      expect(screen.getAllByText('Could not read that file').length).toBe(2); // the toast and its assertive announcement
       act(() => {
         vi.advanceTimersByTime(4100);
       });
       expect(screen.queryByText('Copied')).toBeNull();
-      expect(screen.getByText('Could not read that file')).toBeTruthy();
+      expect(screen.getAllByText('Could not read that file').length).toBe(2);
       fireEvent.click(screen.getByRole('button', { name: 'Dismiss notification' }));
       expect(screen.queryByText('Could not read that file')).toBeNull();
       expect(run).not.toHaveBeenCalled();

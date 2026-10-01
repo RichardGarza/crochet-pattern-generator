@@ -13,10 +13,10 @@ export type { YarnSizePanelProps } from '../../types/ui';
 export function YarnSizePanel({ context }: YarnSizePanelProps) {
   return (
     <Panel title="Yarn & size" icon="ruler">
-      <div className="shell-panel-placeholder" data-stub="YarnSizePanel" data-context={context}>
+      <div className="shell-panel-placeholder" data-stub="YarnSizePanel" data-track="T6" data-context={context}>
         <p>Target height, yarn weight and hook, yarn over or under, a test ball, stuffing.</p>
         <Badge tone="accent" icon="sparkles" size="sm">
-          Coming in track T6
+          Coming soon
         </Badge>
       </div>
     </Panel>

@@ -17,7 +17,7 @@ export function StartScreen() {
   return (
     <StartLayout
       libraryActions={
-        <Button variant="ghost" icon="refresh" size="sm" disabledReason="Restoring arrives with saving (track T8)">
+        <Button variant="ghost" icon="refresh" size="sm" disabledReason="Available once projects are saved">
           Restore from folder or backup
         </Button>
       }

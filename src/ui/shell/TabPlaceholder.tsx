@@ -24,14 +24,14 @@ export interface TabPlaceholderProps {
 export function TabPlaceholder({ stub, title, icon, track, summary, features, children, sidebar }: TabPlaceholderProps) {
   return (
     <TabLayout mainBackdrop="canvas" mainPadding="lg" mainLabel={title} sidebar={sidebar}>
-      <div className="shell-placeholder" data-stub={stub}>
+      <div className="shell-placeholder" data-stub={stub} data-track={track}>
         <div className="shell-placeholder__card">
           <div className="shell-placeholder__head">
             <span className="shell-placeholder__tile">
               <Icon name={icon} size={26} />
             </span>
             <Badge tone="accent" icon="sparkles">
-              Coming in track {track}
+              Coming soon
             </Badge>
           </div>
           <h2 className="shell-placeholder__title">{title}</h2>
@@ -45,10 +45,6 @@ export function TabPlaceholder({ stub, title, icon, track, summary, features, ch
             ))}
           </ul>
           {children}
-          <p className="shell-placeholder__note">
-            <Icon name="info" size={14} />
-            <span>This is a placeholder in the app shell; the working tab replaces it.</span>
-          </p>
         </div>
       </div>
     </TabLayout>
