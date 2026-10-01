@@ -9,6 +9,7 @@
 import type { CropRect } from '../../types/chart';
 import type { RgbaImage } from '../../types/geometry';
 import { checkRgbaImage } from './linear';
+import { roundHalfUp } from '../gauge/round';
 
 /** The crop rectangle of `crop` clipped to the image, in whole pixels: `[x0, x1) × [y0, y1)`. Throws when it misses the image. */
 export function cropBounds(img: { w: number; h: number }, crop: CropRect): { x0: number; y0: number; x1: number; y1: number } {
@@ -20,8 +21,8 @@ export function cropBounds(img: { w: number; h: number }, crop: CropRect): { x0:
     const a = Math.min(pos, pos + len);
     const b = Math.max(pos, pos + len);
     if (!(b > 0 && a < size)) return undefined;
-    let lo = Math.min(size, Math.max(0, Math.round(a)));
-    let hi = Math.min(size, Math.max(0, Math.round(b)));
+    let lo = Math.min(size, Math.max(0, roundHalfUp(a)));
+    let hi = Math.min(size, Math.max(0, roundHalfUp(b)));
     // A sliver that overlaps the image keeps at least one pixel.
     if (hi <= lo) {
       lo = Math.min(Math.max(0, Math.floor(a)), size - 1);

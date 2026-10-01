@@ -23,6 +23,7 @@ import type { Issue } from '../../types/issues';
 import { hexToLinearRgb, isHex, linearRgbToHex } from '../kernel/color';
 import { linearToFeature } from './linear';
 import type { BackgroundInfo, LinearImage } from './types';
+import { roundHalfUp } from '../gauge/round';
 
 /** Ring width as a share of the image width (§2.3.2). */
 export const BG_RING_FRACTION = 0.02;
@@ -107,7 +108,7 @@ export interface RingCluster {
 
 /** Indices of the ring pixels: the outer `t = max(1, round(2% of the width))` pixels on every side. */
 export function ringPixels(w: number, h: number): Int32Array {
-  const t = Math.max(1, Math.round(BG_RING_FRACTION * w));
+  const t = Math.max(1, roundHalfUp(BG_RING_FRACTION * w));
   const out: number[] = [];
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -232,25 +233,57 @@ export function quantile(values: Float32Array, q: number): number {
 export interface PlainBackground {
   found: boolean;
   ring: RingCluster;
-  /** 1 = background; present when found. */
+  /** 1 = background; present when found, or when the brush marks background pixels. */
   mask?: Uint8Array<ArrayBuffer>;
   /** Share of the image filled. */
   filled: number;
 }
 
-/** "Remove plain background" (§2.3.2): ring test, then the barrier-bounded flood fill from the border. */
-export function plainBackground(img: LinearImage, feat: Float32Array = pixelFeatures(img)): PlainBackground {
+/**
+ * "Remove plain background" (§2.3.2): ring test, then the barrier-bounded flood fill from the border. With a
+ * brush (`brush`, one byte per pixel, 1 = background, 2 = subject; see brush.ts), brushed pixels win over the
+ * fill: brushed subject pixels are never filled and stop the fill like a wall; brushed background pixels are
+ * background and let a fill that reaches them pass, but do not start one (an enclosed hole is background
+ * exactly where it was brushed). `found` reports the ring test; with brushed background pixels the
+ * mask is returned even when the ring test fails.
+ */
+export function plainBackground(img: LinearImage, feat: Float32Array = pixelFeatures(img), brush?: Uint8Array): PlainBackground {
   const { w, h } = img;
   const ring = ringCluster(img, feat);
-  if (!(ring.share >= BG_RING_SHARE && ring.std < BG_RING_STD)) return { found: false, ring, filled: 0 };
+  const found = ring.share >= BG_RING_SHARE && ring.std < BG_RING_STD;
+  const mask = new Uint8Array(w * h);
+  let brushed = 0;
+  if (brush !== undefined) {
+    if (brush.length !== w * h) throw new RangeError(`plainBackground: the brush has ${brush.length} pixels, the image ${w * h}`);
+    for (let i = 0; i < mask.length; i++) {
+      if (brush[i] === 1) {
+        mask[i] = 1;
+        brushed++;
+      }
+    }
+  }
+  if (!found) {
+    if (brushed === 0) return { found: false, ring, filled: 0 };
+    return { found: false, ring, mask, filled: brushed / (w * h) };
+  }
   const sobel = sobelMagnitude(feat, w, h);
   const barrier = Math.max(quantile(sobel, BG_SOBEL_PERCENTILE), BG_SOBEL_FLOOR);
-  const mask = new Uint8Array(w * h);
   const queue = new Int32Array(w * h);
   let head = 0;
   let tail = 0;
+  const seen = new Uint8Array(w * h);
   const visit = (i: number): void => {
-    if (mask[i] || dist(feat, i * 3, ring.mean) > BG_FLOOD_TOLERANCE) return;
+    if (seen[i]) return;
+    const b = brush !== undefined ? brush[i] : 0;
+    if (b === 2) return; // brushed subject: a wall
+    if (b === 1) {
+      // Brushed background: already in the mask; the fill passes through it.
+      seen[i] = 1;
+      queue[tail++] = i;
+      return;
+    }
+    if (dist(feat, i * 3, ring.mean) > BG_FLOOD_TOLERANCE) return;
+    seen[i] = 1;
     mask[i] = 1;
     if (sobel[i] < barrier) queue[tail++] = i; // a barrier pixel is filled but does not spread the fill
   };
@@ -284,6 +317,25 @@ export function clearMasked(img: LinearImage, mask: Uint8Array): LinearImage {
   return { w: img.w, h: img.h, data };
 }
 
+/** The mean straight color of the masked pixels, as hex. */
+function maskedMeanHex(img: LinearImage, mask: Uint8Array): string {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let n = 0;
+  const d = img.data;
+  for (let i = 0; i < mask.length; i++) {
+    const a = d[i * 4 + 3];
+    if (mask[i] && a > 0) {
+      r += d[i * 4] / a;
+      g += d[i * 4 + 1] / a;
+      b += d[i * 4 + 2] / a;
+      n++;
+    }
+  }
+  return n > 0 ? linearRgbToHex(r / n, g / n, b / n) : TRANSPARENT_BACKGROUND_HEX;
+}
+
 /** Share of pixels with alpha ≥ 0.5. */
 export function opaqueShare(img: LinearImage): number {
   let n = 0;
@@ -301,10 +353,16 @@ const pct = (x: number): string => `${Math.round(x * 100)}%`;
 export function resolveBackground(
   work: LinearImage,
   settings: Pick<ChartSettings, 'background' | 'backgroundColor'>,
+  brush?: Uint8Array,
 ): { image: LinearImage; info: BackgroundInfo; issues: Issue[] } {
   const issues: Issue[] = [];
   const chosen = settings.backgroundColor?.hex;
   if (chosen !== undefined && !isHex(chosen)) throw new RangeError(`resolveBackground: backgroundColor.hex must be #rrggbb, got ${String(chosen)}`);
+  // The brush applies only with "remove" (§2.3.2).
+  const edits = settings.background === 'remove' ? brush : undefined;
+  if (edits !== undefined && edits.length !== work.w * work.h) {
+    throw new RangeError(`resolveBackground: the brush has ${edits.length} pixels, the image ${work.w * work.h}`);
+  }
   let image = work;
   let info: BackgroundInfo;
   if (hasTransparency(work)) {
@@ -314,22 +372,37 @@ export function resolveBackground(
         severity: 'info',
         message: 'The picture already has a transparent background, so that is the background; nothing else was removed.',
       });
+      // Brushed background pixels join the transparency (a brushed subject pixel that is transparent has no
+      // color to keep, so it stays background).
+      if (edits !== undefined) {
+        const mask = new Uint8Array(work.w * work.h);
+        let any = false;
+        for (let i = 0; i < mask.length; i++) {
+          if (edits[i] === 1) {
+            mask[i] = 1;
+            any = true;
+          }
+        }
+        if (any) image = clearMasked(work, mask);
+      }
     }
     info = {
       source: 'alpha',
       hex: chosen ?? TRANSPARENT_BACKGROUND_HEX,
       hexFrom: chosen !== undefined ? 'setting' : 'white',
-      subjectShare: opaqueShare(work),
+      subjectShare: opaqueShare(image),
     };
   } else if (settings.background === 'remove') {
-    const plain = plainBackground(work);
+    const plain = plainBackground(work, undefined, edits);
     const ring = { share: plain.ring.share, std: plain.ring.std, hex: plain.ring.hex };
-    if (plain.found && plain.mask !== undefined) {
+    if (plain.mask !== undefined) {
       image = clearMasked(work, plain.mask);
+      // Without a plain background the brushed pixels alone are the background, worked in their mean color.
+      const hex = plain.found ? plain.ring.hex : maskedMeanHex(work, plain.mask);
       info = {
         source: 'plain',
-        hex: chosen ?? plain.ring.hex,
-        hexFrom: chosen !== undefined ? 'setting' : 'border',
+        hex: chosen ?? hex,
+        hexFrom: chosen !== undefined ? 'setting' : plain.found ? 'border' : 'brush',
         subjectShare: 1 - plain.filled,
         mask: plain.mask,
         maskW: work.w,

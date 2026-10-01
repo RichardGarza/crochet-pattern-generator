@@ -83,8 +83,11 @@ export interface BackgroundInfo {
   source: 'alpha' | 'plain' | 'none';
   /** Color the background stitches are worked in, and that translucent edges were composited over. */
   hex: string;
-  /** Where `hex` came from: the setting, the border color of a plain background, or white for transparency. */
-  hexFrom: 'setting' | 'border' | 'white';
+  /**
+   * Where `hex` came from: the setting, the border color of a plain background, the mean of the brushed
+   * background pixels (brush without a plain background), or white for transparency.
+   */
+  hexFrom: 'setting' | 'border' | 'brush' | 'white';
   /** Share of the working image that is subject (alpha ≥ 0.5 after removal), 0..1. */
   subjectShare: number;
   /** Plain-background removal: the mask at the working resolution, 1 = background (for the UI to show). */

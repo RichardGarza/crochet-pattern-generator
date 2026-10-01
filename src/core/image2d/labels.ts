@@ -48,9 +48,10 @@ function checkLabels(labels: Uint8Array, w: number, h: number, fn: string): void
 /**
  * Conservative 3×3 mode filter (the "3×3 median on labels" of §2.3.4): a pixel whose label fills at most two
  * pixels of its 3×3 window (itself included) takes the window's most frequent label (ties → the lowest
- * label); every other pixel keeps its label. NO_LABEL pixels never change and never count.
+ * label); every other pixel keeps its label. NO_LABEL pixels never change and never count. Pixels of a label
+ * in `keep` (protected colors: salient details, hand-edit colors) never change either.
  */
-export function despeckleLabels(labels: Uint8Array, w: number, h: number): Uint8Array<ArrayBuffer> {
+export function despeckleLabels(labels: Uint8Array, w: number, h: number, keep?: ReadonlySet<number>): Uint8Array<ArrayBuffer> {
   checkLabels(labels, w, h, 'despeckleLabels');
   const out = new Uint8Array(labels);
   const count = new Uint16Array(256);
@@ -59,7 +60,18 @@ export function despeckleLabels(labels: Uint8Array, w: number, h: number): Uint8
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
       const own = labels[i];
-      if (own === NO_LABEL) continue;
+      if (own === NO_LABEL || keep?.has(own)) continue;
+      // Fast path: a pixel whose label fills ≥ 3 cells of its window keeps it (most pixels, after 2–8 reads).
+      let same = 0;
+      for (let dy = -1; dy <= 1 && same <= SPECKLE_MAX; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          if (xx >= 0 && xx < w && labels[yy * w + xx] === own && ++same > SPECKLE_MAX) break;
+        }
+      }
+      if (same > SPECKLE_MAX) continue;
       seen.length = 0;
       for (let dy = -1; dy <= 1; dy++) {
         const yy = y + dy;

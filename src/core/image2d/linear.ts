@@ -8,6 +8,7 @@
 import { linearRgbToOklab, linearToSrgb8, oklabToFeature, srgb8ToLinear } from '../kernel/color';
 import type { RgbaImage } from '../../types/geometry';
 import type { LinearImage, Spans } from './types';
+import { roundHalfUp } from '../gauge/round';
 
 /** Longest side of the image the photo and flat-art stages analyze (§2.3.1 step 3). */
 export const ANALYSIS_MAX_SIDE = 2048;
@@ -231,8 +232,8 @@ export function limitedSize(w: number, h: number, maxSide: number = ANALYSIS_MAX
   if (long <= maxSide) return { w, h };
   const scale = maxSide / long;
   return {
-    w: w >= h ? maxSide : Math.max(1, Math.round(w * scale)),
-    h: h >= w ? maxSide : Math.max(1, Math.round(h * scale)),
+    w: w >= h ? maxSide : Math.max(1, roundHalfUp(w * scale)),
+    h: h >= w ? maxSide : Math.max(1, roundHalfUp(h * scale)),
   };
 }
 

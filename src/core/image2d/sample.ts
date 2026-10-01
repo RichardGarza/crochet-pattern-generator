@@ -21,10 +21,12 @@ import { canonicalJson, createFnv1a64 } from '../kernel/hash';
 import { linearToSrgb8 } from '../kernel/color';
 import { GRID_MAX_CELLS, GRID_WARN_CELLS, borderRounds, chartSize, grid, gridIssues, snap, type GridRequest, type GridSize, type Mult } from '../gauge/grid';
 import { backgroundCells, compositeCells, resolveBackground } from './background';
+import { brushKey, mapBrush, type BackgroundEdits } from './brush';
 import { applyCrop } from './crop';
 import { PIXEL_MIN_COVERAGE, analyzeImage, imageFingerprint } from './kind';
 import { analysisImage, boxAverage, toLinearImage, uniformSpans } from './linear';
 import type { BackgroundInfo, ImageStats, LinearImage, PixelLattice, SampledImage, Spans } from './types';
+import { roundHalfUp } from '../gauge/round';
 
 /** Width of the chart, in stitches, when the settings give neither a width nor a height. */
 export const DEFAULT_WIDTH_STITCHES = 60;
@@ -45,6 +47,8 @@ export interface SampleRequest {
   rowsMult?: Mult;
   /** `analyzeImage` of this source and crop, when the caller has it cached. */
   stats?: ImageStats;
+  /** The brushed background on the brush grid of the uncropped source (§2.3.2; used only with "remove"). */
+  backgroundEdits?: BackgroundEdits;
 }
 
 /** The `grid` request of §2.3.3 for these settings (sizes include the border; tapestry in the round has none). */
@@ -192,7 +196,7 @@ export function pixelSize(
   let m = 1;
   if (!defaulted) {
     const want = grid(gauge.cell, g);
-    m = g.wIn !== undefined ? Math.round(want.cols / nx) : Math.round(want.rows / ny);
+    m = g.wIn !== undefined ? roundHalfUp(want.cols / nx) : roundHalfUp(want.rows / ny);
     m = Math.min(mMax, Math.max(1, m));
   }
   const size = chartSize(gauge.cell, nx * m, ny * m, { imgW: req.imgW, imgH: req.imgH, ...(g.border ? { border: g.border } : {}) });
@@ -253,14 +257,52 @@ export interface PreparedWork {
   issues: Issue[];
 }
 
-/** The cache key of `prepareWork` for a source identified by `sourceId` (e.g. its asset hash). */
-export function prepareKey(sourceId: string, req: Pick<SampleRequest, 'crop' | 'settings'>): string {
+/**
+ * The cache key of `prepareWork` for a source identified by `sourceId` (its asset hash, `ChartRequest.sourceId`,
+ * or `contentId(image)` when there is none): the crop, the kind and background settings and, with "remove", the
+ * brush's identity (`brushKey`).
+ */
+export function prepareKey(sourceId: string, req: Pick<SampleRequest, 'crop' | 'settings' | 'backgroundEdits'>): string {
   const { imageKind, background, backgroundColor } = req.settings;
-  return `${sourceId}|${canonicalJson({ crop: req.crop ?? null, imageKind, background, backgroundColor: backgroundColor ?? null })}`;
+  const edits = background === 'remove' && req.backgroundEdits !== undefined ? brushKey(req.backgroundEdits) : null;
+  return `${sourceId}|${canonicalJson({ crop: req.crop ?? null, imageKind, background, backgroundColor: backgroundColor ?? null, edits })}`;
+}
+
+/**
+ * The content identity of a decoded image: its size and a 64-bit hash of every pixel (two murmur3-style 32-bit
+ * lanes over the RGBA words; byte-wise FNV-1a took ≈ 1 s on 12 MP, this ≈ 30 ms). The fallback source id when a
+ * request carries no `sourceId` (exact, unlike the sampled `imageFingerprint`). A cache key, not a security hash.
+ */
+export function contentId(image: RgbaImage): string {
+  const d = image.data;
+  const n = image.w * image.h;
+  const words = d.byteOffset % 4 === 0 ? new Uint32Array(d.buffer, d.byteOffset, n) : new Uint32Array(Uint8Array.from(d.subarray(0, n * 4)).buffer);
+  let h1 = 0x9747b28c ^ image.w;
+  let h2 = 0x85ebca6b ^ image.h;
+  for (let i = 0; i < n; i++) {
+    let k = Math.imul(words[i], 0xcc9e2d51);
+    k = (k << 15) | (k >>> 17);
+    k = Math.imul(k, 0x1b873593);
+    h1 ^= k;
+    h1 = (h1 << 13) | (h1 >>> 19);
+    h1 = (Math.imul(h1, 5) + 0xe6546b64) | 0;
+    h2 = Math.imul(h2 ^ words[i] ^ (i * 0x9e3779b1), 0x2c1b3c6d);
+    h2 ^= h2 >>> 15;
+  }
+  const fmix = (h: number): number => {
+    h ^= h >>> 16;
+    h = Math.imul(h, 0x85ebca6b);
+    h ^= h >>> 13;
+    h = Math.imul(h, 0xc2b2ae35);
+    return (h ^ (h >>> 16)) >>> 0;
+  };
+  const a = fmix(h1 ^ n);
+  const b = fmix(h2 ^ a);
+  return `px:${image.w}x${image.h}:${a.toString(16).padStart(8, '0')}${b.toString(16).padStart(8, '0')}`;
 }
 
 /** Stages 1–3: crop, image kind, working image and background (§2.3.1, §2.3.2, §2.3.4). */
-export function prepareWork(req: Pick<SampleRequest, 'image' | 'crop' | 'settings' | 'stats'>): PreparedWork {
+export function prepareWork(req: Pick<SampleRequest, 'image' | 'crop' | 'settings' | 'stats' | 'backgroundEdits'>): PreparedWork {
   const prepared = prepareImage(req);
   const { cropped, stats } = prepared;
   let kind = prepared.kind;
@@ -277,7 +319,13 @@ export function prepareWork(req: Pick<SampleRequest, 'image' | 'crop' | 'setting
   // Pixel art keeps every pixel (its blocks are averaged); photos and flat art are analyzed at ≤ 2048 px,
   // converted row by row so a large photo never exists as a full-size float image.
   const work0 = lattice !== undefined ? toLinearImage(cropped) : analysisImage(cropped);
-  const bg = resolveBackground(work0, req.settings);
+  let brush: Uint8Array | undefined;
+  if (req.settings.background === 'remove' && req.backgroundEdits !== undefined) {
+    const mapped = mapBrush(req.backgroundEdits, req.image, req.crop, work0);
+    brush = mapped.map;
+    issues.push(...mapped.issues);
+  }
+  const bg = resolveBackground(work0, req.settings, brush);
   issues.push(...bg.issues);
   const out: PreparedWork = { kind, autoKind: stats.kind, stats, source: { w: cropped.w, h: cropped.h }, work: bg.image, bg: bg.info, issues };
   if (lattice !== undefined) out.lattice = lattice;

@@ -1,4 +1,10 @@
-// Track T1 — src/core/quantize/index.ts
-// Step 0 placeholder: DESIGN.md §5.1 assigns this module to T1 (scope: §6.3 T1). It has no cross-track entry
-// point, so nothing in it is frozen. T1 writes it.
-export {};
+// core/quantize — colors of a 2D chart (DESIGN.md §2.4): weighted points, the deterministic quantizer, auto-K,
+// salience and merges, p-median yarn selection, anti-aliasing centers, and `colorize`. Track T1, sprint T1.2.
+export * from './autoK';
+export * from './blend';
+export * from './colorize';
+export * from './colors';
+export * from './pmedian';
+export * from './points';
+export * from './quantize';
+export * from './salience';

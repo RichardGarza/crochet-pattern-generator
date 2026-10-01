@@ -24,6 +24,7 @@ import { createFnv1a64 } from '../kernel/hash';
 import { GRID_MAX_CELLS } from '../gauge/grid';
 import { checkRgbaImage } from './linear';
 import type { ImageStats, PixelLattice } from './types';
+import { roundHalfUp } from '../gauge/round';
 
 /** ΔEOKr2 above which two neighbors count as an edge for the lattice search (§2.3.4). */
 export const PIXEL_EDGE_DE = 0.05;
@@ -367,7 +368,7 @@ export function findAxisLattice(e: ArrayLike<number>): AxisLattice | undefined {
   }
   let s = 0.5 * (sLo + sHi);
   // A whole-number period on the plateau is the exact answer (integer upscales are the common case).
-  const sInt = Math.round(s);
+  const sInt = roundHalfUp(s);
   if (sInt >= sLo - 1e-9 && sInt <= sHi + 1e-9) s = sInt;
   const { a } = evaluate(s);
   let sumW = 0;
@@ -425,7 +426,7 @@ export function findAxisLattice(e: ArrayLike<number>): AxisLattice | undefined {
 export function latticeEdges(l: AxisLattice, n: number): Int32Array<ArrayBuffer> {
   const lines: number[] = [];
   for (let k = Math.ceil((-l.phase - 0.5) / l.s); ; k++) {
-    const L = Math.round(l.phase + k * l.s);
+    const L = roundHalfUp(l.phase + k * l.s);
     if (L >= n) break;
     if (L > 0 && (lines.length === 0 || L > lines[lines.length - 1])) lines.push(L);
   }
