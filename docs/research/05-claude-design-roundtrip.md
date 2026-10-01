@@ -86,11 +86,11 @@ I decoded five public exports ([openscreen](https://github.com/getopenscreen/ope
   <script> DOMContentLoaded loader … </script>           ← decodes & swaps the document
   <script type="__bundler/manifest">{"<uuid>":{"mime":"text/javascript","compressed":true,"data":"H4sI…"}, …}</script>
   <script type="__bundler/ext_resources">[{"id":"https://unpkg.com/react@18.3.1/…","uuid":"…"}]</script>   (optional)
-  <script type="__bundler/template">"<!DOCTYPE html>\n<html><head>…<script src=\"<uuid>\"></script>…"</script>
+  <script type="__bundler/template">"<!DOCTYPE html>\n<html><head>…<script src=\"<uuid>\"><\u002Fscript>…"</script>
 </body></html>
 ```
 
-*[FC: I re-decoded all five files on 2026-09-30. `<title>Bundled Page</title>` appears in three of the five; larri and techne keep their own titles. larri also has a fourth tag, `<script type="__bundler/page_order">`, a JSON array of nested-page uuids. These are iframe targets shipped once in the root manifest and loaded through `about:blank#<uuid>` markers. The unbundler must therefore decode `text/html` manifest entries too, which §7.2's code already does. In the skeleton above, the template's `</script>` was changed to `</script>` to match the escaping below.]*
+*[FC: I re-decoded all five files on 2026-09-30. `<title>Bundled Page</title>` appears in three of the five; larri and techne keep their own titles. larri also has a fourth tag, `<script type="__bundler/page_order">`, a JSON array of nested-page uuids. These are iframe targets shipped once in the root manifest and loaded through `about:blank#<uuid>` markers. The unbundler must therefore decode `text/html` manifest entries too, which §7.2's code already does. In the skeleton above, the template's `</script>` was changed to `<\u002Fscript>` to match the escaping below.]*
 
 What the loader does:
 
@@ -107,7 +107,7 @@ Things we saw in the decoded files:
 - The **dc-runtime** (`// GENERATED from dc-runtime/src/*.ts`) is a gzipped JS asset.
 - Google Fonts are inlined as woff2 assets.
 - CDN scripts referenced by `src` (React from unpkg) are inlined and mapped through `ext_resources`.
-- The template JSON-escapes the `/` of **every** closing tag. larri uses `<\/` (131 times) and the other four use `</` (for example `</script>` and `</x-dc>`), so no literal `</` appears inside the template *[FC: it was given as "escapes closing tags as `</script>`", which had lost the escape]*. The raw file therefore never contains our JSON block verbatim; you must `JSON.parse` the template first.
+- The template JSON-escapes the `/` of **every** closing tag. larri uses `<\/` (131 times) and the other four use `<\u002F` (for example `<\u002Fscript>` and `<\u002Fx-dc>`), so no literal `</` appears inside the template *[FC: it was given as "escapes closing tags as `</script>`", which had lost the escape]*. The raw file therefore never contains our JSON block verbatim; you must `JSON.parse` the template first.
 - Resources referenced only from JS strings, or loaded by dynamic `import()`, are **not** inlined unless the page declares them with `<meta name="ext-resource-dependency" content="…" data-resource-id="…">`, which the page then reads from `window.__resources[id]` [Leak+, and observed in [levoberezhny-quarter.html](https://github.com/Amethyst-Deceiver2001/Mariupol_Urbicide_2026/blob/main/docs/exhibits/levoberezhny-3d/levoberezhny-quarter.html), which loads a JSON dataset that way].
 
 **Is the standalone HTML self-contained?**
@@ -134,7 +134,7 @@ Examples: [paulodev40 handoff](https://github.com/paulodev40/SolucoesInteligente
 ### 2.4 Handoff to Claude Code (two forms)
 
 - **Folder or zip**: `design_handoff_<feature>/README.md` plus copies of the HTML prototypes. The README template calls the files "design references created in HTML" (in its "About the Design Files" section, after Overview) and covers Overview, About the Design Files, Fidelity, Screens, Interactions, State, Design Tokens, Assets and Files *[FC: it was given as "opens with" that phrase]* [Leak+: [handoff skill](https://github.com/asgeirtj/system_prompts_leaks/blob/main/Anthropic/claude-design/skills/handoff-to-claude-code/SKILL.md); dozens of public READMEs, for example [foundry](https://github.com/abhijitbansal/foundry/tree/main/docs/design/handoff)].
-- **URL bundle**: Claude Design gives a one-line prompt, *"Fetch this design file, read its readme, and implement the relevant aspects of the design. https://api.anthropic.com/v1/design/h/<id>?open_file=<File>.html"* [V-observed in public repos, for example [redthread TODO](https://github.com/hkjeldsberg/redthread/blob/main/TODO.md)]. *[FC: a GitHub code search finds this exact wording in more than a dozen repos. It is usually followed by a line `Implement: <File>.html`, and some URLs carry no `?open_file=`. The redthread copy was edited by its user ("…of the design for the existing app.").]* The URL returns `application/gzip`, a **tar.gz** with `<project>/README.md` ("CODING AGENTS: READ THIS FIRST"), `chats/chat<N>.md` (the transcripts) and `project/…` [Reported: [orchestkit](https://github.com/yonatangross/orchestkit/blob/main/src/agents/claude-design-orchestrator.md), [Deo-ahn](https://github.com/Deo-ahn/Deo-ahn.github.io/blob/main/bin/sync-design.md)]. The URLs are reportedly short-lived ([heyadam](https://github.com/heyadam/claudedesign-to-swiftui)) *[FC: heyadam's exact words are "short-lived / one-shot", which suggests a URL may be single-use, so opening it once could use it up]*. Both public URLs I tested returned **404**, and **no CORS headers** came back [V-observed]. *[FC: re-tested 2026-09-30 with an `Origin` header. All 8 public handoff URLs found on GitHub returned 404 `text/plain` with no `Access-Control-Allow-Origin` and `content-security-policy: default-src 'none'`. A 404 shows nothing about CORS on a live 200 response, so that remains (unverified).]* So the app cannot reliably fetch them. The user should open the link in a browser to download the `.tar.gz` and drop it into the app. The `chats/*.md` files will contain the JSON code block that our prompt asks Claude to print.
+- **URL bundle**: Claude Design gives a one-line prompt, *"Fetch this design file, read its readme, and implement the relevant aspects of the design. https://api.anthropic.com/v1/design/h/<id>?open_file=<File>.html"* [V-observed in public repos, for example [redthread TODO](https://github.com/hkjeldsberg/redthread/blob/main/TODO.md)]. *[FC: a GitHub code search finds this exact wording in more than a dozen repos. It is usually followed by a line `Implement: <File>.html`, and some URLs carry no `?open_file=`. The redthread copy was edited by its user ("…of the design for the existing app.").]* The URL returns `application/gzip`, a **tar.gz** with `<project>/README.md` ("CODING AGENTS: READ THIS FIRST"), `chats/chat<N>.md` (the transcripts) and `project/…` [Reported: [orchestkit](https://github.com/yonatangross/orchestkit/blob/main/src/agents/claude-design-orchestrator.md), [Deo-ahn](https://github.com/Deo-ahn/Deo-ahn.github.io/blob/main/bin/sync-design.md)]. The URLs are reportedly short-lived ([heyadam](https://github.com/heyadam/claudedesign-to-swiftui)) *[FC: heyadam's exact words are "short-lived / one-shot", which suggests a URL may be single-use, so opening it once could use it up]*. Both public URLs I tested returned **404**, and **no CORS headers** came back [V-observed]. *[FC: re-tested 2026-09-30 with an `Origin` header. All 9 public handoff URLs found on GitHub (redthread plus 8 found by code search) returned 404 `text/plain` with no `Access-Control-Allow-Origin` and `content-security-policy: default-src 'none'; frame-ancestors 'none'`. A 404 shows nothing about CORS on a live 200 response, so that remains (unverified).]* So the app cannot reliably fetch them. The user should open the link in a browser to download the `.tar.gz` and drop it into the app. The `chats/*.md` files will contain the JSON code block that our prompt asks Claude to print.
 
 ### 2.5 3D object viewer downloads [Leak+]
 
@@ -312,9 +312,11 @@ interface Feature {
      "position":[-0.55,5.95,0],"rotationDeg":[0,0,10],"color":"c1","attach":{"to":"head","method":"sewn"}},
     {"id":"tail","type":"sphere","dims":{"r":0.5},"position":[0,0.8,-1.45],"color":"c2","attach":{"to":"body"}}
   ],
-  "features":[{"id":"eye_l","kind":"embroidered_eye","on":"head","azimuthDeg":32,"elevationDeg":10,"sizeIn":0.3,"color":"c4","mirror":true}],
+  "features":[{"id":"eye_l","kind":"embroidered_eye","on":"head","azimuthDeg":32,"elevationDeg":-10,"sizeIn":0.3,"color":"c4","mirror":true}],
   "assumptions":["Arms omitted: the photos show the paws tucked under the body."] }
 ```
+
+*[FC: the eye's `elevationDeg` was changed from 10 to −10. At +10° the eye sits above the head's midline (about 41% of the way down), which contradicts the "at least halfway down the head" guidance in §6.1. The example also misses rule 2's 0.05–0.15 in overlap, worked by hand. The head's bottom (y = 4.05 − 1.2 = 2.85) sinks 0.35 in into the body's top (y = 3.2). The tail sphere's centre (z = −1.45) is inside the body surface (z ≈ −1.56 at y = 0.8), so 0.61 in of the tail is buried and only 0.39 in shows. The model's bounding box is about 3.2 in wide against `finishedSize.width` 3.4, which is inside the importer's 15% tolerance.]*
 
 ### 4.4 Versioning and compatibility
 
@@ -366,7 +368,7 @@ The app produces three things:
 2. **`crochet-brief.txt`**, the full brief. Uploading it avoids paste mangling, and chat accepts TXT and JSON.
 3. **`crochet-model.seed.json`**.
 
-The user attaches the photos in the stated order. The app also offers "Copy full prompt" for users who prefer pasting. Prompt size is about 7–10 KB with the builder included, which is fine for chat.
+The user attaches the photos in the stated order. The app also offers "Copy full prompt" for users who prefer pasting. Prompt size is roughly 11–18 KB with the builder included *[FC: it was given as "about 7–10 KB". Measured from this document: the template is ≈4.3 KB, the builder ≈4.8 KB and the seed 2–8 KB depending on the part count]*, which is still fine for chat.
 
 Claude Design's own question form normally asks 6–10 questions (max 12), always offers "Decide for me", and **appends a design-system question when no design system is attached** [Leak+]. The prompt therefore pre-empts those questions with "no design system; don't ask". The app's instructions tell the user to click **Decide for me** if a form still appears.
 
@@ -494,9 +496,9 @@ function paint(g, p, pal) {                          // regions → vertex color
 
 ### 5.4 Filling rules (app side)
 
-- `MIN_FEATURE_IN = 6 / (π · stsPerIn)`. This is the diameter of a 6-stitch magic-ring tube. Worsted at about 5 sts/in gives about 0.38 in; DK at about 6.5 gives 0.29 in; bulky at about 4 gives 0.48 in. The stitches-per-inch values are typical tight-amigurumi gauges [Inference]. The CYC label gauges are 11–14 sc per 4 in for worsted with 5.5–6.5 mm hooks [V-official: [CYC](https://www.craftyarncouncil.com/standards/yarn-weight-system)]. Amigurumi uses smaller hooks: DK with 2.75 mm, worsted with 3.5 mm, bulky with 4.5 mm ([PlanetJune](https://www.planetjune.com/blog/amigurumi-help/resizing-amigurumi/)). Take the real gauge from the gauge module (R4) when available.
+- `MIN_FEATURE_IN = 6 / (π · stsPerIn)`. This is the diameter of a 6-stitch magic-ring tube. Worsted at about 5 sts/in gives about 0.38 in; DK at about 6.5 gives 0.29 in; bulky at about 4 gives 0.48 in. The stitches-per-inch values are typical tight-amigurumi gauges [Inference] *[FC: the absolute values are (unverified). Their ratios match PlanetJune's scale data to within about 7%. In her data DK is about 0.8× and bulky on a 4.5 mm hook about 4/3× the size of worsted on 3.5 mm, which implies ≈6.25 and ≈3.75 sts/in if worsted is 5.]*. The CYC label gauges are 11–14 sc per 4 in for worsted with 5.5–6.5 mm hooks [V-official: [CYC](https://www.craftyarncouncil.com/standards/yarn-weight-system)]. Amigurumi uses smaller hooks: DK with 2.75 mm, worsted with 3.5 mm, bulky with 4.5 mm ([PlanetJune](https://www.planetjune.com/blog/amigurumi-help/resizing-amigurumi/)). Take the real gauge from the gauge module (R4) when available.
 - `MAX_PARTS` defaults to 25 [Inference].
-- `STYLE_SENTENCE` for chibi: "head about 40–50% of total height, eyes about halfway down the head". This follows the "a third or one half" head-to-body guidance and the eyes "at least halfway down the head" ([Little World of Whimsy](https://littleworldofwhimsy.com/6-easy-tricks-to-make-amigurumi-cuter/)).
+- `STYLE_SENTENCE` for chibi: "head about 40–50% of total height, eyes about halfway down the head". This follows the "a third or one half" head-to-whole-doll guidance ("ratios of size of head to size of doll") and the eyes "at least halfway down the head" ([Little World of Whimsy](https://littleworldofwhimsy.com/6-easy-tricks-to-make-amigurumi-cuter/)). *[FC: it was described as "head-to-body" guidance. The same source says it usually aims for eyes "two thirds of the way down", so "halfway to two-thirds down the head" is the faithful wording.]*
 - Escape `{{`, `</script` and `<` in user free text before inserting it into the JSON seed.
 
 ---
@@ -505,11 +507,11 @@ function paint(g, p, pal) {                          // regions → vertex color
 
 ### 6.1 Principles [Inference, grounded in sources]
 
-- **Every amigurumi breaks down into spheres, cylinders and cones, plus flat pieces and embellishments** ([Garnknuten](https://garnknuten.com/en-us/blogs/how-to-crochet/3-basic-amigurumi-shapes-you-need-to-know), [LWoW shapes](https://littleworldofwhimsy.com/amigurumi-shapes/), [LWoW 7 steps](https://littleworldofwhimsy.com/how-to-design-amigurumi-in-7-steps/)). The questions therefore ask for a **part list with a shape per part**, not free prose.
-- **Shape rate matters**: 6 increases per round gives a round piece; 7–8 gives a flatter one; fewer than 6 gives a pointier one. Increasing every other round makes a cone of about 45° ([LWoW shapes](https://littleworldofwhimsy.com/amigurumi-shapes/), [Shiny Happy World](https://www.shinyhappyworld.com/2010/11/crochet-cone-shapes-amigurumi.html)). Ask *pointy vs rounded vs flat-topped* for tips such as ears and snouts, and map the answer to a cone, an ellipsoid or a lathe profile.
-- **Cuteness and proportion**: head at 1/3–1/2 of total height; eyes about halfway down the head; bigger eyes read cuter ([LWoW tricks](https://littleworldofwhimsy.com/6-easy-tricks-to-make-amigurumi-cuter/)).
+- **Every amigurumi breaks down into spheres, cylinders and cones, plus flat pieces and embellishments** ([Garnknuten](https://garnknuten.com/en-us/blogs/how-to-crochet/3-basic-amigurumi-shapes-you-need-to-know), [LWoW shapes](https://littleworldofwhimsy.com/amigurumi-shapes/), [LWoW 7 steps](https://littleworldofwhimsy.com/how-to-design-amigurumi-in-7-steps/)). *[FC: attribution narrowed. Garnknuten names sphere, cylinder and cone as "three basic crocheted shapes". Little World of Whimsy names spheres, cylinders and hemispheres plus flat circles, ovals, squares and chain lines, and says "all amigurumi can be broken down into a collection of basic shapes, on top of which there are some embellishments". Neither LWoW page lists cones.]* The questions therefore ask for a **part list with a shape per part**, not free prose.
+- **Shape rate matters**: 6 increases per round gives a round piece; 7–8 gives a flatter one; fewer than 6 gives a pointier one. Increasing every other round makes a cone of about 45° ([LWoW shapes](https://littleworldofwhimsy.com/amigurumi-shapes/), [Shiny Happy World](https://www.shinyhappyworld.com/2010/11/crochet-cone-shapes-amigurumi.html)). *[FC: the 6 / 7–8 / fewer-than-6 rule is LWoW's, quoted accurately. The 45° figure is Shiny Happy World's empirical "cone with about 45 degree-angle sides". Idealized single-crochet geometry gives something different. If 6 increases per round lies flat, then 3 per round grows the circumference half as fast, so the base radius is half the slant height. That is a 30° half-angle, a 60° apex. Calibrate with a swatch before encoding either number in R4.]* Ask *pointy vs rounded vs flat-topped* for tips such as ears and snouts, and map the answer to a cone, an ellipsoid or a lathe profile.
+- **Cuteness and proportion**: head at 1/3–1/2 of total height; eyes at least halfway down the head, usually up to two-thirds down *[FC: it was given as "about halfway"]*; bigger eyes read cuter ([LWoW tricks](https://littleworldofwhimsy.com/6-easy-tricks-to-make-amigurumi-cuter/)).
 - **Safety**: safety eyes are not recommended for babies and small children; use embroidered or felt eyes. Typical sizes are 4–6 mm for palm-sized toys and 8–10 mm for jumbo ([LWoW safety eyes](https://littleworldofwhimsy.com/how-to-use-safety-eyes-in-crochet-and-my-favorite-sizes/)).
-- **Interaction design**: mirror Claude Design's own form guidance. A focused form, about 6–12 questions, has defaults on every question, a "Decide for me" option, and never asks for something already known [Leak+]. We pre-fill answers from the photo analysis (palette k-means, silhouette aspect ratios, R2/R3 part segmentation) and from the R1/R2 settings (size, yarn, hook).
+- **Interaction design**: mirror Claude Design's own form guidance. A focused form, typically 6–10 questions for an opening form and at most 12 *[FC: it was given as "about 6–12"; the leak says "typically 6-10 … at most 12"]*, has defaults on every question, a "Decide for me" option, and never asks for something already known [Leak+]. We pre-fill answers from the photo analysis (palette k-means, silhouette aspect ratios, R2/R3 part segmentation) and from the R1/R2 settings (size, yarn, hook).
 
 ### 6.2 Question bank (ordered by priority; the engine skips known or irrelevant questions)
 
@@ -571,7 +573,7 @@ function nextQuestions(bank: Q[], c: Ctx, budget = 14) {
    - body height = `(1−k)·H` + 15% overlap
    - lathe profile presets scale to that body height
 4. Place parts by **stacking**: child center = parent center + dir(where) × (parent extent + child extent × (1 − overlap)), with `where` ∈ {top, front, back, left, right, bottom, top-left, …} and overlap 0.1. Then set `min y = 0`.
-5. Attach palette ids from `q_palette`, regions from `q_patterns`, and features at default az/el (eyes az ±30°, el +5° to +15° on the head).
+5. Attach palette ids from `q_palette`, regions from `q_patterns`, and features at default az/el (eyes az ±30°, el 0° to −20° on the head *[FC: it was given as "el +5° to +15°", which puts the eyes above the head's midline and contradicts the cited "at least halfway down the head". On a sphere, −20° is about two-thirds of the way down]*).
 6. Set `revision: 0` and `source.stage: "seed"`.
 
 Our app renders the seed with the same builder, so the user sees the blockout before sending.
@@ -627,7 +629,7 @@ async function specFromHtml(raw: string, ctx): Promise<Result> {
 async function unbundle(html: string) {   // format observed in real exports (§2.2)
   const grab = (t: string) => new RegExp(`<script type="__bundler/${t}">([\\s\\S]*?)</script>`).exec(html)?.[1];
   const manifest = JSON.parse(grab('manifest') ?? '{}');
-  const template: string = JSON.parse(grab('template') ?? '""');   // decodes </script>
+  const template: string = JSON.parse(grab('template') ?? '""');   // undoes the <\/ or <\u002F escaping [FC: comment was "decodes </script>"]
   const out = [{ name: 'template.html', text: template }];
   for (const [uuid, e] of Object.entries<any>(manifest)) {
     if (!/json|javascript|html|text/.test(e.mime)) continue;                     // skip fonts/images
@@ -638,7 +640,7 @@ async function unbundle(html: string) {   // format observed in real exports (§
 }
 ```
 
-Fingerprint the format for diagnostics: `__bundler` → standalone; `<x-dc>`/`data-dc-script` → Design Component; `three-d-stage` → 3D-object skill; `text/babel` → pre-August React/Babel prototype; `importmap` + three → module page. Claude Design's formats are undocumented and changed between April and August 2026 (React/Babel → DC), so the ladder must stay tolerant [V-observed].
+Fingerprint the format for diagnostics: `__bundler` → standalone; `<x-dc>`/`data-dc-script` → Design Component; `three-d-stage` → 3D-object skill; `text/babel` → pre-DC React/Babel prototype (April to about June 2026); `importmap` + three → module page. Claude Design's formats are undocumented and changed between April and late June 2026 (React/Babel → DC), so the ladder must stay tolerant [V-observed]. *[FC: it was given as "pre-August" and "between April and August 2026". DC exports were public by 2026-06-24; see §1.1.]*
 
 ### 7.3 Sandbox runner (pages without JSON)
 
@@ -651,8 +653,8 @@ Fingerprint the format for diagnostics: `__bundler` → standalone; `<x-dc>`/`da
   connect-src blob: data: https://unpkg.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; worker-src blob:
   ```
 
-  `'unsafe-eval'` is needed for Babel-era pages.
-- **Offline**: rewrite the `https://unpkg.com/three@0.184.0/...` import-map URLs to vendored copies with blob URLs. Our recomputed sha384 values match the leaked map, so the `integrity` entries stay valid if we vendor exactly 0.184.0.
+  `'unsafe-eval'` is needed for Babel-era pages (unverified). *[FC: @babel/standalone 7.29.0 contains no `eval(` or `new Function(` call. Its `transformScriptTags` injects the transformed code as inline scripts, which `'unsafe-inline'` already allows. Drop `'unsafe-eval'` unless a real fixture needs it.]*
+- **Offline**: rewrite the `https://unpkg.com/three@0.184.0/...` import-map URLs to vendored copies with blob URLs. Our recomputed sha384 values match the leaked map, so the `integrity` entries stay valid if we vendor exactly 0.184.0. *[FC caveat, checked in the 0.184.0 files. `build/three.module.js` imports `./three.core.js`, and a relative specifier cannot resolve against a `blob:` base URL. Blob-URL vendoring therefore breaks unless that specifier is rewritten as well. Serving the vendored files from a real same-origin path (for example `/vendor/three@0.184.0/…`) avoids the problem. `integrity` is keyed by URL, so re-key it to the new URLs; the hash values themselves stay correct. The addons import the bare `three` specifier and are unaffected.]*
 - **Bootstrap injected as the first `<head>` child:**
 
 ```js
@@ -691,7 +693,7 @@ Fingerprint the format for diagnostics: `__bundler` → standalone; `<x-dc>`/`da
 - Don't depend on `requestAnimationFrame`. Design-tool iframes can suppress it, as one handoff README notes, and cross-origin offscreen frames are throttled. The model exists as soon as `setObject` runs.
 - Mapping `params` back to the spec:
   - `SphereGeometry{radius}` → sphere
-  - non-uniform scale on a sphere → ellipsoid
+  - non-uniform scale on a sphere → ellipsoid *[FC: `BufferGeometry.scale()`, which our own builder uses for ellipsoids, and `.center()` change the vertices but leave `geometry.parameters` stale. Compare `computeBoundingBox()` with `params` before trusting them.]*
   - `CapsuleGeometry{radius,height}` → capsule (`length = height + 2r`)
   - `CylinderGeometry` / `ConeGeometry` → cylinder or cone
   - `TorusGeometry` → torus
@@ -710,7 +712,7 @@ Loops and helper functions defeat this approach, so mark the result **low confid
 
 ### 7.4 Archives and limits
 
-- **Library**: use `fflate`, which inflates in about 3 kB and supports `unzipSync(u8, { filter })` with `originalSize` for cheap pre-checks and `gunzipSync` for bundler assets ([fflate](https://github.com/101arrowz/fflate)). JSZip (`loadAsync`, `file.async`) also works but is about 45 kB.
+- **Library**: use `fflate`, which inflates in about 3 kB and supports `unzipSync(u8, { filter })` with `originalSize` for cheap pre-checks and `gunzipSync` for bundler assets ([fflate](https://github.com/101arrowz/fflate)). JSZip (`loadAsync`, `file.async`) also works but is about 98 kB minified, or 28 kB gzipped (v3.10.2, measured) *[FC: it was given as "about 45 kB", which is pako's size in the fflate README]*. fflate's own table gives ≈5 kB minified for ZIP decompression and ≈4 kB for GZIP.
 - **Tar**: a ~60-line ustar reader (512-byte headers, size in octal at offset 124, name at 0, prefix at 345).
 - **Limits**:
   - ≤ 100 MB input
@@ -775,13 +777,14 @@ Shared with R2/R3:
 | Design is a template in chat, Claude Code and the Artifacts tab since 2026-09-16; standalone keeps working | V-official |
 | Share links need a Claude account | V-official |
 | Artifact viewer blocks page-initiated downloads without the downloads capability; artifacts can load scripts only from cdnjs, unpkg, jsDelivr `/npm/`, Tailwind and jQuery CDNs | V-official (code.claude.com) |
-| Standalone HTML = `__bundler/manifest` + `template` (+ `ext_resources`), gzip+base64, `</script>` escaping | V-observed (5 real files) |
-| Design-canvas artifacts = `project/canvas.json` v3 + `.dc.html` artboards; network limited to fonts and uploads | V-observed (type definition on this account) |
+| Standalone HTML = `__bundler/manifest` + `template` (+ `ext_resources`, sometimes `page_order`), gzip+base64, every `</` in the template escaped as `<\/` or `<\u002F` *[FC: it was given as "`</script>` escaping"]* | V-observed (5 real files, re-decoded by the fact-check) |
+| Design Components were the default format by late June 2026 (not August) | V-observed (commit dates of DC exports) *[FC: added]* |
+| Design-canvas artifacts = `project/canvas.json` v3 + `.dc.html` artboards; network limited to fonts and uploads | V-observed (type definition on this account; re-read by the fact-check: release `1790801787-9bdf`, contract `0.2.47`) |
 | "3D object" skill, three@0.184.0 import map, GLB + OBJ/MTL toolbar, meters, y-up | Leak+ (real files and SRI hashes match) |
 | GLB keeps `userData` as `extras`; loader restores it; `__THREE_DEVTOOLS__` hook in r128 and r184; Capsule `height` = middle section; three.min.js absent from 0.161.0 | V-observed (three.js source; unpkg 0.160.0 → 200, 0.161.0 → 404) |
 | Stage MTL Kd is linear while MTLLoader assumes sRGB | V-observed (code reading) |
 | Zip = whole project folder | Inference + Leak+ |
-| Handoff URL → tar.gz with README, chats and project; short-lived | Reported; my two test URLs were 404 with no CORS headers |
+| Handoff URL → tar.gz with README, chats and project; short-lived | Reported; my two test URLs were 404 with no CORS headers. *[FC: on 2026-09-30, 9 of 9 public URLs returned 404; heyadam says "short-lived / one-shot"; CORS on a live response is (unverified).]* |
 | Standalone export of a 3D-object page still needs network for three.js | Inference, supported by one observed handoff README |
 | Current Design model; in-chat Design template's ability to run CDN three.js; clipboard in preview; downloads inside the claude.ai/design preview | **Uncertain**, test manually |
 
@@ -835,3 +838,163 @@ Shared with R2/R3:
 - Little World of Whimsy: [7 steps](https://littleworldofwhimsy.com/how-to-design-amigurumi-in-7-steps/), [shapes](https://littleworldofwhimsy.com/amigurumi-shapes/), [cuter](https://littleworldofwhimsy.com/6-easy-tricks-to-make-amigurumi-cuter/), [safety eyes](https://littleworldofwhimsy.com/how-to-use-safety-eyes-in-crochet-and-my-favorite-sizes/)
 - [Shiny Happy World cones](https://www.shinyhappyworld.com/2010/11/crochet-cone-shapes-amigurumi.html)
 - [Garnknuten basic shapes](https://garnknuten.com/en-us/blogs/how-to-crochet/3-basic-amigurumi-shapes-you-need-to-know)
+
+---
+
+## Verification notes
+
+An adversarial fact-check ran on 2026-09-30. Every edit in the body is marked *[FC: …]* and keeps the old value. Where possible I used sources other than the ones the report cites: raw page text, downloaded files, hashes and source code, rather than summaries.
+
+### Method
+
+- **Official pages**, fetched raw and read in full: the launch post, Get started with Claude Design, the release notes, Share artifacts, the Artifacts admin guide, the Claude Design admin guide, What are artifacts, Upload files, and code.claude.com's artifacts page and its whats-new for week 34. I also read claude.com/product/design.
+- **Files downloaded, hashed or decoded**:
+  - the leaked `3d-object/SKILL.md`;
+  - both copies of `three-d-stage.js`;
+  - all five standalone exports cited in §2.2;
+  - `CogniPilot.dc.html` and `levoberezhny-quarter.html`;
+  - three@0.184.0 (`three.module.js`, `three.core.js`, OrbitControls, OBJExporter, GLTFExporter, GLTFLoader, MTLLoader, `Scene.js`, `WebGLRenderer.js`, `CapsuleGeometry.js`) from unpkg;
+  - three@0.128.0 `Scene.js` and `WebGLRenderer.js`;
+  - @babel/standalone 7.29.0 and jszip 3.10.2.
+- **Read-only call**: one read of this account's "Design" Artifact type.
+- **Handoff URLs**: 9 public `api.anthropic.com/v1/design/h/…` URLs (redthread plus 8 found with a GitHub code search), fetched with an `Origin` header.
+- **Crochet sources**: Little World of Whimsy (shapes, 7 steps, cuter, safety eyes), Shiny Happy World, Garnknuten, the Craft Yarn Council table, and two PlanetJune articles (resizing and scaling).
+- **Formulas**: re-worked by hand (below).
+
+### Load-bearing claims 1–14
+
+| # | Verdict | What I checked |
+|---|---|---|
+| 1 | **Confirmed**; quote wording fixed | Launch post dated "Apr 17, 2026": "powered by our most capable vision model, Claude Opus 4.7 … research preview for Claude Pro, Max, Team, and Enterprise". The release notes' 2026-04-17 entry agrees. Get-started names no model. |
+| 2 | **Confirmed** | Get-started export list, verbatim. I counted 15 "Send to" partners. |
+| 3 | **Confirmed**, with nuance | Release note of 2026-09-16; get-started ("standalone … keeps working and has its own separate setting"); Artifacts admin guide ("Standalone Claude Design is a separate product … its own setting"). The CLI `/design` preview shipped earlier, on 2026-08-17. Official pages conflict on which plans get templates. |
+| 4 | **Confirmed**, with nuance | Share artifacts: "Everyone needs a Claude account. People without one can't open a shared artifact, even with the link. The only exception is a legacy artifact published from a chat." The Claude Code doc also describes public links that need no sign-in. |
+| 5 | **Confirmed** | code.claude.com artifacts: "blocks any download the page starts itself, including links to `data:` or `blob:` URLs". Scripts load only from "cdnjs, unpkg, the Tailwind and jQuery CDNs, and selected paths on jsDelivr such as `/npm/`". Fonts load only from Google Fonts. |
+| 6 | **Confirmed**; one detail corrected | Decoded all five exports. Manifest entries have exactly `{mime, compressed, data}`. Fonts are uncompressed `font/woff2`; JS is gzipped. The dc-runtime begins `// GENERATED from dc-runtime/src/*.ts`. larri's `ext_resources` maps unpkg React 18.3.1. The loader uses DecompressionStream, blob URLs and uuid substitution, strips `integrity`/`crossorigin`, sets `window.__resources`, uses DOMParser + `replaceWith`, and handles `text/babel` + `transformScriptTags`. Corrected: the escaping is `<\/` or `<\u002F`, not "`</script>`". Added: the optional `__bundler/page_order` tag. |
+| 7 | **Confirmed** | SKILL.md text matches. Both stage files are 16,612 bytes with sha256 `072cca1bb58d363504e415af8b20f694476b206498c07169de31829880649ef5` and are identical (`cmp`). The public copy (2026-07-30) predates the leak commit (2026-08-19). All 5 SRI sha384 values recomputed from unpkg match. Toolbar order is OBJ then GLB. Default background is `#f0eee6`. The stage posts `omelette:notify-3d-export`. |
+| 8 | **Confirmed**; target list refined | r184 GLTFExporter calls `serializeUserData` for materials, primitives (geometry), animation clips, nodes, pivot containers and scenes. r184 GLTFLoader `assignExtrasToUserData` uses `Object.assign(object.userData, gltfDef.extras)`. |
+| 9 | **Confirmed** | The stage writes `'# Exported by three-d-stage'`, then `Kd c.r c.g c.b` from `m.color`. r184 MTLLoader: `ColorManagement.colorSpaceToWorking(new Color().fromArray(value), SRGBColorSpace)`. |
+| 10 | **Confirmed** | `__THREE_DEVTOOLS__.dispatchEvent(new CustomEvent('observe', { detail: this }))` appears in r184 `Scene.js` (L115–117) and `WebGLRenderer.js` (L3565–3567), and in r128 `Scene.js` (L19–21) and `WebGLRenderer.js` (L2105–2107). |
+| 11 | **Confirmed as Reported**; re-tested | orchestkit's wire format: `application/gzip`, a tar.gz of 2–20 KB containing `README.md` ("CODING AGENTS: READ THIS FIRST"), `chats/chat<N>.md`, and `project/` once designs exist. heyadam: "short-lived / one-shot". All 9 public URLs returned 404 with no `Access-Control-Allow-Origin`. |
+| 12 | **Confirmed** | Type read: release `1790801787-9bdf`, contract `"0.2.47"`. Confirmed: `project/canvas.json` with `"v":3`, `boards`, `order`, `pages`, `notes` and `designSystems` (plus `title`, `launch`, `createdOnFiles`); uploads at `/_blob/<id>`; "no network except a Google Fonts `css2` `<link>` … and step 3's urls"; "no `<iframe>`, `<object>` or `<embed>`". Capabilities include `downloads`. |
+| 13 | **Partly confirmed**; three fixes | LWoW: "increasing by six … round. Increasing by seven or eight … flatter … less than six … pointier" ✓. Shiny Happy World: "cone with about 45 degree-angle sides" ✓ as a quote (but see the geometry below). LWoW head:doll "a third or one half" ✓. Eyes "at least halfway down", usually "two thirds" (wording fixed). Safety eyes "not recommended … babies or small children … choking hazard" ✓. Eye sizes "4.0 mm to 6.0 mm" for palm-sized and "8.0mm or 10.0mm" for jumbo ✓. Corrected: the sphere/cylinder/cone triad is Garnknuten's alone; LWoW lists hemispheres, not cones. |
+| 14 | **Confirmed** | Craft Yarn Council, single crochet per 4 in: super fine 21–32, fine 16–20, light 12–17, medium 11–14 on 5.5–6.5 mm hooks, bulky 8–11, super bulky 7–9, jumbo 6 and fewer. PlanetJune: DK "C US/2.75mm", worsted "E US/3.5mm", bulky "G7 US/4.5mm". |
+
+### Other numbers, formulas and facts checked
+
+**Gauge and proportion math**
+- `MIN_FEATURE_IN = 6/(π·sts/in)`:
+  - 5 sts/in → 0.382 in
+  - 6.5 sts/in → 0.294 in
+  - 4 sts/in → 0.477 in
+
+  The report's 0.38 / 0.29 / 0.48 are correct.
+- Eye height on the worked-example head (ellipsoid 1.35 × 1.2 × 1.25 in, az 32°), measured as the fraction of the way down from the top:
+  - el +10° → 41% down
+  - el −10° → 59% down
+  - on a sphere, two-thirds down is el ≈ −19.5°
+- Cone from increasing every other round, assuming the 6-per-round circle lies flat:
+  - stitch width ≈ (π/3) × round height
+  - half the increase rate gives base radius = ½ × slant height
+  - so the half-angle is 30° (60° apex)
+- Unit-repair ratios 2.54, 0.0254 and 25.4 are correct. The radians bound of 6.3 is correct (2π ≈ 6.283).
+
+**Binary signatures**
+- GLB: magic `glTF`, 12-byte header, JSON chunk type `0x4E4F534A` (these are GLTFLoader's own constants).
+- tar: ustar magic at offset 257; size in octal at 124; name at 0; prefix at 345.
+- gzip `1F 8B`, zip `PK\x03\x04`, binary STL `84 + 50n`.
+
+**three.js r184**
+- `CapsuleGeometry(radius, height = "Height of the middle section", capSegments, radialSegments, heightSegments)`.
+- `three.min.js` exists for 0.160.0 (HTTP 200) and not for 0.161.0 (404).
+- `OBJExporter` writes vertex colors only for `Points` (added as a caveat).
+- `three.module.js` imports `./three.core.js` (added as a caveat).
+
+**Libraries and web platform**
+- fflate: "3kB for inflate only" and `unzipSync(…, { filter })` with `originalSize` ✓.
+- JSZip 3.10.2: 97,781 bytes minified, 28,443 bytes gzipped (corrected).
+- DecompressionStream: MDN says "Baseline Widely available … since May 2023" ✓.
+- MDN iframe warning about `allow-scripts` + `allow-same-origin` ✓.
+- CSP3: meta CSP excludes `report-uri`, `frame-ancestors` and `sandbox`, and has a note on local-scheme documents "that have inherited their policy" ✓.
+- MDN DOMParser: scripts are "marked as non-executable" ✓.
+- @babel/standalone 7.29.0 has no `eval(` or `new Function(` call, so I marked `'unsafe-eval'` as (unverified).
+
+**Official product facts**
+- Upload limits: 500 MB per file, 20 files per chat, 8000×8000 px, and TXT/JSON are accepted ✓.
+- Claude Design admin guide quotes ✓: "sandboxed iframe on a separate content domain that Anthropic operates" and "export to HTML bundles, PPTX, and PDF, hand-off to Claude Code, and sending designs to the partner tools".
+- Artifacts admin guide ✓:
+  - "doesn't currently support data residency requirements";
+  - the new artifacts experience is unavailable for CMEK, ZDR and HIPAA-ready organizations;
+  - artifacts are unavailable on third-party cloud platforms.
+- Claude Code: `/design` research preview in week 34 (Aug 17–21, 2026), "Requires v2.1.234 or later". Template commands require v2.1.265+. "You can export each artboard as PNG or PDF" ✓.
+
+**Leak quotes**
+- `present_fs_item_for_download`: "If the path is a folder, will be turned into a zip file", and "Omit or use "" to download the entire project" ✓.
+- `show_pdf_export_dialog`: "the user saves the page as a PDF" ✓.
+- Question form: "typically 6-10 questions … at most 12", with a built-in decide-for-me button; "the app appends" a design-system question ✓.
+- Design Components: "The only exception … entirely `<canvas>`/WebGL" ✓.
+- Tweaks: "Add 2-3 of those by default" ✓.
+- `save-as-standalone-html` skill: `super_inline_html` and `ext-resource-dependency` → `window.__resources[id]`, and it "CANNOT discover … a dynamically imported script" ✓.
+- The April gist (created 2026-04-18) pins react@18.3.1 and @babel/standalone@7.29.0 with SRI, and uses EDITMODE markers ✓.
+
+**Public sample files**
+- `CogniPilot.dc.html` loads `three@0.128.0/build/three.min.js` from unpkg inside `<helmet>` ✓.
+- The foundry README has the "(3D loads from CDN, needs network)" quote and the note that "design-tool iframes suppress rAF" ✓.
+- The levoberezhny page uses an `ext-resource-dependency` meta ✓.
+- The paulodev40 and sthree-boutique handoff layouts are as described ✓.
+- The opendesigner.io zip claim exists (still Reported and conflicting) ✓.
+- Both community unbundlers parse manifest + template and handle base64 + gzip ✓.
+
+### What changed
+
+1. **Launch quote.** The §1 table quote now uses the post's exact wording. I added the official release notes for Opus 5.5 and noted Opus 4.8 and Opus 5 in between.
+2. **Surfaces and plans.** Mobile is not "view only". Official pages conflict on which plans get the templates; noted. Added `--scope user` to the reported MCP command.
+3. **Design Components timeline.** DC has been the default since late June 2026 at the latest, not August (§1.1, §7.2, §9). The larri export was mischaracterized as evidence of April-era React/Babel.
+4. **Bundle format.**
+   - The template escapes every `</` as `<\/` or `<\u002F`; fixed in the text, the skeleton, the `unbundle()` comment and the ledger.
+   - Added the optional `__bundler/page_order` tag.
+   - `<title>Bundled Page</title>` is not universal.
+5. **GLB and OBJ export.**
+   - GLTFExporter's userData targets refined.
+   - New OBJ caveats: vertex-painted parts lose color, and the stage renames duplicate material names.
+6. **Prompt size.** Was about 7–10 KB; measured at roughly 11–18 KB.
+7. **Eye placement.** The default eye elevation changed from +5…+15° to 0…−20°. The worked example's eye changed from +10° to −10°. Added a note on the example's head and tail overlap and its width.
+8. **Crochet sources.**
+   - The shape-triad attribution is narrowed to Garnknuten.
+   - The 45° cone is flagged against the geometry.
+   - "Head-to-body" is now "head-to-doll"; eyes are "halfway to two-thirds down".
+   - Form size is "typically 6–10, at most 12".
+9. **Sandbox runner.**
+   - `'unsafe-eval'` marked (unverified).
+   - Offline vendoring with blob URLs breaks the relative `./three.core.js` import; re-key `integrity`.
+   - Stale `geometry.parameters` caveat added.
+10. **Library size.** JSZip was "about 45 kB"; it is about 98 kB minified (28 kB gzipped).
+11. **Handoff prompt.**
+    - Canonical wording plus the usual `Implement:` line.
+    - "One-shot" wording added.
+    - 9/9 URLs returned 404; CORS on a live 200 response is (unverified).
+    - README "opens with" wording fixed.
+12. **Additions.**
+    - The launch post's own mention of 3D ("shaders, 3D and built-in AI").
+    - Independent dating of the public `three-d-stage.js` copy.
+    - DecompressionStream is now "Widely available".
+    - The in-chat template's own no-imports and markup-only rules.
+
+### Remaining doubts
+
+- **Live product state.** Which model Claude Design uses today is still **[Uncertain]**. Whether the "3D object" skill, its toolbar and its import map still exist at claude.ai/design rests on an August 2026 leak; nothing official describes them. The §8 manual test sprint is still required before coding the importer.
+- **Official pages conflict:**
+  - Template plan availability: "every plan, including Free" (release note) vs "paid plans only" (What are artifacts).
+  - Public share links without sign-in: the Share artifacts article vs the Claude Code doc.
+- **Handoff tar.gz.**
+  - Its contents are **Reported** only: no live URL was available to download.
+  - CORS on a successful response and single-use behavior are (unverified).
+- **3D runtime questions.**
+  - Whether the standalone-HTML export inlines the three.js import map is still Uncertain. The leaked bundler "CANNOT discover … a dynamically imported script" and the stage loads three via `import('three')`, so "probably not" stands.
+  - Whether the in-chat Design template can run three.js is Uncertain, and its rules (no imports, no script-built UI) work against it.
+- **Crochet numbers.**
+  - Absolute amigurumi gauges (5 / 6.5 / 4 sts per in) are (unverified); only their ratios are corroborated.
+  - The cone angle needs a swatch: 45° (source) vs about 60° apex (geometry).
+  - The Craft Yarn Council page has a banner, "Updated Yarn Weight System now includes Size 8", but its table still ends at 7 (Jumbo). `yarn.weightCYC` may need an 8; the details are unverified because the web-search budget ran out during this run.
+- **Internal inconsistency, not fixed.** §4.5's MTL rule "(all channels ≤ 0.5 from an MTL marked three-d-stage)" disagrees with §2.5 and §7.1, which treat every `Kd` in a three-d-stage MTL as linear. The header test alone should decide.
+- **Third-party claims.** The opendesigner.io zip layout and the digitalstrategyai MCP endpoint remain **Reported**.

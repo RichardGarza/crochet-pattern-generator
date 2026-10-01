@@ -44,15 +44,15 @@ Everything runs client-side: Vite + React + TypeScript + three.js / react-three-
 
 2. **Multi-view uses a visual hull computed as an SDF.**
    - Take the minimum of per-view 2D signed-distance fields (exact EDT). With axis-aligned orthographic views this is separable: **38 ms at 128³ and 143 ms at 256³ [M]**.
-   - Then round the depth (front–back) axis, which the views constrain least, using the **front-view inflation profile**. On a synthetic striped teddy, IoU rises from **0.841 to 0.922 [M]**.
-   - **Never** apply the inflation profile from side or top views. On the same teddy, IoU collapses to **0.37 [M]**.
-3. **Minimum photo set for geometry: front, one side, top [M].** Under the orthographic assumption, the back and the other side add **zero** carving information (IoU is identical with 3 or 5 views). They are still needed for **colors**, and as redundancy against bad masks.
+   - Then round the depth (front–back) axis, which the views constrain least, using the **front-view inflation profile**. On a synthetic striped teddy, IoU rises from **0.841 to 0.922 [M]** (unverified: benchmark script not committed; not reproduced by the fact-check).
+   - **Never** apply the inflation profile from side or top views. On the same teddy, IoU collapses to **0.37 [M]** (unverified, same reason).
+3. **Minimum photo set for geometry: front, one side, top [M].** Under the orthographic assumption, the back and the other side add **zero** carving information (IoU is identical with 3 or 5 views). This follows directly from orthographic projection: an opposite view's silhouette is the mirror image of its twin, so it cannot carve anything new. They are still needed for **colors**, and as redundancy against bad masks.
 4. **Single image: start from inflation, optionally add depth.**
    - Distance-transform inflation with *local thickness* takes about 45 ms per 512² mask **[M]**. It gives a closed, rounded shape instantly and offline.
    - Depth Anything V2 Small (Apache-2.0, 19–99 MB depending on dtype [V]) adds relief.
    - In our synthetic test, IoU went from **0.79 (inflation) to 0.85 (depth + inflation)**, and to **0.89** with the right "thickness" factor **[M]**. Expose that factor as a slider.
 5. **Depth model speed in the browser.**
-   - Depth Anything V2 Small on onnxruntime-web WASM at 518²: **≈2.7 s on 1 thread, ≈0.8 s on 4 threads** (Apple M3 Pro) **[M]**.
+   - Depth Anything V2 Small on onnxruntime-web WASM at 518²: **≈2.5–2.7 s on 1 thread, ≈0.8 s on 4 threads** (Apple M3 Pro) **[M]**. The fact-check re-ran q8 and got 2.50 s and 0.78 s; the original run measured 2.70 s on 1 thread.
    - WebGPU: "under 200ms" was reported by the transformers.js author for Depth Anything (V1) Small, which has the same backbone size [V]. Re-measure in our app (§13).
    - Multi-threaded WASM needs cross-origin isolation (COOP/COEP headers) [V].
 6. **Segmentation fallback ladder.**
@@ -68,10 +68,10 @@ Everything runs client-side: Vite + React + TypeScript + three.js / react-three-
 
    The only browser port we found (TripoSplat-WebGPU) is a **6.47 GB** download and takes **≈248 s per image on an M3 Max with 128 GB** [V]. The "high-quality" path is the Claude Design round trip (`05`).
 8. **Mesh hygiene.**
-   - Clamp the marching-cubes interpolation parameter to `t ∈ [0.01, 0.99]`. This removes the zero-area triangles that made manifold-3d split a valid closed mesh into 4–14 parts **[M]**.
+   - Clamp the marching-cubes interpolation parameter to `t ∈ [0.01, 0.99]`. This removes the zero-area triangles that made manifold-3d split a valid closed mesh into 4–14 parts **[M]** (unverified: not reproduced by the fact-check).
    - Validate with manifold-3d (genus and parts count).
-   - Keep decimation moderate. A 9× reduction with meshoptimizer created non-manifold edges **[M]**.
-9. **Project palette labels, not RGB, with an occlusion test [M].** On the striped teddy, the best-facing *visible* view gets **96.6 %** of vertices right. Without the occlusion test it gets **93.1 %**.
+   - Keep decimation moderate. A 9× reduction with meshoptimizer created non-manifold edges **[M]** (unverified: not reproduced).
+9. **Project palette labels, not RGB, with an occlusion test [M].** On the striped teddy, the best-facing *visible* view gets **96.6 %** of vertices right. Without the occlusion test it gets **93.1 %** (unverified: not reproduced).
 10. **Resolution defaults [M + I].**
     - **N = 128** by default. Carve → rounding → MC → smoothing → validation takes ≈0.25 s in a worker. Including 2D prep, cleanup and label projection it is ≈0.5 s end-to-end.
     - N = 64 for live previews.
@@ -216,11 +216,12 @@ function classicalMask(img: ImageData, opts = { band: 0.04, tauLab: 14, closeR: 
 
 ### 4.1 Background facts [V]
 
-- **Laurentini 1994 defines the visual hull** as "the maximal object silhouette-equivalent to the object". It is "the closest approximation … obtained with the volume intersection approach". *IEEE TPAMI* 16(2):150–162 ([Semantic Scholar](https://www.semanticscholar.org/paper/The-Visual-Hull-Concept-for-Silhouette-Based-Image-Laurentini/033cc3784a60115d758a11a765e764b86aca336c)).
+- **Laurentini 1994 defines the visual hull** as "the maximal object silhouette-equivalent to the object". It is "the closest approximation … obtained with the volume intersection approach". *IEEE TPAMI* 16(2):150–162 (quote unverified in fact-check: source returned 403) ([Semantic Scholar](https://www.semanticscholar.org/paper/The-Visual-Hull-Concept-for-Silhouette-Based-Image-Laurentini/033cc3784a60115d758a11a765e764b86aca336c)).
   - Consequence: **concavities that never show up in any silhouette cannot be recovered**. Examples: the inside of a cup, or the gap between legs seen only from the front and side.
-- **Probabilistic silhouette fusion** treats each pixel as a statistical occupancy sensor, borrowing the occupancy grid from robotics. Franco & Boyer, ICCV 2005 ([mlanthology](https://mlanthology.org/iccv/2005/franco2005iccv-fusion/)).
+- **Probabilistic silhouette fusion** treats each pixel as a statistical occupancy sensor, borrowing the occupancy grid from robotics. Franco & Boyer, ICCV 2005 ([mlanthology](https://mlanthology.org/iccv/2005/franco2005iccv-fusion/)) (framing unverified beyond the page title).
 - **The three-view hull of a sphere** is the Steinmetz tricylinder, volume (16 − 8√2) r³ ([Wikipedia](https://en.wikipedia.org/wiki/Steinmetz_solid)). That is **11.9 % larger** than the sphere.
   - **[M]** Our carve of an r = 0.8 sphere from front + side + top at N = 128 measured **volume ratio 1.1193** against the theoretical **1.1188**. This validates both the implementation and the "boxy hull" problem.
+  - Fact-check: the theory checks out by hand: (16 − 8√2) / (4π/3) = 4.6863 / 4.1888 = 1.1188. An independent voxel-centre occupancy count (same sphere, box [−1.1, 1.1]³, N = 128) gave 1.1211. Because the hull contains the sphere, IoU = 1 / ratio = 0.893, which matches the table in §4.5.
 
 ### 4.2 View conventions (user-labelled photos, orthographic) [I]
 
@@ -301,7 +302,7 @@ z_c(x,y)  = midpoint of the hull's occupied z-interval along the ray (x,y)   // 
 f(p)      = min( f_hull(p),  κ·T_front(x,y) − |z − z_c(x,y)| )               // κ = thickness factor, default 1
 ```
 
-Results at N = 128 [M] (synthetic union of nine ellipsoids: body, head, ears, snout, arms, legs; ground truth analytic):
+Results at N = 128 [M] (synthetic union of nine ellipsoids: body, head, ears, snout, arms, legs; ground truth analytic). The teddy rows are unverified: the script was not committed and the fact-check did not reproduce them. They are internally consistent, though: a hull contains the object, so hard-hull IoU should be 1/volume ratio, and 1/1.19 = 0.840.
 
 | Variant | Sphere (3 views) IoU | Teddy IoU (volume ratio) |
 |---|---|---|
@@ -350,7 +351,7 @@ This is usually unnecessary for amigurumi, which are stuffed and convex-ish.
 3. **Fill unlabeled vertices** (e.g., the bottom without a bottom photo) by BFS from labeled neighbours. Or use the "mirror front" / "dominant color" options for the unseen back (§5.4).
 4. **Hand off to doc 06.** Pass the label images and view definitions so it can do per-stitch voting and smoothing. The Waechter et al. 2014 view-selection data term favours "close, orthogonal images", plus a Potts smoothness term ([Springer PDF](https://link.springer.com/content/pdf/10.1007/978-3-319-10602-1_54.pdf)) [V].
 
-**[M] Accuracy on the synthetic teddy** (striped body, N = 128, 21,316 vertices, 5 views):
+**[M] Accuracy on the synthetic teddy** (striped body, N = 128, 21,316 vertices, 5 views; unverified, not reproduced by the fact-check):
 
 - **96.6 %** correct with the visibility test.
 - **93.1 %** with the normal-only rule.
@@ -365,7 +366,7 @@ This is usually unnecessary for amigurumi, which are stuffed and convex-ish.
 | Method | How it works | Notes |
 |---|---|---|
 | **Teddy** (Igarashi, Matsuoka, Tanaka, SIGGRAPH 99) | Find the spine with the chordal axis. "Each vertex of the spine is elevated proportionally to the average distance between the vertex and the external vertices that are directly connected to the vertex." Edges become "quarter ovals". "The elevated mesh is copied to the other side to make the mesh closed and symmetric" ([PDF](https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf)) [V]. | Mesh-based; needs a constrained Delaunay triangulation. Historical reference. |
-| **Monster Mash** (Dvorožňák et al., ACM TOG 39(6):214, 2020) | Following Ink-and-Ray (Sýkora et al. 2014): solve **`Δh̃ = c`** with Dirichlet `h̃ = 0` on drawn contours and a cotangent Laplacian. `c < 0` inflates toward the viewer and `c > 0` away. Then **`h = s·√|h̃|`**, which turns the "parabolic profile" into a "semi-elliptical" one. Front and back regions are inflated with `c` and `−c` and **stitched along the contour** into a manifold ([PDF](https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf)) [V]. | Implemented in C++ with libIGL and Eigen; the web demo runs on WebAssembly + WebGL ([monstermash.zone](https://monstermash.zone/)). Source (Apache-2.0 for `src/`): [github.com/google/monster-mash](https://github.com/google/monster-mash) [V]. |
+| **Monster Mash** (Dvorožňák et al., ACM TOG 39(6):214, 2020) | Following Ink-and-Ray (Sýkora et al. 2014): solve **`Δh̃ = c`** with Dirichlet `h̃ = 0` on drawn contours and a cotangent Laplacian. `c < 0` inflates toward the viewer and `c > 0` away. Then **`h = s·√|h̃|`**, which turns the "parabolic profile" into a "semi-elliptical" one. (Fact-check: the paper writes `h0(x) = √h̃(x)`. The scale `s` and the absolute value are our notation, not the paper's.) Front and back regions are inflated with `c` and `−c` and **stitched along the contour** into a manifold ([PDF](https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf)) [V]. | Implemented in C++ with libIGL and Eigen; the web demo runs on WebAssembly + WebGL ([monstermash.zone](https://monstermash.zone/)). Source (Apache-2.0 for `src/`): [github.com/google/monster-mash](https://github.com/google/monster-mash) [V]. |
 | **Distance-transform "circular profile" with local thickness (recommended)** [I] | `T(p) = √( d(p)·(2·R_loc(p) − d(p)) )`. `d` is the inside EDT. `R_loc(p)` is the radius of the largest inscribed disc containing p: paint ridge discs (medial axis) in increasing radius order. | **Exact** for a disc (gives the hemisphere) and for a constant-width strip (gives a semicircular tube) [I, derived]. Measured 21 ms EDT + 23 ms local thickness + 2 ms map at 512² [M]. |
 
 **Poisson + √ profile, derived [I].**
@@ -405,7 +406,7 @@ Use `κ` (the thickness factor) as a UI slider. A plush seen from the front is u
 - **Outputs:** `predicted_depth` (float tensor) and `depth` (8-bit image) ([pipelines docs](https://huggingface.co/docs/transformers.js/api/pipelines)) [V].
 - **Semantics:** the model is trained in **disparity space**. "The depth value is first transformed into the disparity space by d = 1/t and then normalized to 0∼1 on each depth map", with an affine-invariant (scale + shift) loss ([Depth Anything paper](https://arxiv.org/html/2401.10891v1)) [V]. So the output is **relative inverse depth, larger = nearer, with unknown scale and shift**. It never gives absolute thickness.
 - **Speed [M] (WASM, M3 Pro, 518²):**
-  - q8 1 thread: 2.70 s;
+  - q8 1 thread: 2.70 s. The fact-check re-ran it on the same machine (onnxruntime-web 1.30.0, Node 20.18.0, random input, warm): **2.50 s on 1 thread, 0.78 s on 4 threads, session creation 0.27 s**;
   - fp32 1 thread: 2.75 s;
   - q8 or fp32 with 4 threads: **0.79–0.80 s**;
   - q8 at 364², 1 thread: 1.12 s;
@@ -475,7 +476,7 @@ f(x,y,z) = min( sd(x,y), zFront(x,y) − z, z − zBack(x,y) );  // closed, wate
 - **Indexing.** Give each edge one vertex, keyed by `(axis, lower-corner index)`, so the result is watertight with no welding pass.
   - **[M]** 0 boundary or non-manifold edges and χ = 2 at every resolution tested.
 - **Degenerate triangles.** Clamp `t = (iso − f0)/(f1 − f0)` to `[0.01, 0.99]` and avoid exact zeros in f.
-  - **[M]** Without the clamp, MC produced 298 (N = 128) to 2,860 (N = 256) zero-area triangles. manifold-3d then decomposed a single-shell mesh into **4 parts (14 after Taubin)**. With the clamp: 1 part, genus 0.
+  - **[M]** Without the clamp, MC produced 298 (N = 128) to 2,860 (N = 256) zero-area triangles. manifold-3d then decomposed a single-shell mesh into **4 parts (14 after Taubin)**. With the clamp: 1 part, genus 0. These numbers are unverified: the diag scripts were not committed and the fact-check did not reproduce them. Treat the clamp as cheap insurance, and confirm it with a unit test in the app.
 - **Memory.** A naïve implementation keeps three `Int32Array(N³)` edge-vertex maps: 201 MB at N = 256. Process **two z-slices at a time** to make memory O(N²) [I].
 - **Throughput [M]** (single thread, Node 20 / V8):
 
@@ -490,7 +491,7 @@ f(x,y,z) = min( sd(x,y), zFront(x,y) − z, z − zBack(x,y) );  // closed, wate
 
 | Option | Facts | Assessment |
 |---|---|---|
-| Surface nets / `isosurface` npm (MIT, 2014; `surfaceNets`, `marchingCubes`, `marchingTetrahedra`, function-callback API) | 0fps measured in 2012 JS that surface nets produced about half the triangles of MC and ran about twice as fast. They "may sometimes get non-manifold vertices" ([0fps](https://0fps.net/2012/07/12/smooth-voxel-terrain-part-2/)) [V]. | — |
+| Surface nets / `isosurface` npm (MIT, 2014; `surfaceNets`, `marchingCubes`, `marchingTetrahedra`, function-callback API) | In 2012 JS, 0fps found that surface nets produced "slightly less than half as many facets" as MC. Those facets are **quads**, though, so after splitting into triangles the count is about the same as MC. Speed was "comparable" on small geometry and up to about 2.2× faster on the most complex one (124 vs 275 ms). The earlier wording, "half the triangles and about twice as fast", overstated this. Surface nets "may sometimes get non-manifold vertices" ([0fps](https://0fps.net/2012/07/12/smooth-voxel-terrain-part-2/)) [V]. | — |
 | **manifold-3d `Manifold.levelSet(sdf, bounds, edgeLength, level, tolerance)`** | Marching tetrahedra on a **body-centred cubic grid**, "better for manifoldness", positive-inside SDF (package typings) [V]. Guaranteed manifold. | **[M]** 777 ms at edge = 2.2/128 with a JS trilinear callback, giving 78 k triangles, genus 0. ≈8× slower than our MC. Good as a "safe mode" fallback. |
 | meshoptimizer `remesh(indices, positions, stride, resolution, flags)` | **Experimental** voxel remesher, resolution [4, 256]. "The output of the remesher is closed, with every edge matched by an opposite edge"; small gaps get closed ([README](https://github.com/zeux/meshoptimizer)) [V]. | Useful to repair **imported** meshes (R6). |
 
@@ -586,10 +587,10 @@ Doc 03 (and AmiGo) need non-branching pieces. A cheap first pass uses **morpholo
 | Model | Size / runtime | License | Browser? |
 |---|---|---|---|
 | **TripoSR** | "less than 0.5 seconds on an NVIDIA A100", about 6 GB VRAM, CUDA + torchmcubes ([GitHub](https://github.com/VAST-AI-Research/TripoSR)) [V]. An ONNX export is about 3.4 GB, host-side only; marching cubes at 256³ runs outside the graph ([brodatech/triposr-onnx](https://huggingface.co/brodatech/triposr-onnx)) [V]. | MIT ([HF](https://huggingface.co/stabilityai/TripoSR)) | No working port found. SpawnDev.ILGPU.ML lists TripoSR (≈840 MB fp16) as planned: "the reconstruction model path is not wired" ([GitHub](https://github.com/LostBeard/SpawnDev.ILGPU.ML)) [V]. |
-| **SF3D** (Stability) | 0.5 s, about 6 GB VRAM ([GitHub](https://github.com/Stability-AI/stable-fast-3d), [blog](https://stability.ai/news-updates/introducing-stable-fast-3d)) [V] | Stability AI Community License (free under US $1 M annual revenue) | No |
+| **SF3D** (Stability) | 0.5 s, about 6 GB VRAM. The GitHub README says "about 6GB VRAM"; the launch blog says a GPU "with 7GB VRAM" ([GitHub](https://github.com/Stability-AI/stable-fast-3d), [blog](https://stability.ai/news-updates/introducing-stable-fast-3d)) [V] | Stability AI Community License (free under US $1 M annual revenue) | No |
 | **Hunyuan3D-2.1** | Shape 3.3 B params / 10 GB; texture 2 B / 21 GB; both 29 GB ([GitHub](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1)) [V] | Tencent Hunyuan 3D 2.1 Community License; **"does not apply in the European Union, United Kingdom and South Korea"** ([LICENSE](https://raw.githubusercontent.com/Tencent-Hunyuan/Hunyuan3D-2.1/main/LICENSE)) [V] | No |
 | **TRELLIS.2** | 4 B params; ≥ 24 GB VRAM (A100/H100); Linux; about 3 s at 512³ on H100 ([GitHub](https://github.com/microsoft/TRELLIS.2)) [V] | MIT (some dependencies are separately licensed) | No |
-| **TripoSplat** (Gaussian splats) | WebGPU port: **≈6.47 GB** in 10 ONNX graphs; on an M3 Max with 128 GB, **247,901 ms** end-to-end (4 steps); only tested on Chrome; not qualified for 16 GB Macs or mobile ([HF](https://huggingface.co/Yosun/TripoSplat-WebGPU)) [V] | MIT | Technically yes; practically no. The output is splats, not a closed mesh. |
+| **TripoSplat** (Gaussian splats) | WebGPU port: **≈6.47 GB** (6,465,182,402 bytes, FP32) in 10 manifest objects. That is **5 ONNX graphs** plus their external-data sidecars, not "10 ONNX graphs" as an earlier draft said. On an M3 Max with 128 GB, **247,901 ms** end-to-end (4 steps); measured only on Chrome 150 (Edge and Safari not qualified); not qualified for 16 GB Macs or mobile ([HF](https://huggingface.co/Yosun/TripoSplat-WebGPU)) [V] | MIT | Technically yes; practically no. The output is splats, not a closed mesh. |
 | **SHARP** (Apple) | Monocular **view synthesis** to metric 3D Gaussians, under 1 s on a GPU ([GitHub](https://github.com/apple/ml-sharp)) [V]. A WebGPU ONNX export is 0.66 GB int8 ([HF](https://huggingface.co/sm079/sharp-onnx-webgpu)) [V]. | Weights "non-commercial research purposes only" | Runs, but only the visible surface, and the license blocks it. |
 | **VGGT** (multi-view feed-forward) | VGGT-1B; outputs cameras, depth and point maps ([GitHub](https://github.com/facebookresearch/vggt)) [V] | Original non-commercial; the separate "VGGT-1B-Commercial" checkpoint is gated | No (1 B params) |
 
@@ -610,7 +611,7 @@ Either way, the result goes through the same cleanup, validation and labelling.
 | `onnxruntime-web` | 1.30.0 (2026-09-14) | MIT | Direct ONNX use (DA3, custom models) | Threads need `crossOriginIsolated`. Default threads: "half of `navigator.hardwareConcurrency` or 4, whichever is smaller". The proxy worker "cannot work with WebGPU EP" ([docs](https://onnxruntime.ai/docs/tutorials/web/env-flags-and-session-options.html)). |
 | `three` | 0.186.1 (2026-09-24) | MIT | Rendering; MC tables; `BufferGeometryUtils.mergeVertices` | |
 | `three-mesh-bvh` | 0.9.15 (2026-09-09) | MIT | Raycast / visibility, closest point, sculpt, mesh→SDF | "500 rays against an 80,000 polygon model at 60fps"; `GenerateMeshBVHWorker` / `ParallelMeshBVHWorker` ([GitHub](https://github.com/gkjohnson/three-mesh-bvh)). |
-| `manifold-3d` | 3.5.4 (2026-09-25) | Apache-2.0 | Validation, genus, decompose, booleans (editor), `levelSet`, `simplify`, `smoothOut` | WASM 532 KB [M]. |
+| `manifold-3d` | 3.5.4 (2026-09-25) | Apache-2.0 | Validation, genus, decompose, booleans (editor), `levelSet`, `simplify`, `smoothOut` | `manifold.wasm` is 541,470 bytes (≈529 KiB / 541 kB) in the 3.5.4 tarball. An earlier draft said 532 KB [V]. |
 | `meshoptimizer` | 1.3.0 (2026-09-25) | MIT | Simplification (attribute-aware), experimental remesh | |
 | `@gltf-transform/core` + `functions` | 4.5.1 (2026-09-28) | MIT | GLB import/export, weld, simplify wrapper | |
 | `three-bvh-csg` | 0.0.18 | MIT | Mesh CSG (manifold-3d preferred) | |
@@ -657,16 +658,21 @@ async function pickBackend() {
 
 **Browser support for WebGPU [V]:**
 
-- Chrome and Edge 113+.
-- Safari 26 (macOS Tahoe, iOS/iPadOS 26).
+- Chrome and Edge 113+ on Windows, macOS and ChromeOS. Chrome on Android 121+ (Android 12+, Qualcomm/ARM GPUs).
+- Safari 26 (macOS Tahoe, iOS/iPadOS 26, visionOS 26).
 - Firefox 141 on Windows and 145 on macOS Tahoe ARM64.
-- Linux and Firefox on Android are still in progress.
+- **Linux:** web.dev (Nov 2025) listed Linux as in progress. caniuse data (updated 2026-09-30) marks **Chrome 144+ as supported on Linux**, "depends on hardware and drivers". The old wording, "Linux … still in progress", is outdated for Chrome.
+- **Firefox:** Linux, Android and Intel Macs are still not enabled by default.
 
-Sources: [web.dev, 2025-11-25](https://web.dev/blog/webgpu-supported-major-browsers). transformers.js reported global support "around 85%" in March 2026 ([guide](https://huggingface.co/docs/transformers.js/guides/webgpu)); caniuse shows 87.35 % ([caniuse](https://caniuse.com/webgpu)).
+Sources: [web.dev, 2025-11-25](https://web.dev/blog/webgpu-supported-major-browsers); [caniuse](https://caniuse.com/webgpu) (raw data from github.com/Fyrd/caniuse). transformers.js reported global support "around 85%" in March 2026 ([guide](https://huggingface.co/docs/transformers.js/guides/webgpu)). caniuse data on 2026-09-30 showed **85.72 % full + 3.05 % partial** support. An earlier draft said "87.35 %", which the fact-check could not reproduce.
 
 ### 9.3 Cross-origin isolation (multi-threaded WASM) [V + I]
 
-ONNX Runtime Web needs `crossOriginIsolated` for threads. Otherwise it warns and falls back to 1 thread ([docs](https://onnxruntime.ai/docs/tutorials/web/env-flags-and-session-options.html)). The difference is **2.7 s vs 0.8 s** for depth [M].
+ONNX Runtime Web needs `crossOriginIsolated` for threads ([docs](https://onnxruntime.ai/docs/tutorials/web/env-flags-and-session-options.html)).
+
+- Fact-check against the 1.30.0 source (`lib/backend-wasm.ts`): when `numThreads` is left unset and the page is not isolated, ORT **silently** uses 1 thread.
+- It only warns ("…will not work unless you enable crossOriginIsolated mode") when the app explicitly sets `numThreads > 1`.
+- When isolated, the default is `Math.min(4, Math.ceil(hardwareConcurrency / 2))`, which matches `pickBackend()` above. The difference is **2.7 s vs 0.8 s** for depth [M].
 
 - **Dev:** `vite.config.ts` → `server.headers` and `preview.headers`:
 
@@ -689,7 +695,7 @@ ONNX Runtime Web needs `crossOriginIsolated` for threads. Otherwise it warns and
 | `localModelPath` | `/models/` |
 | `useBrowserCache` | Cache API |
 | `cacheKey` | `'transformers-cache'` |
-| `useWasmCache` (v4) | Pre-loads and caches the ORT WASM binaries; "enables offline usage" |
+| `useWasmCache` (v4) | Pre-loads and caches the ORT WASM binaries and the WASM factory (.mjs). It defaults to `true` when a cache is available, and "enables offline usage". |
 | `env.backends.onnx` | Passes ORT settings through, e.g., `wasm.wasmPaths` for self-hosted WASM. |
 
 **Fully offline build [I]:**
@@ -924,3 +930,110 @@ OpenCV.js init 136 ms; grabCut 512² ×3 iters 123 ms
 - [neurangelo-web](https://github.com/kushsmhsmh/neurangelo-web)
 
 **Package metadata:** npm registry (`npm view <pkg> version license time`), queried 2026-09-30.
+
+---
+
+## Verification notes
+
+Adversarial fact-check, 2026-09-30. Where possible it used sources other than the ones the report cites:
+
+- the npm registry and package tarballs;
+- the Hugging Face model API (`/api/models/<id>` and `/tree/main`);
+- raw GitHub READMEs and LICENSE files;
+- the onnxruntime-web 1.30.0 source;
+- the caniuse raw data;
+- full-text PDFs;
+- local re-runs on the same Apple M3 Pro (12 cores, 18 GB, Node 20.18.0).
+
+### Load-bearing claims
+
+| # | Claim | Verdict | How it was checked |
+|---|---|---|---|
+| 1 | DA-V2 Small is Apache-2.0 with 24.8 M params; Base/Large/Giant are CC-BY-NC-4.0 | **Confirmed** | The Depth-Anything-V2 README license section and params table (97.5 M / 335.3 M / 1.3 B). The HF API tag for `onnx-community/depth-anything-v2-small` is `license:apache-2.0`. |
+| 2 | ONNX sizes 99.1 / 49.6 / 27.3 / 19.1 MB; `depth-estimation` pipeline; disparity; 518 / ×14 | **Confirmed** | HF tree API: 99.06, 49.64, 27.26 (quantized/int8/uint8), 27.40 (q4), 19.13 (q4f16) and 26.08 (bnb4) MB. `preprocessor_config.json`: 518, `keep_aspect_ratio`, `ensure_multiple_of: 14`, resample 3 (bicubic), ImageNet mean and std. The repo's `pipeline_tag` is `depth-estimation`. The arXiv text gives "d = 1/t … normalized to 0∼1" and the affine-invariant loss. |
+| 3 | DA-V2-S WASM: ~2.7 s on 1 thread, ~0.8 s on 4 threads; q8 is no faster | **Confirmed, slightly revised** | Re-run of q8 at 518²: 2.50 s on 1 thread, 0.78 s on 4 threads, 0.27 s session creation. Text now says 2.5–2.7 s. fp32 was not re-run, so "quantization does not speed up WASM" rests on the author's run. |
+| 4 | Threads need `crossOriginIsolated`; default = min(4, hc/2); proxy cannot use WebGPU EP | **Confirmed, nuance added** | ORT docs quote: "The proxy worker cannot work with WebGPU EP." The 1.30.0 source has `Math.min(4, Math.ceil(hc/2))`. Without isolation the fallback to 1 thread is silent; ORT warns only if the app sets `numThreads > 1` (§9.3 edited). |
+| 5 | WebGPU: Chrome/Edge 113+, Safari 26, Firefox 141 (Win) / 145 (macOS Tahoe ARM64); Linux in progress | **Partly outdated, corrected** | web.dev (2025-11-25) confirms the versions. caniuse raw data (2026-09-30) marks Chrome 144+ as supported on Linux ("depends on hardware and drivers"). Firefox is still Windows plus macOS 26 on Apple Silicon only. Added Chrome Android 121+. The caniuse share was **85.72 % + 3.05 % partial**, not 87.35 %. |
+| 6 | RMBG-1.4 non-commercial; RMBG-2.0 CC BY-NC 4.0 and gated; `@imgly/background-removal` 1.7.0 AGPL-3.0 | **Confirmed** | Both HF cards. The HF API shows `gated: auto` for RMBG-2.0. The 1.7.0 tarball `LICENSE.md` is the GNU AGPL v3; npm `license` reads "SEE LICENSE IN LICENSE.md". RMBG-1.4 has 44,075,590 params (44.1 M); RMBG-2.0 has 220.7 M (0.2 B). |
+| 7 | BiRefNet_lite MIT, 224 / 115 MB, fixed 1024², `std::bad_alloc` on WASM; MODNet 0.24 s; RMBG q8 2.05 s (4 threads) | **Confirmed (reproduced)** | Sizes 224.01 / 114.54 MB, `license:mit`. Re-run on 1 and 4 threads gave `ERROR_CODE: 6 … std::bad_alloc`. A 512² input fails with "index: 3 Got: 512 Expected: 1024". MODNet fp32 at 512² took 0.23 s and RMBG-1.4 q8 at 1024² took 2.06 s, both on 4 threads. "WebGPU-only in practice" is still an inference: WebGPU was not tested. |
+| 8 | 3-view sphere hull ratio 1.1193 vs theory 1.1188 | **Confirmed** | Theory worked by hand: (16 − 8√2)/(4π/3) = 1.1188. An independent occupancy count at N = 128 gave 1.1211 (different discretization, within 0.2 %). IoU 0.893 = 1/1.1193, consistent. |
+| 9 | Teddy IoU 0.841 → 0.922; all-view inflation 0.370; 3-view = 5-view | **Unverified (numbers); logic confirmed** | `geom_bench.mjs` was not committed, so the teddy cannot be rebuilt exactly. That 3- and 5-view hulls match is guaranteed by orthographic mirror symmetry. The internal check 1/1.19 = 0.840 matches the hard-hull IoU. |
+| 10 | Label projection 96.6 % vs 93.1 % | **Unverified** | Not reproducible without the script. |
+| 11 | MC t-clamp fixes manifold-3d split (4 → 1 parts, 14 after Taubin); meshopt 179k → 20k non-manifold | **Unverified** | Scripts not committed. The supporting API facts were verified: manifold-3d 3.5.4 `levelSet(sdf, bounds, edgeLength, level?, tolerance?)`, "body-centered cubic grid", "Positive values are inside". three 0.186.1 `MarchingCubes.js` exports `{ MarchingCubes, edgeTable, triTable }`, its constructor has `maxPolyCount = 10000`, and `isolation = 80`. MC memory checked by hand: 3 × 4 B × 256³ = 201 MB. |
+| 12 | Monster Mash: Δh̃ = c, Dirichlet 0 on contours, √ for semi-elliptical, front c / back −c stitched | **Confirmed, notation note added** | Paper full text (ACM TOG 39(6) Art. 214): "When c < 0 the inflation goes toward the viewer…", h0 = √h̃, "facing the viewer is inflated according to the constant c, while the region facing away is inflated by −c", stitched along D_p. The `s·` and `|·|` in the report are our notation. |
+| 13 | Taubin k_PB = 1/λ + 1/μ, 0.01–0.1, CT example k_PB = 0.1, λ = 0.6307 | **Confirmed** | Paper text: "Values from 0.01 to 0.1 produce good results … all the examples … computed with k_PB ≈ 0.1". The Fig. 4 caption (CT scan of a spine): "k_PB = 0.1 and λ = 0.6307". μ = 1/(0.1 − 1/0.6307) = −0.67316. |
+| 14 | TRELLIS.2 4 B / 24 GB / Linux; Hunyuan3D-2.1 10 / 29 GB, EU/UK/KR excluded; TripoSplat 6.47 GB, ~248 s | **Confirmed, one correction** | TRELLIS.2 README: "4B parameters", "at least 24GB", "tested only on Linux", ~3 s at 512³ on H100, MIT. Hunyuan README: "10 GB … 21GB … 29GB", 3.3 B / 2 B; LICENSE line 3 has the territory exclusion. TripoSplat card: "approximately 6.47 GB", 247,901.5 ms, M3 Max, 128 GB, Chrome 150. **Correction:** 10 manifest objects = 5 ONNX graphs plus sidecars, not "10 ONNX graphs". |
+| 15 | transformers.js 4.3.0 (Apache-2.0, 2026-09-16); v4 C++ WebGPU runtime; `ModelRegistry.is_pipeline_cached`; `useWasmCache`; `'transformers-cache'` | **Confirmed** | npm: 4.3.0 published 2026-09-16T04:31Z, Apache-2.0, depends on `onnxruntime-web` 1.31.0-dev.20260914; 4.0.0 published 2026-03-30. Blog (2026-02-09): "WebGPU Runtime, completely rewritten in C++", ModelRegistry with `is_pipeline_cached` and `get_available_dtypes`. env docs: `cacheKey` defaults to `transformers-cache`; `useWasmCache` defaults to true when a cache is available. |
+
+### Other facts checked
+
+**Confirmed unless noted:**
+
+- **npm table (§8).** Every version, date and license matches the registry: three 0.186.1, three-mesh-bvh 0.9.15, manifold-3d 3.5.4, meshoptimizer 1.3.0, @gltf-transform/core 4.5.1, three-bvh-csg 0.0.18, @mediapipe/tasks-vision 1.0.1, @techstark/opencv-js 5.0.0-release.1, comlink 4.4.2, isosurface 1.0.0, surface-nets 1.0.2, flip-threejs 0.2.5, imgly 1.7.0 (2025-07-18), coi-serviceworker 0.1.7. mesh-geodesic's last publish was 2013-09.
+- **Model file sizes and licenses (§3.1, §5.2) via the HF API:**
+  - MODNet 25.89 / 12.98 / 6.63 MB, Apache-2.0.
+  - RMBG-1.4 176.15 / 88.22 / 44.4 MB.
+  - BiRefNet_512x512 940.41 / 473.5 MB.
+  - BEN2-ONNX fp16 219.12 MB, MIT; PramaLLC/BEN2 has 94.6 M params.
+  - SlimSAM encoder q8 8.88 MB + decoder q8 4.9 MB.
+  - DA3-small ONNX 0.64 + 104.7 MB, Apache-2.0, created 2025-11-14; its README holds only license front-matter.
+  - DepthPro 600.27 MB (q4f16) to 3.80 GB, `apple-ascl`.
+  - triposr-onnx 3.35 GB, MIT.
+  - sharp-onnx-webgpu `sharp.int8.bin` 0.66 GB, non-commercial research only.
+  - MagicTouch tflite 6,227,884 bytes.
+- **Benchmark quotes from third-party pages:**
+  - img.ly blog (2024-06-11, M3 Max): 53 s / 2.0 s (16 threads) / ~100 ms; start-up 200–400 ms; QUINT8 rejected.
+  - dev.to ISNet on an M4: WASM (4 threads) 1,960–2,133 ms vs WebGPU 209–359 ms.
+  - MediaPipe guide: Pixel 10 CPU 208.2 ms.
+  - Xenova tweets (2024-03-09 "under 200ms"; 2024-06-14 "~50MB (@ fp16)", "real-time").
+  - transformers.js 3.4.0 `background-removal` pipeline with BEN2-ONNX; npm date 2025-03-07.
+  - depth-estimation-video example: `shader-f16` → fp16, else fp32; size 504.
+- **GitHub README facts:**
+  - AmiGo "Branching meshes are not supported yet".
+  - three-mesh-bvh "500 rays against an 80,000 polygon model at 60fps", SDF, sculpt and voxelize demos.
+  - meshoptimizer flags, remesh `[4..256]`, "closed, with every edge matched by an opposite edge", experimental.
+  - TripoSR "<0.5 s on A100", "6GB VRAM", MIT.
+  - SHARP "less than a second", metric 3DGS.
+  - VGGT-1B-Commercial is gated and the original checkpoint is non-commercial.
+  - Monster Mash `src/` is Apache-2.0.
+  - geometry-processing-js: Eigen → asm.js, MIT.
+  - neurangelo-web: transformers.js WebGPU → WASM.
+  - SpawnDev.ILGPU.ML TripoSR "not wired", ~840 MB fp16.
+  - coi-serviceworker is MIT.
+- **Papers:**
+  - Teddy quotes (spine elevation, quarter ovals, "copied to the other side").
+  - Geodesics in Heat: t* = A_M/|F|, "c = 5 works remarkably well".
+- **MDN storage quotas:** Chrome 60 %; Firefox best-effort min(10 %, 10 GiB); Safari ~60 % for browser apps; 7-day rule.
+- **Hand-checked formulas:**
+  - voxels per round: 0.8·128/40 = 2.56; N = 96 → 1.92; N = 192 → 3.84.
+  - N ≈ 8/(0.8·0.2/3) = 150; voxel size 10/128 = 0.078 in and 10/160 = 0.0625 in.
+  - Poisson disc and strip profiles: c = 4 gives a hemisphere and a √2-too-thick tube.
+  - Local-thickness formula: d(2R − d) = R² − r² for a disc and a² − s² for a strip.
+  - Perspective: 1/(1 − 0.075) = 1.081 and 1/1.075 = 0.930, so "±7.5 %" is a fair approximation of +8.1 % / −7.0 %.
+  - Performance-budget column sums: 0.23 / 0.54 / 1.40 / 3.17 s.
+  - L1–L3 download ranges.
+  - SlimSAM 8.88 + 4.9 ≈ 14 MB.
+  - manifold `levelSet` edge 2.2/128 = 0.0172.
+  - "18 parts" = 1 + 17 slivers.
+
+### What changed
+
+1. **WebGPU on Linux:** Chrome 144+ is now supported (caniuse). Firefox gaps restated. Chrome Android 121 added.
+2. **caniuse share:** 87.35 % → 85.72 % full + 3.05 % partial.
+3. **TripoSplat:** "10 ONNX graphs" → 10 manifest objects (5 graphs + external-data sidecars); "Chrome only" → measured on Chrome 150.
+4. **manifold-3d WASM:** 532 KB → 541,470 bytes (≈529 KiB).
+5. **0fps surface nets:** "half the triangles, twice as fast" → half the *facets* (quads, so about the same triangle count); speed comparable to about 2.2× faster.
+6. **ORT behaviour without isolation:** "warns and falls back" → silent fallback when unset; warns only when the app sets `numThreads > 1`.
+7. **DA-V2-S single-thread time:** 2.70 s → 2.5–2.7 s (re-run gave 2.50 s).
+8. **Monster Mash formula:** noted that the paper writes h0 = √h̃.
+9. **SF3D VRAM:** noted the README (6 GB) vs blog (7 GB) discrepancy.
+10. **`useWasmCache` default:** added (true when a cache is available).
+11. **Unverified tags:** added to the geom_bench-only numbers (teddy IoUs, label accuracy, MC clamp and meshopt manifoldness).
+
+### Remaining doubts
+
+- **No synthetic geometry numbers re-run.** Every geometry number from `geom_bench.mjs`, `carve_fast.mjs`, `depth_fusion.mjs`, `parts.mjs` and `diag3/diag4.mjs` depends on uncommitted scripts. That covers the teddy IoUs, κ sweeps, label accuracy, MC degenerate counts, Taubin and meshopt results, part-decomposition counts, and the OpenCV.js timings and bundle size. Only the sphere-hull ratio was independently reproduced. Recommend committing these scripts under `bench/` so the numbers can be regenerated.
+- **Not re-measured:** fp32 DA-V2-S timing, the SlimSAM encoder at 1.05 s, and the 364² run.
+- **"WebGPU-only in practice"** for BiRefNet_lite and BEN2 is an inference; WebGPU was not testable here (Node).
+- **Not independently re-fetched:** the Laurentini quote (Semantic Scholar returned 403/429), the Franco & Boyer occupancy-grid framing (page title only), the Waechter et al. data term, the CGAL "highly elongated triangles" wording, and the Vite `server.headers` wording. All are plausible and match prior knowledge, but treat them as (unverified) in this pass.
+- **MagicTouch weights license:** still unresolved (open question 5). The guide lists Int8 quantization while the linked file is the float32 build.
