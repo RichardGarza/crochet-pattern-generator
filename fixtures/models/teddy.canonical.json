@@ -1,0 +1,331 @@
+{
+  "schema": "crochet-model",
+  "version": "1.0",
+  "revision": 0,
+  "units": "in",
+  "axes": {
+    "up": "+Y",
+    "front": "+Z",
+    "left": "+X"
+  },
+  "name": "Imported model",
+  "finishedSize": {
+    "height": 9.878905
+  },
+  "palette": [
+    {
+      "id": "caramel_yarn",
+      "hex": "#B07A4A",
+      "name": "caramel_yarn"
+    },
+    {
+      "id": "cream_yarn",
+      "hex": "#F2E3C6",
+      "name": "cream_yarn"
+    },
+    {
+      "id": "dark_brown_yarn",
+      "hex": "#3B2A20",
+      "name": "dark_brown_yarn"
+    },
+    {
+      "id": "black_safety_eye",
+      "hex": "#111111",
+      "name": "black_safety_eye"
+    }
+  ],
+  "parts": [
+    {
+      "id": "body",
+      "label": "Body",
+      "type": "ellipsoid",
+      "dims": {
+        "rx": 2.1,
+        "ry": 2.6,
+        "rz": 1.9
+      },
+      "position": [0, 2.678905, 0],
+      "rotationDeg": [0, 0, 0],
+      "color": "caramel_yarn"
+    },
+    {
+      "id": "head",
+      "label": "Head",
+      "type": "ellipsoid",
+      "dims": {
+        "rx": 2.4,
+        "ry": 2.15,
+        "rz": 2.2
+      },
+      "position": [0, 7.278905, 0.1],
+      "rotationDeg": [0, 0, 0],
+      "color": "caramel_yarn",
+      "attach": {
+        "to": "body",
+        "method": "sewn"
+      }
+    },
+    {
+      "id": "muzzle",
+      "label": "Muzzle",
+      "type": "ellipsoid",
+      "dims": {
+        "rx": 1,
+        "ry": 0.75,
+        "rz": 0.6
+      },
+      "position": [0, 6.678905, 1.9],
+      "rotationDeg": [0, 0, 0],
+      "color": "cream_yarn",
+      "attach": {
+        "to": "head",
+        "method": "sewn"
+      }
+    },
+    {
+      "id": "nose",
+      "label": "Nose",
+      "type": "ellipsoid",
+      "dims": {
+        "rx": 0.32,
+        "ry": 0.22,
+        "rz": 0.18
+      },
+      "position": [0, 6.978905, 2.42],
+      "rotationDeg": [0, 0, 0],
+      "color": "dark_brown_yarn",
+      "attach": {
+        "to": "muzzle",
+        "method": "sewn"
+      }
+    },
+    {
+      "id": "eye_l",
+      "label": "Left Eye",
+      "type": "sphere",
+      "dims": {
+        "r": 0.2
+      },
+      "position": [0.78, 7.528905, 2.02],
+      "rotationDeg": [0, 0, 0],
+      "color": "black_safety_eye",
+      "attach": {
+        "to": "head",
+        "method": "sewn"
+      },
+      "crochet": {
+        "make": "safety_eye"
+      }
+    },
+    {
+      "id": "eye_r",
+      "label": "Right Eye",
+      "type": "sphere",
+      "dims": {
+        "r": 0.2
+      },
+      "position": [-0.78, 7.528905, 2.02],
+      "rotationDeg": [0, 0, 0],
+      "color": "black_safety_eye",
+      "attach": {
+        "to": "head",
+        "method": "sewn"
+      },
+      "mirrorOf": "eye_l",
+      "crochet": {
+        "make": "safety_eye"
+      }
+    },
+    {
+      "id": "ear_l",
+      "label": "Left Ear",
+      "type": "ellipsoid",
+      "dims": {
+        "rx": 0.85,
+        "ry": 0.85,
+        "rz": 0.35
+      },
+      "position": [1.6, 9.028905, -0.1],
+      "rotationDeg": [0, 0, -28],
+      "color": "caramel_yarn",
+      "attach": {
+        "to": "head",
+        "method": "sewn"
+      }
+    },
+    {
+      "id": "ear_l_inner",
+      "label": "Left Ear Inner",
+      "type": "ellipsoid",
+      "dims": {
+        "rx": 0.55,
+        "ry": 0.55,
+        "rz": 0.12
+      },
+      "position": [1.576526, 8.984758, 0.16],
+      "rotationDeg": [0, 0, -28],
+      "color": "cream_yarn",
+      "attach": {
+        "to": "ear_l",
+        "method": "sewn"
+      }
+    },
+    {
+      "id": "ear_r",
+      "label": "Right Ear",
+      "type": "ellipsoid",
+      "dims": {
+        "rx": 0.85,
+        "ry": 0.85,
+        "rz": 0.35
+      },
+      "position": [-1.6, 9.028905, -0.1],
+      "rotationDeg": [0, 0, 28],
+      "color": "caramel_yarn",
+      "attach": {
+        "to": "head",
+        "method": "sewn"
+      },
+      "mirrorOf": "ear_l"
+    },
+    {
+      "id": "ear_r_inner",
+      "label": "Right Ear Inner",
+      "type": "ellipsoid",
+      "dims": {
+        "rx": 0.55,
+        "ry": 0.55,
+        "rz": 0.12
+      },
+      "position": [-1.576526, 8.984758, 0.16],
+      "rotationDeg": [0, 0, 28],
+      "color": "cream_yarn",
+      "attach": {
+        "to": "ear_r",
+        "method": "sewn"
+      },
+      "mirrorOf": "ear_l_inner"
+    },
+    {
+      "id": "arm_l",
+      "label": "Left Arm",
+      "type": "capsule",
+      "dims": {
+        "r": 0.55,
+        "length": 3
+      },
+      "position": [2, 3.578905, 0.55],
+      "rotationDeg": [-28, 0, 22],
+      "color": "caramel_yarn",
+      "attach": {
+        "to": "body",
+        "method": "sewn"
+      }
+    },
+    {
+      "id": "arm_r",
+      "label": "Right Arm",
+      "type": "capsule",
+      "dims": {
+        "r": 0.55,
+        "length": 3
+      },
+      "position": [-2, 3.578905, 0.55],
+      "rotationDeg": [-28, 0, -22],
+      "color": "caramel_yarn",
+      "attach": {
+        "to": "body",
+        "method": "sewn"
+      },
+      "mirrorOf": "arm_l"
+    },
+    {
+      "id": "leg_l",
+      "label": "Left Leg",
+      "type": "capsule",
+      "dims": {
+        "r": 0.75,
+        "length": 3.1
+      },
+      "position": [1.15, 0.858905, 1.25],
+      "rotationDeg": [82, 0, -12],
+      "color": "caramel_yarn",
+      "attach": {
+        "to": "body",
+        "method": "sewn"
+      }
+    },
+    {
+      "id": "foot_pad_l",
+      "label": "Left Foot Pad",
+      "type": "ellipsoid",
+      "dims": {
+        "rx": 0.5,
+        "ry": 0.18,
+        "rz": 0.5
+      },
+      "position": [1.441076, 1.04949, 2.60608],
+      "rotationDeg": [82, 0, -12],
+      "color": "cream_yarn",
+      "attach": {
+        "to": "leg_l",
+        "method": "sewn"
+      }
+    },
+    {
+      "id": "leg_r",
+      "label": "Right Leg",
+      "type": "capsule",
+      "dims": {
+        "r": 0.75,
+        "length": 3.1
+      },
+      "position": [-1.15, 0.858905, 1.25],
+      "rotationDeg": [82, 0, 12],
+      "color": "caramel_yarn",
+      "attach": {
+        "to": "body",
+        "method": "sewn"
+      },
+      "mirrorOf": "leg_l"
+    },
+    {
+      "id": "foot_pad_r",
+      "label": "Right Foot Pad",
+      "type": "ellipsoid",
+      "dims": {
+        "rx": 0.5,
+        "ry": 0.18,
+        "rz": 0.5
+      },
+      "position": [-1.441076, 1.04949, 2.60608],
+      "rotationDeg": [82, 0, 12],
+      "color": "cream_yarn",
+      "attach": {
+        "to": "leg_r",
+        "method": "sewn"
+      },
+      "mirrorOf": "foot_pad_l"
+    },
+    {
+      "id": "tail",
+      "label": "Tail",
+      "type": "sphere",
+      "dims": {
+        "r": 0.45
+      },
+      "position": [0, 1.478905, -1.8],
+      "rotationDeg": [0, 0, 0],
+      "color": "caramel_yarn",
+      "attach": {
+        "to": "body",
+        "method": "sewn"
+      }
+    }
+  ],
+  "assumptions": ["dimensions are radii (rx, ry, rz) for ellipsoids/spheres; capsule length is the straight section between hemispherical caps. Child positions/rotations are relative to the parent."],
+  "source": {
+    "tool": "claude-design",
+    "stage": "refined"
+  }
+}

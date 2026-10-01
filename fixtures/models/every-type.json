@@ -1,0 +1,670 @@
+{
+  "schema": "crochet-model",
+  "version": "1.0",
+  "revision": 1,
+  "units": "in",
+  "axes": {
+    "up": "+Y",
+    "front": "+Z",
+    "left": "+X"
+  },
+  "name": "Every part type",
+  "description": "A fixture: one part of every type, every region kind and every feature kind.",
+  "category": "creature",
+  "style": "minimal",
+  "audience": "adult",
+  "finishedSize": {
+    "height": 6.677923,
+    "width": 5.418847,
+    "depth": 4.539553
+  },
+  "pose": "standing",
+  "flatBase": true,
+  "yarn": {
+    "weightCYC": 4,
+    "hookMm": 3.5,
+    "stsPerIn": 5.1,
+    "fiber": "acrylic"
+  },
+  "palette": [
+    {
+      "id": "c1",
+      "hex": "#C8A27A",
+      "name": "tan",
+      "role": "main"
+    },
+    {
+      "id": "c2",
+      "hex": "#F4EBDD",
+      "name": "cream",
+      "role": "accent"
+    },
+    {
+      "id": "c3",
+      "hex": "#F2A7B5",
+      "name": "pink",
+      "role": "accent"
+    },
+    {
+      "id": "c4",
+      "hex": "#222222",
+      "name": "black",
+      "role": "detail"
+    },
+    {
+      "id": "c5",
+      "hex": "#E0B13C",
+      "name": "gold"
+    }
+  ],
+  "parts": [
+    {
+      "id": "body",
+      "label": "Body",
+      "type": "lathe",
+      "dims": {
+        "profile": [
+          [0, 0],
+          [1, 0],
+          [1.45, 0.66],
+          [1.5, 1.26],
+          [1.23, 2.1],
+          [0.82, 2.76],
+          [0, 3]
+        ],
+        "sharp": [1]
+      },
+      "position": [0, 1.111352, 0],
+      "color": "c1",
+      "regions": [
+        {
+          "kind": "band",
+          "from": 0,
+          "to": 0.15,
+          "color": "c2"
+        },
+        {
+          "kind": "stripes",
+          "from": 0.2,
+          "to": 0.5,
+          "colors": ["c2", "c3"],
+          "widthIn": 0.25
+        },
+        {
+          "kind": "patch",
+          "azimuthDeg": 0,
+          "spanDeg": 90,
+          "from": 0.5,
+          "to": 0.8,
+          "color": "c4"
+        },
+        {
+          "kind": "spot",
+          "azimuthDeg": 120,
+          "elevationDeg": 10,
+          "radiusIn": 0.3,
+          "color": "c5"
+        },
+        {
+          "kind": "pattern",
+          "pattern": "spots",
+          "from": 0.8,
+          "to": 1,
+          "colors": ["c3"],
+          "scaleIn": 0.4,
+          "coverage": 0.3
+        }
+      ],
+      "stuffing": "firm",
+      "notes": "The root. Its position is the axis point at profile y = 0.",
+      "x-note": "extension keys on parts are kept"
+    },
+    {
+      "id": "head",
+      "label": "Head",
+      "type": "sphere",
+      "dims": {
+        "r": 1
+      },
+      "position": [0, 5.011352, 0],
+      "color": "c1",
+      "attach": {
+        "to": "body",
+        "method": "sewn",
+        "openEnd": "none"
+      },
+      "stuffing": "firm",
+      "paint": {
+        "kind": "uv64",
+        "data": "/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////wICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////wP/AwP//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////wP/AwP//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////w=="
+      }
+    },
+    {
+      "id": "snout",
+      "label": "Snout",
+      "type": "cone",
+      "dims": {
+        "r": 0.35,
+        "h": 0.6
+      },
+      "position": [0, 4.774847, 1.182523],
+      "rotationDeg": [90, 0, 0],
+      "color": "c2",
+      "attach": {
+        "to": "head",
+        "method": "sewn",
+        "openEnd": "bottom"
+      },
+      "stuffing": "light",
+      "crochet": {
+        "make": "piece",
+        "start": "top",
+        "axis": "y",
+        "style": "exact",
+        "seamAzimuthDeg": 180
+      }
+    },
+    {
+      "id": "arm_l",
+      "label": "Left arm",
+      "type": "capsule",
+      "dims": {
+        "r": 0.3,
+        "length": 1.6
+      },
+      "position": [1.939577, 3.290204, 0],
+      "rotationDeg": [0, 0, -70],
+      "color": "c1",
+      "attach": {
+        "to": "body",
+        "method": "sewn",
+        "openEnd": "top"
+      },
+      "stuffing": "light"
+    },
+    {
+      "id": "arm_r",
+      "label": "Right arm",
+      "type": "capsule",
+      "dims": {
+        "r": 0.3,
+        "length": 1.6
+      },
+      "position": [-1.939577, 3.290204, 0],
+      "rotationDeg": [0, 0, 70],
+      "color": "c1",
+      "attach": {
+        "to": "body",
+        "method": "sewn",
+        "openEnd": "top"
+      },
+      "mirrorOf": "arm_l",
+      "stuffing": "light"
+    },
+    {
+      "id": "leg_l",
+      "label": "Left leg",
+      "type": "cylinder",
+      "dims": {
+        "rTop": 0.4,
+        "rBottom": 0.5,
+        "h": 1.2,
+        "open": "top"
+      },
+      "position": [1.005676, 0.6, 0.301703],
+      "color": "c3",
+      "attach": {
+        "to": "body",
+        "method": "crochet-in-place",
+        "openEnd": "top"
+      },
+      "stuffing": "medium",
+      "x-tag": {
+        "order": 1,
+        "labels": ["left"]
+      }
+    },
+    {
+      "id": "leg_r",
+      "label": "Right leg",
+      "type": "cylinder",
+      "dims": {
+        "rTop": 0.4,
+        "rBottom": 0.5,
+        "h": 1.2,
+        "open": "top"
+      },
+      "position": [-1.005676, 0.6, 0.301703],
+      "color": "c3",
+      "attach": {
+        "to": "body",
+        "method": "crochet-in-place",
+        "openEnd": "top"
+      },
+      "mirrorOf": "leg_l",
+      "stuffing": "medium"
+    },
+    {
+      "id": "belly",
+      "label": "Belly",
+      "type": "ellipsoid",
+      "dims": {
+        "rx": 0.7,
+        "ry": 0.8,
+        "rz": 0.3
+      },
+      "position": [0, 2.444312, 1.670396],
+      "color": "c2",
+      "attach": {
+        "to": "body",
+        "method": "worked-from"
+      },
+      "stuffing": "none",
+      "flatten": 0.5,
+      "crochet": {
+        "make": "applique",
+        "start": "auto",
+        "axis": "z",
+        "style": "classic"
+      }
+    },
+    {
+      "id": "halo",
+      "label": "Halo",
+      "type": "torus",
+      "dims": {
+        "R": 0.8,
+        "r": 0.12
+      },
+      "position": [0, 5.911352, 0],
+      "rotationDeg": [90, 0, 0],
+      "color": "c5",
+      "attach": {
+        "to": "head",
+        "method": "glued"
+      },
+      "stuffing": "none",
+      "crochet": {
+        "make": "skip"
+      }
+    },
+    {
+      "id": "tail",
+      "label": "Tail",
+      "type": "torus",
+      "dims": {
+        "R": 0.5,
+        "r": 0.15,
+        "arcDeg": 200
+      },
+      "position": [0, 1.821762, -1.919157],
+      "rotationDeg": [0, 90, 0],
+      "color": "c3",
+      "attach": {
+        "to": "body",
+        "method": "sewn"
+      },
+      "stuffing": "light",
+      "crochet": {
+        "make": "auto",
+        "start": "bottom",
+        "axis": "auto"
+      }
+    },
+    {
+      "id": "pack",
+      "label": "Backpack",
+      "type": "box",
+      "dims": {
+        "w": 1.2,
+        "h": 1,
+        "d": 0.5
+      },
+      "position": [0, 3.046933, -1.451937],
+      "color": "c4",
+      "attach": {
+        "to": "body",
+        "method": "sewn"
+      },
+      "stuffing": "medium",
+      "crochet": {
+        "make": "piece",
+        "start": "top",
+        "axis": "x",
+        "style": "classic"
+      }
+    },
+    {
+      "id": "ear_l",
+      "label": "Left ear",
+      "type": "flat",
+      "dims": {
+        "shape": "teardrop",
+        "w": 0.6,
+        "h": 0.9,
+        "thickness": 0.2
+      },
+      "position": [0.656184, 6.204413, 0],
+      "rotationDeg": [0, 0, -25],
+      "color": "c1",
+      "regions": [
+        {
+          "kind": "band",
+          "from": 0.2,
+          "to": 0.8,
+          "color": "c4"
+        }
+      ],
+      "attach": {
+        "to": "head",
+        "method": "sewn",
+        "openEnd": "bottom"
+      },
+      "stuffing": "none",
+      "flatten": 1
+    },
+    {
+      "id": "ear_r",
+      "label": "Right ear",
+      "type": "flat",
+      "dims": {
+        "shape": "teardrop",
+        "w": 0.6,
+        "h": 0.9,
+        "thickness": 0.2
+      },
+      "position": [-0.656184, 6.204413, 0],
+      "rotationDeg": [0, 0, 25],
+      "color": "c1",
+      "regions": [
+        {
+          "kind": "band",
+          "from": 0.2,
+          "to": 0.8,
+          "color": "c4"
+        }
+      ],
+      "attach": {
+        "to": "head",
+        "method": "sewn",
+        "openEnd": "bottom"
+      },
+      "mirrorOf": "ear_l",
+      "stuffing": "none",
+      "flatten": 1
+    },
+    {
+      "id": "crest",
+      "label": "Crest",
+      "type": "flat",
+      "dims": {
+        "shape": "triangle",
+        "w": 0.5,
+        "h": 0.6,
+        "thickness": 0.15
+      },
+      "position": [0, 6.097265, -0.651548],
+      "rotationDeg": [0, 90, 0],
+      "color": "c5",
+      "attach": {
+        "to": "head",
+        "method": "sewn"
+      }
+    },
+    {
+      "id": "tag",
+      "label": "Tag",
+      "type": "flat",
+      "dims": {
+        "shape": "rect",
+        "w": 0.5,
+        "h": 0.3,
+        "thickness": 0.06
+      },
+      "position": [0, 3.046933, -1.631937],
+      "color": "c2",
+      "attach": {
+        "to": "pack",
+        "method": "none"
+      },
+      "crochet": {
+        "make": "embroidery"
+      }
+    },
+    {
+      "id": "star",
+      "label": "Star",
+      "type": "flat",
+      "dims": {
+        "shape": "polygon",
+        "w": 0.5,
+        "h": 0.48,
+        "thickness": 0.08,
+        "points": [
+          [0, 0.25],
+          [0.07, 0.08],
+          [0.25, 0.08],
+          [0.11, -0.04],
+          [0.16, -0.23],
+          [0, -0.12],
+          [-0.16, -0.23],
+          [-0.11, -0.04],
+          [-0.25, 0.08],
+          [-0.07, 0.08]
+        ]
+      },
+      "position": [0, 2.444312, 1.910396],
+      "color": "c5",
+      "attach": {
+        "to": "belly",
+        "method": "sewn"
+      },
+      "crochet": {
+        "make": "region"
+      }
+    },
+    {
+      "id": "button",
+      "label": "Button",
+      "type": "flat",
+      "dims": {
+        "shape": "circle",
+        "w": 0.3,
+        "h": 0.3,
+        "thickness": 0.08
+      },
+      "position": [0.965976, 2.868945, 0.837179],
+      "rotationDeg": [0, 49, 0],
+      "color": "c4",
+      "attach": {
+        "to": "body",
+        "method": "sewn"
+      },
+      "crochet": {
+        "make": "safety_eye"
+      }
+    },
+    {
+      "id": "badge",
+      "label": "Badge",
+      "type": "flat",
+      "dims": {
+        "shape": "oval",
+        "w": 0.4,
+        "h": 0.25,
+        "thickness": 0.08
+      },
+      "position": [-0.965976, 2.868945, 0.837179],
+      "rotationDeg": [0, -49, 0],
+      "color": "c3",
+      "attach": {
+        "to": "body",
+        "method": "sewn"
+      }
+    },
+    {
+      "id": "blob",
+      "label": "Blob",
+      "type": "mesh",
+      "dims": {
+        "meshRef": "every-type-blob",
+        "bboxIn": [0.8, 0.6, 0.7]
+      },
+      "position": [-1.716865, 1.838763, 0],
+      "color": "c4",
+      "attach": {
+        "to": "body",
+        "method": "sewn"
+      },
+      "stuffing": "medium",
+      "crochet": {
+        "make": "piece",
+        "seed": [0, 0.3, 0]
+      }
+    }
+  ],
+  "features": [
+    {
+      "id": "eye_l",
+      "kind": "safety_eye",
+      "on": "head",
+      "azimuthDeg": 30,
+      "elevationDeg": 10,
+      "sizeMm": 9,
+      "color": "c4",
+      "mirror": true
+    },
+    {
+      "id": "eye_shine",
+      "kind": "embroidered_eye",
+      "on": "head",
+      "azimuthDeg": 28,
+      "elevationDeg": 14,
+      "sizeIn": 0.08,
+      "color": "c2",
+      "mirror": true
+    },
+    {
+      "id": "eye_patch",
+      "kind": "felt",
+      "on": "head",
+      "azimuthDeg": -30,
+      "elevationDeg": 10,
+      "sizeIn": 0.5,
+      "color": "c2"
+    },
+    {
+      "id": "nose",
+      "kind": "nose",
+      "on": "snout",
+      "azimuthDeg": 0,
+      "elevationDeg": 90,
+      "sizeIn": 0.15,
+      "color": "c4"
+    },
+    {
+      "id": "mouth",
+      "kind": "mouth",
+      "on": "head",
+      "azimuthDeg": 0,
+      "elevationDeg": -35,
+      "color": "c4",
+      "path": [
+        [-10, -32],
+        [0, -38],
+        [10, -32]
+      ]
+    },
+    {
+      "id": "cheek_l",
+      "kind": "cheek",
+      "on": "head",
+      "azimuthDeg": 50,
+      "elevationDeg": -15,
+      "sizeIn": 0.3,
+      "color": "c3",
+      "mirror": true
+    },
+    {
+      "id": "brow_l",
+      "kind": "brow",
+      "on": "head",
+      "azimuthDeg": 30,
+      "elevationDeg": 25,
+      "color": "c4",
+      "path": [
+        [22, 24],
+        [38, 27]
+      ],
+      "mirror": true
+    },
+    {
+      "id": "whiskers_l",
+      "kind": "whiskers",
+      "on": "head",
+      "azimuthDeg": 40,
+      "elevationDeg": -20,
+      "color": "c2",
+      "path": [
+        [35, -20],
+        [60, -15]
+      ],
+      "mirror": true
+    },
+    {
+      "id": "seam",
+      "kind": "line",
+      "on": "body",
+      "azimuthDeg": 180,
+      "elevationDeg": 0,
+      "color": "c4",
+      "path": [
+        [180, -40],
+        [180, 40]
+      ]
+    },
+    {
+      "id": "heart",
+      "kind": "applique",
+      "on": "body",
+      "azimuthDeg": -25,
+      "elevationDeg": 20,
+      "sizeIn": 0.4,
+      "color": "c3",
+      "mirror": false
+    }
+  ],
+  "assembly": [
+    {
+      "order": 1,
+      "part": "head",
+      "to": "body",
+      "text": "Sew the head to the top of the body, centered."
+    },
+    {
+      "order": 2,
+      "part": "ear_l",
+      "to": "head",
+      "text": "Sew the ears to the top of the head."
+    },
+    {
+      "order": 3,
+      "part": "halo",
+      "text": "Glue the halo above the head."
+    }
+  ],
+  "assumptions": ["This model exists to exercise code paths; it is not a toy anyone should make."],
+  "source": {
+    "tool": "crochet-pattern-generator",
+    "stage": "seed",
+    "views": ["front", "left"],
+    "createdAt": "2026-10-01T00:00:00Z",
+    "promptVersion": "prompt-v1",
+    "builderVersion": "builder-v1"
+  },
+  "x-cpg": {
+    "project": "every-type",
+    "seedRev": 0
+  },
+  "x-note": "extension keys on the model are kept"
+}
