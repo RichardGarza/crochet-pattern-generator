@@ -308,6 +308,49 @@ describe('sameShapeWithin: every part type', () => {
   });
 });
 
+describe('sameShapeWithin: dimensions that are missing or not numbers', () => {
+  const p = (type: Part['type'], dims: unknown): Part => ({ ...base, id: 'x', type, dims }) as Part;
+  const cases: [string, Part, Part][] = [
+    ['no dims at all', p('sphere', {}), p('sphere', {})],
+    ['NaN', p('sphere', { r: Number.NaN }), p('sphere', { r: Number.NaN })],
+    ['a missing optional-looking dim', p('capsule', { r: 1 }), p('capsule', { r: 1, length: 2 })],
+    ['a lathe without a profile', p('lathe', {}), p('lathe', { profile: [[0, 0], [1, 1]] })],
+    ['a lathe whose profile is not a list of points', p('lathe', { profile: [1, 2, 3] }), p('lathe', { profile: [1, 2, 3] })],
+    ['an empty profile', p('lathe', { profile: [] }), p('lathe', { profile: [] })],
+    ['a profile with NaN', p('lathe', { profile: [[0, 0], [Number.NaN, 1]] }), p('lathe', { profile: [[0, 0], [Number.NaN, 1]] })],
+    ['a polygon whose points are not points', p('flat', { shape: 'polygon', w: 1, h: 1, thickness: 0.1, points: [1, 2] }), p('flat', { shape: 'polygon', w: 1, h: 1, thickness: 0.1, points: [1, 2] })],
+    ['a mesh without a bounding box', p('mesh', { meshRef: 'm' }), p('mesh', { meshRef: 'm' })],
+  ];
+  for (const [label, prev, next] of cases) {
+    it(`${label}: no match, and no exception`, () => {
+      expect(sameShapeWithin(prev, next)).toBe(false);
+      expect(sameShapeWithin(next, prev)).toBe(false);
+      // and carryOver keeps the paint in the previous revision instead of throwing
+      const { report } = carryOver(model([{ ...prev, paint: STRIPES } as Part]), model([next]));
+      expect(report.paintDropped).toEqual(['x']);
+    });
+  }
+
+  it('compares degenerate but well-formed lathes without dividing by zero', () => {
+    const disc: [number, number][] = [
+      [0, 0],
+      [1, 0],
+      [0, 0],
+    ]; // zero height
+    expect(sameShapeWithin(lathe('a', disc), lathe('a', disc))).toBe(true);
+    expect(sameShapeWithin(lathe('a', disc), lathe('a', [[0, 0], [1.5, 0], [0, 0]]))).toBe(false);
+    expect(sameShapeWithin(lathe('a', [[1, 2]]), lathe('a', [[1, 2]]))).toBe(true); // a single point
+    expect(sameShapeWithin(lathe('a', [[1, 2]]), lathe('a', [[2, 2]]))).toBe(false);
+    const zigzag: [number, number][] = [
+      [0, 0],
+      [1, 1],
+      [0.5, 0.5],
+      [0, 2],
+    ]; // y goes back: not a valid profile, but still comparable with itself
+    expect(sameShapeWithin(lathe('a', zigzag), lathe('a', zigzag))).toBe(true);
+  });
+});
+
 describe('carryOver: paint follows its colors when the palette changed', () => {
   // prev uses palette index 0 (c1 tan) and 2 (c3 pink)
   const prev = model([sphere('body', 2, { paint: STRIPES })]);

@@ -45,6 +45,11 @@ export function emptyCarryReport(): CarryReport {
 
 const within = (prev: number, next: number, tolerance: number): boolean => Math.abs(next - prev) <= tolerance * Math.abs(prev) + EPS;
 
+/** A list of [number, number] points: what a lathe profile and a polygon outline must be to be compared. */
+function isPointList(value: unknown): value is readonly (readonly [number, number])[] {
+  return Array.isArray(value) && value.every((p) => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+}
+
 /** The largest radius of a lathe profile at height `y` (a profile may hold several points at one height). */
 function radiusAt(profile: readonly (readonly [number, number])[], y: number): number {
   let best = Number.NEGATIVE_INFINITY;
@@ -66,7 +71,7 @@ function radiusAt(profile: readonly (readonly [number, number])[], y: number): n
  * number of points may differ (a re-imported body rarely keeps its points).
  */
 function profilesWithin(prev: readonly (readonly [number, number])[], next: readonly (readonly [number, number])[], tolerance: number): boolean {
-  if (prev.length === 0 || next.length === 0) return false;
+  if (!isPointList(prev) || !isPointList(next) || prev.length === 0 || next.length === 0) return false;
   const span = (p: readonly (readonly [number, number])[]) => ({
     y0: p[0][1],
     height: p[p.length - 1][1] - p[0][1],
@@ -87,7 +92,7 @@ function profilesWithin(prev: readonly (readonly [number, number])[], next: read
 
 function pointsWithin(prev: readonly (readonly [number, number])[] | undefined, next: readonly (readonly [number, number])[] | undefined, scale: number, tolerance: number): boolean {
   if (prev === undefined || next === undefined) return prev === next;
-  if (prev.length !== next.length) return false;
+  if (!isPointList(prev) || !isPointList(next) || prev.length !== next.length) return false;
   return prev.every(([x, y], i) => Math.abs(next[i][0] - x) <= tolerance * scale + EPS && Math.abs(next[i][1] - y) <= tolerance * scale + EPS);
 }
 
@@ -96,7 +101,8 @@ function pointsWithin(prev: readonly (readonly [number, number])[] | undefined, 
  * `tolerance` (10%) of the previous value. Position and rotation do not matter (paint lives in the part's own
  * frame). Details per type: a cylinder's `open` and a lathe's `sharp` are not dimensions; a torus without
  * `arcDeg` is a full ring (360°); lathes are compared as curves (`profilesWithin`); a flat part must keep its
- * `shape`, and a polygon its number of points; a mesh part is compared by its bounding box.
+ * `shape`, and a polygon its number of points; a mesh part is compared by its bounding box. Dimensions that
+ * are missing or not finite numbers never match: the answer is then false, not an exception.
  */
 export function sameShapeWithin(prev: Part, next: Part, tolerance: number = PAINT_TOLERANCE): boolean {
   const near = (a: number, b: number): boolean => within(a, b, tolerance);
@@ -127,13 +133,13 @@ export function sameShapeWithin(prev: Part, next: Part, tolerance: number = PAIN
     case 'box':
       return next.type === 'box' && near(prev.dims.w, next.dims.w) && near(prev.dims.h, next.dims.h) && near(prev.dims.d, next.dims.d);
     case 'mesh':
-      return next.type === 'mesh' && prev.dims.bboxIn.every((v, i) => near(v, next.dims.bboxIn[i]));
+      return next.type === 'mesh' && Array.isArray(prev.dims.bboxIn) && Array.isArray(next.dims.bboxIn) && prev.dims.bboxIn.every((v, i) => near(v, next.dims.bboxIn[i]));
   }
 }
 
 // ---- palette remapping
 
-const sameHex = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+const sameHex = (a: unknown, b: unknown): boolean => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
 
 /** Maps colors of the previous palette onto `palette` (the new model's, extended as needed). */
 function createPaletteMap(prevPalette: readonly PaletteColor[], nextPalette: readonly PaletteColor[]) {
