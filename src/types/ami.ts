@@ -36,7 +36,7 @@ export interface RingGeom {
   center: Vec3;
   normal: Vec3;
   radius: number;
-  polyline?: Float32Array;
+  polyline?: Float32Array<ArrayBuffer>;
 }
 
 export interface RoundsResult {
@@ -50,7 +50,7 @@ export interface RoundsResult {
   finish: PieceFinish['kind'];
   ovalS?: number[];
   rings: RingGeom[];
-  stitchLabels: Uint8Array[];
+  stitchLabels: Uint8Array<ArrayBuffer>[];
 }
 
 export interface AmiRequest {
@@ -67,7 +67,7 @@ export interface AmiResult {
   plan: Record<string, MakeAs>;
   frames: Record<string, PieceFrame>;
   rounds: Record<string, RoundsResult>;
-  ghosts: Record<string, Float32Array>;
+  ghosts: Record<string, Float32Array<ArrayBuffer>>;
   pattern: PatternDoc;
   issues: Issue[];
   hash: string;

@@ -11,21 +11,21 @@ export type { Vec3 };
 export interface RgbaImage {
   w: number;
   h: number;
-  data: Uint8ClampedArray;
+  data: Uint8ClampedArray<ArrayBuffer>;
 }
 
 export interface ColoredMesh {
-  positions: Float32Array;
-  indices: Uint32Array;
+  positions: Float32Array<ArrayBuffer>;
+  indices: Uint32Array<ArrayBuffer>;
   /** Per vertex; 255 = unknown. */
-  labels: Uint8Array;
-  partId?: Uint8Array;
+  labels: Uint8Array<ArrayBuffer>;
+  partId?: Uint8Array<ArrayBuffer>;
 }
 
 /** Stored per recon mesh part as asset `sdf:<meshRef>` (§2.9.7). */
 export interface SdfVolume {
   /** voxel/256 units, positive inside. */
-  data: Int16Array;
+  data: Int16Array<ArrayBuffer>;
   dims: [number, number, number];
   origin: Vec3;
   voxel: Inches;
@@ -67,10 +67,10 @@ export interface ReconSettings {
 
 export interface ReconRequest {
   jobId: number;
-  views: { view: PhotoView; image: Blob | RgbaImage; mask: Uint8Array; maskW: number; maskH: number }[];
+  views: { view: PhotoView; image: Blob | RgbaImage; mask: Uint8Array<ArrayBuffer>; maskW: number; maskH: number }[];
   settings: ReconSettings;
   gauge: ResolvedGauge;
-  depth?: { data: Float32Array; w: number; h: number };
+  depth?: { data: Float32Array<ArrayBuffer>; w: number; h: number };
 }
 
 export interface ReconResult {
@@ -80,7 +80,7 @@ export interface ReconResult {
   /** Per mesh part, stored as assets (§2.9.7 step 3). */
   sdfs: Record<string, SdfVolume>;
   /** Per view id → PhotoView.labelsKey. */
-  labelImages: Record<string, { labels: Int8Array; w: number; h: number }>;
+  labelImages: Record<string, { labels: Int8Array<ArrayBuffer>; w: number; h: number }>;
   /** Label index → color → ProjectDoc.threeD.photoPalette. */
   photoPalette: { hex: string; name?: string }[];
   report: { iouPerView: Record<string, number>; parts: number; genus: number };

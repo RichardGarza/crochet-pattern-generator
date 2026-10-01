@@ -1,6 +1,6 @@
 # Crochet Pattern Generator — Design Specification
 
-Status: build-ready, v1.2 (2026-10-01), revised after two design reviews (see §8 Revision log). This is the single
+Status: build-ready, v1.3 (2026-10-01), revised after two design reviews and the Step 0a type freeze (see §8 Revision log). This is the single
 specification the implementation agents follow. During the parallel tracks this file is owned by the integration
 agent; tracks propose changes under "Requests for integration" in `docs/tracks/tN.md` (§6.1 rule 8).
 It condenses `docs/research/01`–`08` (all fact-checked). Where research documents disagree, this document
@@ -30,6 +30,7 @@ records the decision and the reason; agents MUST NOT re-open those decisions wit
 | Round marker | Start of every round at **center back** (azimuth facing −Z; −Y if the axis is horizontal) on the piece's reference round; other rounds' seams follow the measured spiral lean (`leanStPerRnd`, §2.11.2). Stitch numbers count from the marker in the working direction, 1-based; the front center of an n-st round is the gap between st n/2 and st n/2 + 1 (n even) or st ⌊n/2⌋ + 1 (n odd) (§2.12). |
 | Determinism | Same input bytes + same settings + same code version ⇒ byte-identical outputs. No `Math.random()` in `src/core`. |
 | Network | None at runtime, except user-initiated downloads of permissively licensed ML weights (§2.9.4). No paid or AI APIs, ever. |
+| Typed arrays | Every data-carrying typed array in the frozen types is ArrayBuffer-backed (`Uint8Array<ArrayBuffer>`, `Float32Array<ArrayBuffer>`, …): the app has no SharedArrayBuffer (D20), and under TypeScript 6 the bare names mean `<ArrayBufferLike>`, which `ImageData`, `Blob`, `crypto.subtle` and transfer lists reject. Code that receives arrays from three.js attributes, fflate or Node buffers copies or casts at that boundary. Parameters that only read bytes (`decodePng`) take the bare type. |
 
 ### 0.2 Decision summary (one approach per problem)
 
@@ -2251,7 +2252,7 @@ interface UnitsDecision { rawHeight: number; readings: { unit: LengthUnit; heigh
   chosen: LengthUnit | 'normalized'; reason: 'spec' | 'gltf-extras-ratio' | 'expected-height' | 'stage-header'
   | 'small-bbox' | 'user'; confirm: boolean }            // confirm = ask the user, showing both readings
 interface Repair { code: 'attach-inferred' | 'mirror-inferred' | 'units' | 'ground' | 'axes' | 'radians' | 'color'
-                       | 'dims-clamped' | 'id' | 'unknown-key' | 'feature-dropped' | 'limits' | 'versions';
+                       | 'dims-clamped' | 'id' | 'unknown-key' | 'feature-dropped' | 'limits' | 'versions' | 'spec-rebuilt';
                    message: string; part?: string; data?: Record<string, unknown> }   // one "auto-corrected" chip each
 interface ImportResult {
   ok: boolean; model?: CrochetModelV1; meshes?: Record<string, ColoredMesh>;     // mesh parts, keyed by meshRef
@@ -2576,8 +2577,9 @@ the same kernel as Scale model to height) so the model's bbox height — the fin
   fraction grows monotonically with k) to within 0.1% of the target. Disabled when there is no head or the head is
   the root ("one-piece body: no separate head").
 - **limb length** chips `nubs · short · medium · long` = factors **0.6 · 1 · 1.5 · 2.2** × the template limb length,
-  as a fraction of the model height: `LIMB_TEMPLATE` (shared with §3.3) — arms 0.25, legs 0.20 for quadrupeds
-  (standing: legs 0.30), arms and legs 0.30 for biped/person, arm nubs 0.15 for creatures; a model without
+  as a fraction of the model height: `LIMB_TEMPLATE` (shared with §3.3) — `quadruped` arms 0.25, legs 0.20;
+  `quadruped-standing` arms (its front legs) and legs 0.30; `biped` arms and legs 0.30; `creature` arm and leg nubs
+  0.15; a model without
   `category` uses the quadruped row. Limbs are the parts named `arm_*`, `leg_*`, `limb<n>_*` (§2.9.7 step 6) of type
   `capsule` or `cylinder`; the kernel sets each limb's total length along its own axis so that, after the final
   rescale, `length / modelHeight` = factor × template (bisection, like the head), keeping its **proximal end** fixed
@@ -2653,6 +2655,9 @@ scripts/check-node.mjs      (pre-hook of test/lint/typecheck/dev/build/e2e; §6.
 scripts/strip-exif.mjs      (re-encodes user photos without metadata; §6.1 rule 9)  S0
 scripts/project-folder.ts   (Vite plugin: /__projects mirror + backups, /__convert; S0 stub)   T8
 scripts/copy-ort.mjs        (copies the one ORT wasm/mjs pair into public/ort/; postinstall)  S0
+scripts/ports.ts            (the port rules of §5.5.4 as tested functions + the portGuard Vite plugin)  S0
+scripts/check-spec-types.mjs (proves src/types identical to this document's four type blocks; runs in npm test)  S0
+scripts/image-metadata.mjs  (metadata scanner shared by strip-exif and the fixture-privacy test)  S0
 scripts/import-yarns.mjs                                                            T1
 scripts/make-fixtures.mjs   (synthetic view fixtures of §6.3 T3; writes only its four folders, refuses real/)  T3
 scripts/make-cd-fixtures.mjs (derived Claude Design fixtures of §3.7.7)             T7
@@ -2669,7 +2674,8 @@ public/ort/**               (generated by copy-ort, gitignored)                 
 src/
   main.tsx, App.tsx, app/{router.ts, tabs.ts, ErrorBoundary.tsx, toasts.ts}         S0 (tabs.ts lazy-imports the
                             track entry components below, so nobody edits it after Step 0)
-  types/*.ts                (§5.2, frozen)                                           S0
+  types/*.ts                (§5.2, frozen; entryPoints.ts + ui.ts = §5.2.1, index.ts = barrel,
+                             __checks__/entryPoints.check.ts = signature guard)      S0
   core/stub.ts              (NotImplementedError, stub(), isImplemented())          S0
   core/kernel/{color,hash,prng,stable,vec,png}.ts  (png = RGBA8 PNG encode/decode on fflate, §2.3.1)   S0
   core/kernel/geom/{marchingCubes,taubin,edt,manifold}.ts  (shared by T3 and T5; manifold = the loader of §5.4)  S0
@@ -2743,7 +2749,7 @@ export type ImageKind = 'photo' | 'flat' | 'pixel';
 export interface CropRect { x: number; y: number; w: number; h: number; rotate: 0 | 90 | 180 | 270; flipX: boolean }
 export interface PaletteEntry { code: string; hex: string; name: string; yarn?: Yarn; deltaE00?: number; protected?: boolean;
   role?: 'color' | 'background' | 'override' }          // 'override' = re-inserted from a hand edit (§5.5.5)
-export interface ChartGrid { cols: number; rows: number; labels: Uint8Array /* row-major, row 0 = top */; palette: PaletteEntry[] }
+export interface ChartGrid { cols: number; rows: number; labels: Uint8Array<ArrayBuffer> /* row-major, row 0 = top */; palette: PaletteEntry[] }
 export interface ColorRef { hex: string; yarnId?: string }  // stable color identity (never a palette index)
 export interface ChartEdits { baseCols: number; baseRows: number;
   overrides: { cell: number; color: ColorRef }[];      // cell = row-major index at baseCols × baseRows
@@ -2809,9 +2815,9 @@ export interface PatternDoc {
 
 // ---- types/geometry.ts
 export type Vec3 = [number, number, number];
-export interface RgbaImage { w: number; h: number; data: Uint8ClampedArray }   // RGBA8, orientation applied (§2.3.1)
-export interface ColoredMesh { positions: Float32Array; indices: Uint32Array; labels: Uint8Array /* 255 unknown */; partId?: Uint8Array }
-export interface SdfVolume { data: Int16Array /* voxel/256 units, positive inside */; dims: [number, number, number];
+export interface RgbaImage { w: number; h: number; data: Uint8ClampedArray<ArrayBuffer> }   // RGBA8, orientation applied (§2.3.1)
+export interface ColoredMesh { positions: Float32Array<ArrayBuffer>; indices: Uint32Array<ArrayBuffer>; labels: Uint8Array<ArrayBuffer> /* 255 unknown */; partId?: Uint8Array<ArrayBuffer> }
+export interface SdfVolume { data: Int16Array<ArrayBuffer> /* voxel/256 units, positive inside */; dims: [number, number, number];
   origin: Vec3; voxel: Inches }                         // stored per recon mesh part as asset `sdf:<meshRef>` (§2.9.7)
 export type ViewLabel = 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom';
 export interface PhotoView { id: string; imageKey: string; label: ViewLabel; maskKey?: string;
@@ -2826,11 +2832,11 @@ export interface ReconSettings { N: 64 | 128 | 192; kappa: number;
   useDepth: boolean; keepHoles: boolean; mergeTouching: boolean; splitNeck: boolean; openingFrac: number;
   fitTolerance: number; targetHeightIn: Inches }        // photoView 'top': the longest extent in the photo plane
 export interface ReconRequest { jobId: number;
-  views: { view: PhotoView; image: Blob | RgbaImage; mask: Uint8Array; maskW: number; maskH: number }[];
-  settings: ReconSettings; gauge: ResolvedGauge; depth?: { data: Float32Array; w: number; h: number } }
+  views: { view: PhotoView; image: Blob | RgbaImage; mask: Uint8Array<ArrayBuffer>; maskW: number; maskH: number }[];
+  settings: ReconSettings; gauge: ResolvedGauge; depth?: { data: Float32Array<ArrayBuffer>; w: number; h: number } }
 export interface ReconResult { jobId: number; model: CrochetModelV1; meshes: Record<string, ColoredMesh>;
   sdfs: Record<string, SdfVolume>;                      // per mesh part, stored as assets (§2.9.7 step 3)
-  labelImages: Record<string, { labels: Int8Array; w: number; h: number }>;   // per view id → PhotoView.labelsKey
+  labelImages: Record<string, { labels: Int8Array<ArrayBuffer>; w: number; h: number }>;   // per view id → PhotoView.labelsKey
   photoPalette: { hex: string; name?: string }[];       // label index → color → ProjectDoc.threeD.photoPalette
   report: { iouPerView: Record<string, number>; parts: number; genus: number }; issues: Issue[] }
 
@@ -2841,13 +2847,13 @@ export interface AmiSettings { style: 'classic' | 'exact'; spiral: boolean; cris
   defaultStuffing: 'firm' | 'medium' | 'light';         // size changes go through "Scale model to height" (§4.2)
   leanStPerRnd: number }                                // spiral lean, default 0.25, 0 = off (§2.11.2)
 export interface PieceFrame { axis: Vec3; startPole: 'bottom' | 'top'; seamDir: Vec3; oval?: { S1: number }; trimmedAt?: number }
-export interface RingGeom { center: Vec3; normal: Vec3; radius: number; polyline?: Float32Array }
+export interface RingGeom { center: Vec3; normal: Vec3; radius: number; polyline?: Float32Array<ArrayBuffer> }
 export interface RoundsResult { partId: string; path: 'A' | 'B'; counts: number[]; loops: Loop[]; hEff: Inches; closedEnd: boolean;
-  start: LineStart; finish: PieceFinish['kind']; ovalS?: number[]; rings: RingGeom[]; stitchLabels: Uint8Array[] }
+  start: LineStart; finish: PieceFinish['kind']; ovalS?: number[]; rings: RingGeom[]; stitchLabels: Uint8Array<ArrayBuffer>[] }
 export interface AmiRequest { jobId: number; model: CrochetModelV1; meshes: Record<string, ColoredMesh>; gauge: ResolvedGauge;
   settings: AmiSettings; dirtyParts?: string[] }
 export interface AmiResult { jobId: number; plan: Record<string, MakeAs>; frames: Record<string, PieceFrame>;
-  rounds: Record<string, RoundsResult>; ghosts: Record<string, Float32Array>; pattern: PatternDoc; issues: Issue[]; hash: string }
+  rounds: Record<string, RoundsResult>; ghosts: Record<string, Float32Array<ArrayBuffer>>; pattern: PatternDoc; issues: Issue[]; hash: string }
 
 // ---- types/qa.ts
 export interface QaState { answers: Record<string, unknown>; decided: Record<string, 'user' | 'auto'>; seed?: CrochetModelV1;
@@ -2868,13 +2874,14 @@ export interface ProjectDoc {
   schema: 'crochet-project'; version: 1; id: string; name: string; createdAt: string; updatedAt: string; rev: number;
   mode: '2d' | '3d'; units: UnitPref; terms: Terms; hand: Hand; gauge: GaugeSpec; sources: SourceImage[];
   twoD?: { sourceId: string; crop?: CropRect; settings: ChartSettings; edits: ChartEdits };
-  threeD?: { origin: 'multiview' | 'single' | 'claude-design' | 'describe'; model: CrochetModelV1;
+  threeD?: { origin: 'multiview' | 'single' | 'claude-design' | 'describe'; model?: CrochetModelV1;   // absent until the first build or import
              meshAssets: Record<string, AssetRef>; revisions: ModelRevision[]; views: PhotoView[];
              photoPalette?: { hex: string; name?: string }[];   // the photos' joint palette (§2.9.6)
              recon?: ReconSettings; ami: AmiSettings };
   qa?: QaState; imports: ImportRecord[]; thumbnail?: AssetRef;
 }
-export interface ProjectSummary { id: string; name: string; mode: '2d' | '3d'; updatedAt: string; thumbnail?: AssetRef }
+export interface ProjectSummary { id: string; name: string; mode: '2d' | '3d'; updatedAt: string; thumbnail?: AssetRef;
+  awaitingClaudeDesign?: boolean }   // = !!doc.qa?.awaiting: the library card's badge (§5.7) without opening the project
 
 // ---- types/workers.ts (comlink APIs; latest-wins channels and cooperative cancellation, §5.4)
 export interface Cancellable { supersede(jobId: number): Promise<void> }   // every worker API below extends it
@@ -2882,18 +2889,18 @@ export interface Chart2dApi extends Cancellable { run(r: ChartRequest): Promise<
   buildPattern(r: { chart: ChartGrid; settings: ChartSettings; gauge: ResolvedGauge; terms: Terms; dialect: 'compact' | 'verbose';
                     title: string }): Promise<PatternDoc> }
 export interface GeomApi extends Cancellable {
-  mask(image: Blob | RgbaImage, o?: { keepHoles?: boolean }): Promise<{ mask: Uint8Array; w: number; h: number }>;
+  mask(image: Blob | RgbaImage, o?: { keepHoles?: boolean }): Promise<{ mask: Uint8Array<ArrayBuffer>; w: number; h: number }>;
   build(r: ReconRequest): Promise<ReconResult>;
   projectColors(r: { jobId: number; model: CrochetModelV1; meshes: Record<string, ColoredMesh>;
-    views: { view: PhotoView; labels: Int8Array; mask: Uint8Array; w: number; h: number }[];   // read from labelsKey/maskKey
+    views: { view: PhotoView; labels: Int8Array<ArrayBuffer>; mask: Uint8Array<ArrayBuffer>; w: number; h: number }[];   // read from labelsKey/maskKey
     photoPalette: { hex: string; name?: string }[]; palette: PaletteColor[] }):            // labels → palette, ΔE00 < 5 merge
-    Promise<{ paint: Record<string, Part['paint'] | Uint8Array /* mesh vertex labels */>; palette: PaletteColor[];
+    Promise<{ paint: Record<string, Part['paint'] | Uint8Array<ArrayBuffer> /* mesh vertex labels */>; palette: PaletteColor[];
               viewIoU: Record<string, number>; issues: Issue[] }> }        // "Apply photo colors", §2.9.6
 export interface MlApi extends Cancellable { status(): Promise<{ webgpu: boolean; depthCached: boolean; samCached: boolean }>;
   depth(image: Blob | RgbaImage, onProgress?: (p: number) => void):      // client passes Comlink.proxy(onProgress)
-    Promise<{ data: Float32Array; w: number; h: number }>;
+    Promise<{ data: Float32Array<ArrayBuffer>; w: number; h: number }>;
   samEncode(image: Blob | RgbaImage): Promise<void>;
-  samMask(points: { x: number; y: number; positive: boolean }[]): Promise<{ mask: Uint8Array; w: number; h: number }> }
+  samMask(points: { x: number; y: number; positive: boolean }[]): Promise<{ mask: Uint8Array<ArrayBuffer>; w: number; h: number }> }
 export interface MeshApi extends Cancellable { pathB(r: { jobId: number; mesh: ColoredMesh; partId: string; frame: Partial<PieceFrame>; gauge: ResolvedGauge;
   settings: AmiSettings }): Promise<RoundsResult | { needsSplit: { level: number; loops: number[] } }>;
   merge(parts: { part: Part; mesh?: ColoredMesh; sdf?: SdfVolume }[], o?: { N?: number }):   // §2.9.8, editor ⌘J;
@@ -2915,7 +2922,11 @@ export interface ImportApi extends Cancellable { importInputs(inputs: ImportInpu
 Every function and component one track calls in another track's code is listed here with its module path and exact
 signature. Step 0 creates each as a typed stub carrying `__stub: true` that throws `NotImplementedError` (components
 render a labelled placeholder); `isImplemented(fn)` is `!fn.__stub`. Tests that need a stub's real behavior use
-`it.runIf(isImplemented(fn))`; integration removes the gates.
+`it.runIf(isImplemented(fn))`; integration removes the gates. `isImplemented` is for functions imported in the same
+thread: a comlink proxy answers every property read with another proxy, and a stub's rejection from a worker arrives
+as a plain `Error`, recognized with `isNotImplementedError(e)` (`core/stub.ts`). A stub hook (`useAutosave`) is
+chosen at module scope, never behind an `if` inside a component (rules of hooks). The interfaces and one `…Fn`
+signature type per function below live in `src/types/entryPoints.ts` and `src/types/ui.ts`; modules re-export them.
 
 ```ts
 // core/stub.ts (S0)
@@ -2950,7 +2961,7 @@ export function applyProportions(m: CrochetModelV1, o: { headBody?: number; limb
 export function scaleModel(m: CrochetModelV1, factor: number, meshes?: Record<string, ColoredMesh>):
   { model: CrochetModelV1; meshes?: Record<string, ColoredMesh> };                      // about the ground center
 // core/kernel/png.ts, core/kernel/geom/manifold.ts (S0, implemented)
-export function encodePng(img: RgbaImage): Uint8Array;        // RGBA8, filter 0, fflate zlib (1-px export, tests)
+export function encodePng(img: RgbaImage): Uint8Array<ArrayBuffer>;        // RGBA8, filter 0, fflate zlib (1-px export, tests)
 export function decodePng(bytes: Uint8Array): RgbaImage;      // 8-bit gray/RGB/palette/gray-alpha/RGBA, non-interlaced
 export function getManifold(): Promise<ManifoldToplevel>;     // §5.4: one tested init for node tests and workers
 // workers/decode.ts, rpc.ts, client.ts (S0, implemented; §2.3.1, §5.4)
@@ -3101,7 +3112,9 @@ macrotask, so a running job sees a newer request only when it yields. Therefore:
 1. **Latest-wins channel** per API method (`latestWins`): at most one request in flight and one pending; a newer
    request replaces the pending one (whose promise rejects with `Superseded`, which callers ignore) and immediately
    sends `supersede(newJobId)` to the worker. With the 250 ms chart debounce, five rapid slider ticks run at most two
-   jobs (the one in flight, cut short, and the last).
+   jobs (the one in flight, cut short, and the last). The channel wraps the methods whose request carries a `jobId`
+   (`Chart2dApi.run`, `GeomApi.build`, `GeomApi.projectColors`, `MeshApi.pathB`, `AmiApi.generate`); the other
+   methods are short or user-paced and are called directly.
 2. **Cooperative cancellation:** each worker keeps `latestJobId` (set by `supersede`) in a `createJobGate()`; between
    stages, and at least every ~50 ms inside long loops, the job calls `await gate.check(jobId)`, which is
    `await yieldMacrotask()` (a MessageChannel ping that lets queued messages, including `supersede`, run) followed by
@@ -3186,8 +3199,10 @@ the same fixed port, `CPG_PORT` (default **5180**, `strictPort`), and the Vite p
 (T8) serves `/__projects` backed by `CPG_PROJECTS_DIR` (default `~/Documents/Crochet Pattern Generator/projects/`).
 A static build hosted alone uses IndexedDB + file export only.
 
-- **Test and agent isolation:** the plugin refuses to use the default folder (mirror disabled, `HEAD /__projects`
-  answers 503, a console warning names the variable to set, the app shows "Folder mirror off") whenever any of these
+- **Test and agent isolation:** the plugin refuses to use the default folder (mirror disabled: `HEAD /__projects`
+  answers **204 with the header `x-cpg-mirror: off`** — 200 with `x-cpg-mirror: on` when the mirror is active; a
+  4xx/5xx answer would make Chromium log a console error on every start and trip the e2e no-console-errors rule —
+  the server console names the variable to set, and the app shows "Folder mirror off") whenever any of these
   holds: `PLAYWRIGHT`, `VITEST`, `CI` or `CPG_TEST` is set; `CLAUDE_CODE_CHILD_SESSION` is set (present in every
   workflow and sub-agent shell, checked 2026-10-01; the user's own interactive session sets only `CLAUDECODE` and
   is not refused for that alone); the server root lies under `/.claude/worktrees/`; or the checkout is not on branch
@@ -3213,7 +3228,8 @@ A static build hosted alone uses IndexedDB + file export only.
   hash and never rewrites an existing asset); `DELETE /__projects/<id>` moves the folder to
   `Backups/deleted/<id>-<YYYYMMDD-HHMMSS>/` (a deleted project never comes back as a restore offer). Every write goes
   to a temp file in the same directory, then `fs.rename` (atomic), so a crash never leaves a truncated doc.
-- **Sync:** the app mirrors every save (debounced 5 s) when `HEAD /__projects` answers. Per project it keeps
+- **Sync:** the app mirrors every save (debounced 5 s) when `HEAD /__projects` answers `x-cpg-mirror: on` (any other
+  answer, including a static host's, means off). Per project it keeps
   `{ lastSyncedRev, lastSyncedHash }` (`meta`, §5.5.1). On start: folder hash = last synced and local rev newer ⇒
   push; local unchanged since the last sync and folder changed ⇒ offer to load the folder version; both changed
   (a two-sided edit, detectable only with this sync base) ⇒ keep both (the folder's copy imported as "<name> (from
@@ -3350,7 +3366,8 @@ pull through the API before shipping. So:
 | PDF of a 200 × 200 chart pattern | < 5 s |
 
 Determinism: no `Math.random()`/`Date` in `src/core`; seeds = `fnv1a64(input bytes ‖ canonical JSON of settings ‖
-CODE_VERSION)`; stable sorts; ties → lowest index; output hashes cover integer labels, counts and rendered text,
+CODE_VERSION)` (`CODE_VERSION` lives in `src/core/kernel/hash.ts`; the integration agent bumps it when a merged
+change alters any algorithm's output); stable sorts; ties → lowest index; output hashes cover integer labels, counts and rendered text,
 never raw floats.
 
 ---
@@ -3381,7 +3398,9 @@ never raw floats.
    another track's implementation use `it.runIf(isImplemented(fn))`; integration removes the gate.
 5. **Tests:** colocated `__tests__/`, goldens in `__tests__/golden/` (generated by the implementation and compared
    with this document's lists, §2.10.5); synthetic images are generated in code (`src/test/rgba.ts`), never
-   downloaded. Timing tests retry twice and use generous bounds. `src/core` tests run in the `node` environment,
+   downloaded. Timing tests retry twice and use generous bounds. `@playwright/test` cannot be imported inside a
+   Vitest file (both install global `expect` matchers): a unit test that needs a browser starts a child process.
+   `src/core` tests run in the `node` environment,
    which has no `createImageBitmap`/`OffscreenCanvas`: core code takes `RgbaImage`s (§2.3.1) and PNG fixtures are read
    with `core/kernel/png.ts`. UI tests opt into happy-dom, which has no 2D or WebGL canvas context and no lock manager
    (checked in review with 20.14.5), so they use the seams of §6.3 (T2 pure chart tools, T6 injectable `Viewport`, T8
@@ -3414,6 +3433,12 @@ never raw floats.
    its four generated folders and refuses any path under `real/`, which holds irreplaceable user data.
 
 ### 6.2 Step 0 — scaffold (one agent, sequential, before any track)
+
+Run as three parts, with the deliverables and acceptance below unchanged: **0a** foundation (one agent: toolchain,
+configuration, `src/types`, base kernels, track stubs), **0b** in parallel worktrees made from the 0a commit
+(`core/kernel/geom` · `core/gauge` · `core/model` + `fixtures/models` · `core/pattern` · `workers/{rpc,client,decode}`
++ `state/**` + `core/model/revisions.ts` + `test/fakes.ts`), and **0c** (merge, app shell and smoke e2e, review, the
+full acceptance list). Notes: `docs/tracks/s0.md`.
 
 Deliverables (every command under the Node 22 prefix of §6.1 rule 1):
 −1. **Commit the spec before anything else:** `git add docs/ fixtures/claude-design/ && git commit -m "Design v1.2
@@ -3454,7 +3479,10 @@ Deliverables (every command under the Node 22 prefix of §6.1 rule 1):
    [...configDefaults.exclude, '.claude/**', 'e2e/**'] }` (Vitest 4's default exclude is only `node_modules` and
    `.git`; its excludes are root-relative, so worktrees are unaffected); UI tests opt in with
    `// @vitest-environment happy-dom`. `tsconfig*.json` (room-planner settings **plus `"strict": true`**;
-   `erasableSyntaxOnly` ⇒ no enums/namespaces), `.oxlintrc.json`, `playwright.config.ts` (Chromium only;
+   `erasableSyntaxOnly` ⇒ no enums/namespaces and no constructor parameter properties; `types: ["vite/client",
+   "node"]` and `resolveJsonModule`; `tsconfig.node.json` uses bundler resolution with the DOM lib so `scripts/*.ts`
+   and `e2e/**` can import from `src/`), `.oxlintrc.json` (the `correctness` category is an error), vitest
+   `setupFiles: ['./src/test/setup.ts']`, the `portGuard` plugin of `scripts/ports.ts`, `playwright.config.ts` (Chromium only;
    `webServer: { command: 'npm run dev', env: { CPG_PORT, CPG_PROJECTS_DIR: <fresh mkdtemp>, CPG_TEST: '1' },
    reuseExistingServer: false }` on `CPG_E2E_PORT ?? (5290 + N in a track worktree, else 5181)`; screenshots on).
 3. App shell: `main.tsx`, `App.tsx`, hash router, the **final** tab registry with its visibility predicates (§5.3)
@@ -3497,7 +3525,8 @@ turn the object 90° between shots, not the camera; nothing else touching it. Pu
 stay on this machine (gitignored) unless the user approves committing EXIF-stripped copies (§6.1 rule 9).
 
 Acceptance: `node -v` ≥ 22.12; `npx oxlint --version` exits 0 and `npx vite --version` prints no Node warning;
-`npm test` under Node 20.18 exits non-zero with the check-node message (a wrong runtime fails loudly);
+`npm test` under Node 20.18 exits non-zero (npm's `EBADDEVENGINES` on npm ≥ 10.9, which stops before any script; the
+check-node message on an npm without `devEngines`; either way a wrong runtime fails loudly);
 `npm ci` succeeds from the committed lockfile under Node 22's npm 10.9.9 (and under npm 11.21.0) and `npm ls
 @testing-library/dom` resolves; typecheck, lint, unit tests and `npm run build` pass; `git ls-files docs/DESIGN.md`
 lists the spec and a throw-away worktree created from the Step 0 commit contains it; the dev server shows the start
@@ -3950,6 +3979,24 @@ block v1.
 ---
 
 ## 8. Revision log
+
+### v1.3 — 2026-10-01 (Step 0a type freeze; requests 1–17 of `docs/tracks/s0.md`)
+
+- **Types, decided before the freeze:** `ProjectDoc.threeD.model` is optional (a 3D project exists before its first
+  model: F2/F3 steps 1–5, "Describe a toy", a failed build); every data-carrying typed array is `…<ArrayBuffer>`
+  (§0.1; `decodePng`'s parameter stays bare); `ProjectSummary.awaitingClaudeDesign?` for the library badge;
+  `Repair.code` gains `'spec-rebuilt'` (§3.7.5 GLB step 2). `ChannelLike` is kept as written: the default
+  `BroadcastChannel` needs a small adapter (T8), because its handler takes a `MessageEvent`.
+- **`LIMB_TEMPLATE`** now has both numbers for every row (§4.2).
+- **Folder-mirror probe:** the disabled state answers 204 + `x-cpg-mirror: off` instead of 503, which logged a console
+  error on every start (§5.5.4).
+- **Worker RPC:** latest-wins wraps the five methods that carry a `jobId`; `isImplemented` is same-thread only (§5.4,
+  §5.2.1).
+- **Step 0** ran as 0a / 0b / 0c (§6.2); S0 gained `scripts/ports.ts`, `scripts/check-spec-types.mjs`,
+  `scripts/image-metadata.mjs` and `src/types/{entryPoints,ui,index}.ts` (§5.1); the tsconfig, lint and vitest
+  additions are recorded in §6.2 item 2; the Node 20 acceptance line now names npm's `EBADDEVENGINES` (§6.2).
+- Not changed: `features.mosaic` stays an app preference, not project data; ring labels are
+  `RoundsResult.stitchLabels[k]`; npm 11 blocks dependency install scripts and none is needed (`docs/DEPENDENCIES.md`).
 
 ### v1.2 — 2026-10-01 (second design review: 32 issues)
 

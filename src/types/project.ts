@@ -67,10 +67,6 @@ export interface ProjectDoc {
      * Absent until the first build or import succeeds: a 3D project holds its photo views, its recon and yarn
      * settings (F2/F3 steps 1–5), or its Q&A state ("Describe a toy"), before any model exists, and a failed
      * build leaves none. Replace it only through `commitModelRevision` (§5.2.1).
-     *
-     * DESIGN.md §5.2 writes `model: CrochetModelV1` (required), which cannot represent those states; this is the
-     * one place where src/types differs from the spec's text (docs/tracks/s0.md; scripts/check-spec-types.mjs
-     * lists it as a pending spec amendment).
      */
     model?: CrochetModelV1;
     meshAssets: Record<string, AssetRef>;
@@ -92,4 +88,6 @@ export interface ProjectSummary {
   mode: '2d' | '3d';
   updatedAt: string;
   thumbnail?: AssetRef;
+  /** `!!doc.qa?.awaiting`: the library card's badge (§5.7) without opening the project. */
+  awaitingClaudeDesign?: boolean;
 }

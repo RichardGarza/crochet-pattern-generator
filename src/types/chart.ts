@@ -31,7 +31,7 @@ export interface ChartGrid {
   cols: number;
   rows: number;
   /** Row-major, row 0 = top. */
-  labels: Uint8Array;
+  labels: Uint8Array<ArrayBuffer>;
   palette: PaletteEntry[];
 }
 

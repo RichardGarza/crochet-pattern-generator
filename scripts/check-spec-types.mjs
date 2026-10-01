@@ -28,14 +28,7 @@ import { fileURLToPath } from 'node:url';
  * identical. An entry whose `find` text is gone from the spec makes the script fail: remove the entry then.
  * The reasons are written up in docs/tracks/s0.md.
  */
-const PENDING_SPEC_AMENDMENTS = [
-  {
-    block: 'spec52',
-    find: "origin: 'multiview' | 'single' | 'claude-design' | 'describe'; model: CrochetModelV1;",
-    replace: "origin: 'multiview' | 'single' | 'claude-design' | 'describe'; model?: CrochetModelV1;",
-    why: 'ProjectDoc.threeD exists before its first model (F2/F3 steps 1–5, "Describe a toy", a failed build; §4.5 "before a model exists")',
-  },
-];
+const PENDING_SPEC_AMENDMENTS = [];
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const tsc = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');

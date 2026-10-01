@@ -52,7 +52,8 @@ export interface Repair {
     | 'unknown-key'
     | 'feature-dropped'
     | 'limits'
-    | 'versions';
+    | 'versions'
+    | 'spec-rebuilt';
   message: string;
   part?: string;
   data?: Record<string, unknown>;

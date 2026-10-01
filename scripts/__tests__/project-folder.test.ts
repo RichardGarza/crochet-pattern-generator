@@ -40,16 +40,31 @@ describe('projectFolder (Step 0 stub of the T8 plugin)', () => {
     expect(typeof plugin.configurePreviewServer).toBe('function');
   });
 
-  it('answers 503 on /__projects so the app shows "Folder mirror off"', () => {
-    for (const url of ['/__projects', '/__projects?x=1', '/__projects/abc/doc', '/__projects/abc/assets/0f']) {
+  it('answers the mirror probe with 204 and x-cpg-mirror: off, so the app shows "Folder mirror off" without a console error', () => {
+    for (const url of ['/__projects', '/__projects?x=1']) {
       const head = request('HEAD', url);
-      expect(head.status).toBe(503);
+      expect(head.status).toBe(204);
+      expect(head.headers['x-cpg-mirror']).toBe('off');
+      expect(head.headers['cache-control']).toBe('no-store');
       expect(head.body).toBeUndefined();
       expect(head.passedOn).toBe(false);
-      const put = request('PUT', url);
-      expect(put.status).toBe(503);
-      expect(JSON.parse(put.body ?? '')).toEqual({ error: 'folder mirror: not implemented yet (track T8)' });
-      expect(put.headers['cache-control']).toBe('no-store');
+    }
+  });
+
+  it('answers 503 on every other /__projects request', () => {
+    for (const [method, url] of [
+      ['GET', '/__projects'],
+      ['PUT', '/__projects/abc/doc'],
+      ['HEAD', '/__projects/abc/assets/0f'],
+      ['PUT', '/__projects/abc/assets/0f'],
+      ['DELETE', '/__projects/abc'],
+    ] as const) {
+      const got = request(method, url);
+      expect(got.status).toBe(503);
+      expect(got.passedOn).toBe(false);
+      expect(got.headers['cache-control']).toBe('no-store');
+      if (method === 'HEAD') expect(got.body).toBeUndefined();
+      else expect(JSON.parse(got.body ?? '')).toEqual({ error: 'folder mirror: not implemented yet (track T8)' });
     }
   });
 

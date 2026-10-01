@@ -93,7 +93,7 @@ export type ScaleModelFn = (
 // ---- core/kernel/png.ts, core/kernel/geom/manifold.ts (S0, implemented)
 
 /** RGBA8, filter 0, fflate zlib (1-px export, tests). */
-export type EncodePngFn = (img: RgbaImage) => Uint8Array;
+export type EncodePngFn = (img: RgbaImage) => Uint8Array<ArrayBuffer>;
 /** 8-bit gray / RGB / palette / gray-alpha / RGBA, non-interlaced. */
 export type DecodePngFn = (bytes: Uint8Array) => RgbaImage;
 /** §5.4: one tested init for node tests and workers. */

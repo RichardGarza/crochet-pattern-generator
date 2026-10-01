@@ -3,7 +3,7 @@
 The living plan for Crochet Pattern Generator. The full specification is [`DESIGN.md`](DESIGN.md); the research
 behind it is in [`research/`](research/). This file says what gets built in what order, and where things stand.
 
-**Last updated:** 2026-10-01 · **Now:** Sprint 0 (scaffold) in progress
+**Last updated:** 2026-10-01 · **Now:** Sprint 0b (shared kernels, five in parallel)
 
 ## What "done" means
 
@@ -39,9 +39,9 @@ Every sprint goes through the same loop, and nothing moves on until its step is 
 | Sprint | What | Status |
 |---|---|---|
 | Research | 7 fact-checked research reports, real Claude Design exports captured, design spec v1.2 after two reviews | ✅ done |
-| 0a | Toolchain (Node 22), dependencies, config, shared types, base kernels (color, hashing, PNG), stubs for every module | ⏳ in progress |
-| 0b | Shared kernels in parallel: geometry (marching cubes, smoothing, distance transforms) · gauge tables and sizing · 3D model schema, builder and attach tree · pattern encoder and validator · app frame (shell, stores, worker plumbing) | ◻ next |
-| 0c | Merge, run the full Step 0 acceptance list, fix, push | ◻ |
+| 0a | Toolchain (Node 22), dependencies, config, shared types, base kernels (color, hashing, PNG), stubs for every module | ✅ done (290 tests) |
+| 0b | Shared kernels in parallel: geometry (marching cubes, smoothing, distance transforms) · gauge tables and sizing · 3D model schema, builder and attach tree · pattern encoder and validator · app state and worker plumbing | ⏳ in progress |
+| 0c | Merge, app shell and design system, review, the full Step 0 acceptance list, push | ◻ next |
 | 1 | Eight tracks, first sprint each (see below) · Claude Design send-side trial (bunny and teddy, full and compact prompt) | ◻ |
 | 2 | Tracks, second sprint each | ◻ |
 | Checkpoint | Merge the finished halves to `master`, full test run, shared-type amendments | ◻ |
@@ -90,3 +90,4 @@ See `DESIGN.md` §0.2 for all 23. The ones you would notice:
 
 - **2026-09-30** Project started. Research workflow launched. Teddy bear made in Claude Design; every export captured as a fixture.
 - **2026-10-01** Research verified (7 reports, 718 claims checked, 85 corrections). Design spec v1.2 after two review rounds (74 issues fixed). Roadmap written. Sprint 0 started.
+- **2026-10-01** Sprint 0a done: Node 22 toolchain, 251 packages, shared types proven identical to the spec by a script (134 declarations), base kernels, stubs for every module; 290 tests. Spec amended to v1.3 with the type decisions made at the freeze.

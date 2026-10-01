@@ -32,7 +32,7 @@ export interface Chart2dApi extends Cancellable {
 
 /** geom.worker (T3). */
 export interface GeomApi extends Cancellable {
-  mask(image: Blob | RgbaImage, o?: { keepHoles?: boolean }): Promise<{ mask: Uint8Array; w: number; h: number }>;
+  mask(image: Blob | RgbaImage, o?: { keepHoles?: boolean }): Promise<{ mask: Uint8Array<ArrayBuffer>; w: number; h: number }>;
   build(r: ReconRequest): Promise<ReconResult>;
   /** "Apply photo colors", §2.9.6. */
   projectColors(r: {
@@ -40,13 +40,13 @@ export interface GeomApi extends Cancellable {
     model: CrochetModelV1;
     meshes: Record<string, ColoredMesh>;
     /** Read from labelsKey / maskKey. */
-    views: { view: PhotoView; labels: Int8Array; mask: Uint8Array; w: number; h: number }[];
+    views: { view: PhotoView; labels: Int8Array<ArrayBuffer>; mask: Uint8Array<ArrayBuffer>; w: number; h: number }[];
     photoPalette: { hex: string; name?: string }[];
     /** Labels → palette, ΔE00 < 5 merge. */
     palette: PaletteColor[];
   }): Promise<{
     /** Per part id: `paint` for a primitive, vertex labels (Uint8Array) for a mesh part. */
-    paint: Record<string, Part['paint'] | Uint8Array>;
+    paint: Record<string, Part['paint'] | Uint8Array<ArrayBuffer>>;
     palette: PaletteColor[];
     viewIoU: Record<string, number>;
     issues: Issue[];
@@ -57,9 +57,9 @@ export interface GeomApi extends Cancellable {
 export interface MlApi extends Cancellable {
   status(): Promise<{ webgpu: boolean; depthCached: boolean; samCached: boolean }>;
   /** The client passes `Comlink.proxy(onProgress)`. */
-  depth(image: Blob | RgbaImage, onProgress?: (p: number) => void): Promise<{ data: Float32Array; w: number; h: number }>;
+  depth(image: Blob | RgbaImage, onProgress?: (p: number) => void): Promise<{ data: Float32Array<ArrayBuffer>; w: number; h: number }>;
   samEncode(image: Blob | RgbaImage): Promise<void>;
-  samMask(points: { x: number; y: number; positive: boolean }[]): Promise<{ mask: Uint8Array; w: number; h: number }>;
+  samMask(points: { x: number; y: number; positive: boolean }[]): Promise<{ mask: Uint8Array<ArrayBuffer>; w: number; h: number }>;
 }
 
 /** mesh.worker (T5); two instances: the editor's and ami.worker's private one (§5.4). */
