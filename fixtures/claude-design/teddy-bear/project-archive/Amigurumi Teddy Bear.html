@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amigurumi Teddy Bear — 10 in</title>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.184.0/build/three.module.js",
+    "three/addons/controls/OrbitControls.js": "https://unpkg.com/three@0.184.0/examples/jsm/controls/OrbitControls.js",
+    "three/addons/exporters/OBJExporter.js": "https://unpkg.com/three@0.184.0/examples/jsm/exporters/OBJExporter.js",
+    "three/addons/exporters/GLTFExporter.js": "https://unpkg.com/three@0.184.0/examples/jsm/exporters/GLTFExporter.js"
+  },
+  "integrity": {
+    "https://unpkg.com/three@0.184.0/build/three.module.js": "sha384-8FCZ1eVO6it4+pbec2aDtnTrwjWXZLJRC+MAGCIPDgsYnUrl/E0A2YlF8ioMKI/J",
+    "https://unpkg.com/three@0.184.0/build/three.core.js": "sha384-dw2ooPewaEIrAgl6oFDBmmBWCE9oW9LxRGcfwZ0hLvEprzo202wXl7vCYHRlSnOT",
+    "https://unpkg.com/three@0.184.0/examples/jsm/controls/OrbitControls.js": "sha384-4rziNxOBZKQ69i+w+f89KJ55TCYquwchVbByQwmaOeIOXdOU2PLDn3kOfXHwIJC9",
+    "https://unpkg.com/three@0.184.0/examples/jsm/exporters/OBJExporter.js": "sha384-nbwtoZENJD3Vq+ACK0CuGQdPMuDWHkamC2KJD70EV5nfg6jQjfppKOea07YJN+N3",
+    "https://unpkg.com/three@0.184.0/examples/jsm/exporters/GLTFExporter.js": "sha384-VofkvpG6HERhFCYbsUOHeNXBCqID2nfqkQqnVzE1jc/oPcz+qJ13ADdXH08hE+cQ"
+  }
+}
+</script>
+<script type="application/json" id="crochet-model">
+{
+  "schema": "crochet-model",
+  "version": "1.0",
+  "units": "in",
+  "axes": { "up": "+Y", "front": "+Z" },
+  "finishedSize": { "height": 10 },
+  "palette": {
+    "#B07A4A": "caramel_yarn",
+    "#F2E3C6": "cream_yarn",
+    "#3B2A20": "dark_brown_yarn",
+    "#111111": "black_safety_eye"
+  },
+  "notes": "dimensions are radii (rx, ry, rz) for ellipsoids/spheres; capsule length is the straight section between hemispherical caps. Child positions/rotations are relative to the parent.",
+  "parts": [
+    { "id": "body", "name": "Body", "type": "ellipsoid", "dimensions": { "rx": 2.1, "ry": 2.6, "rz": 1.9 }, "position": [0, 2.6, 0], "rotationDeg": [0, 0, 0], "color": "#B07A4A", "parent": null },
+    { "id": "head", "name": "Head", "type": "ellipsoid", "dimensions": { "rx": 2.4, "ry": 2.15, "rz": 2.2 }, "position": [0, 7.2, 0.1], "rotationDeg": [0, 0, 0], "color": "#B07A4A", "parent": null },
+    { "id": "muzzle", "name": "Muzzle", "type": "ellipsoid", "dimensions": { "rx": 1.0, "ry": 0.75, "rz": 0.6 }, "position": [0, -0.6, 1.8], "rotationDeg": [0, 0, 0], "color": "#F2E3C6", "parent": "head" },
+    { "id": "nose", "name": "Nose", "type": "ellipsoid", "dimensions": { "rx": 0.32, "ry": 0.22, "rz": 0.18 }, "position": [0, 0.3, 0.52], "rotationDeg": [0, 0, 0], "color": "#3B2A20", "parent": "muzzle" },
+    { "id": "eye_l", "name": "Left Eye", "type": "sphere", "dimensions": { "r": 0.2 }, "position": [0.78, 0.25, 1.92], "rotationDeg": [0, 0, 0], "color": "#111111", "parent": "head" },
+    { "id": "eye_r", "name": "Right Eye", "type": "sphere", "dimensions": { "r": 0.2 }, "position": [-0.78, 0.25, 1.92], "rotationDeg": [0, 0, 0], "color": "#111111", "parent": "head" },
+    { "id": "ear_l", "name": "Left Ear", "type": "ellipsoid", "dimensions": { "rx": 0.85, "ry": 0.85, "rz": 0.35 }, "position": [1.6, 1.75, -0.2], "rotationDeg": [0, 0, -28], "color": "#B07A4A", "parent": "head" },
+    { "id": "ear_l_inner", "name": "Left Ear Inner", "type": "ellipsoid", "dimensions": { "rx": 0.55, "ry": 0.55, "rz": 0.12 }, "position": [0, -0.05, 0.26], "rotationDeg": [0, 0, 0], "color": "#F2E3C6", "parent": "ear_l" },
+    { "id": "ear_r", "name": "Right Ear", "type": "ellipsoid", "dimensions": { "rx": 0.85, "ry": 0.85, "rz": 0.35 }, "position": [-1.6, 1.75, -0.2], "rotationDeg": [0, 0, 28], "color": "#B07A4A", "parent": "head" },
+    { "id": "ear_r_inner", "name": "Right Ear Inner", "type": "ellipsoid", "dimensions": { "rx": 0.55, "ry": 0.55, "rz": 0.12 }, "position": [0, -0.05, 0.26], "rotationDeg": [0, 0, 0], "color": "#F2E3C6", "parent": "ear_r" },
+    { "id": "arm_l", "name": "Left Arm", "type": "capsule", "dimensions": { "radius": 0.55, "length": 1.9 }, "position": [2.0, 3.5, 0.55], "rotationDeg": [-28, 0, 22], "color": "#B07A4A", "parent": null },
+    { "id": "arm_r", "name": "Right Arm", "type": "capsule", "dimensions": { "radius": 0.55, "length": 1.9 }, "position": [-2.0, 3.5, 0.55], "rotationDeg": [-28, 0, -22], "color": "#B07A4A", "parent": null },
+    { "id": "leg_l", "name": "Left Leg", "type": "capsule", "dimensions": { "radius": 0.75, "length": 1.6 }, "position": [1.15, 0.78, 1.25], "rotationDeg": [82, 0, -12], "color": "#B07A4A", "parent": null },
+    { "id": "foot_pad_l", "name": "Left Foot Pad", "type": "ellipsoid", "dimensions": { "rx": 0.5, "ry": 0.18, "rz": 0.5 }, "position": [0, 1.4, 0], "rotationDeg": [0, 0, 0], "color": "#F2E3C6", "parent": "leg_l" },
+    { "id": "leg_r", "name": "Right Leg", "type": "capsule", "dimensions": { "radius": 0.75, "length": 1.6 }, "position": [-1.15, 0.78, 1.25], "rotationDeg": [82, 0, 12], "color": "#B07A4A", "parent": null },
+    { "id": "foot_pad_r", "name": "Right Foot Pad", "type": "ellipsoid", "dimensions": { "rx": 0.5, "ry": 0.18, "rz": 0.5 }, "position": [0, 1.4, 0], "rotationDeg": [0, 0, 0], "color": "#F2E3C6", "parent": "leg_r" },
+    { "id": "tail", "name": "Tail", "type": "sphere", "dimensions": { "r": 0.45 }, "position": [0, 1.4, -1.8], "rotationDeg": [0, 0, 0], "color": "#B07A4A", "parent": null }
+  ]
+}
+</script>
+<style>
+  html, body { margin: 0; height: 100%; background: #f4efe6; font-family: Helvetica, Arial, sans-serif; color: #2b2420; }
+  a { color: #8a5a30; } a:hover { color: #5e3c1e; }
+  three-d-stage:not(:defined) { visibility: hidden; }
+  three-d-stage { display: block; width: 100vw; height: 100vh; }
+  .label { position: fixed; top: 20px; left: 24px; pointer-events: none; }
+  .label h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .01em; }
+  .label p { margin: 4px 0 0; font-size: 12px; color: #6b5f55; }
+</style>
+</head>
+<body>
+<three-d-stage name="amigurumi-teddy-bear" background="#f4efe6"></three-d-stage>
+<div class="label">
+  <h1>Amigurumi Teddy Bear</h1>
+  <p>10 in · sitting · 17 crochet parts · units: inches</p>
+</div>
+<script src="three-d-stage.js"></script>
+<script type="module">
+const stage = document.querySelector('three-d-stage');
+const { THREE } = await stage.ready;
+const spec = JSON.parse(document.getElementById('crochet-model').textContent);
+
+const mats = {};
+function material(hex) {
+  const key = hex.toUpperCase();
+  if (mats[key]) return mats[key];
+  const name = (spec.palette && (spec.palette[hex] || spec.palette[key])) || 'yarn_' + key.slice(1);
+  const eye = name.includes('eye');
+  const m = new THREE.MeshStandardMaterial({
+    name, color: new THREE.Color(hex),
+    roughness: eye ? 0.15 : 0.95, metalness: eye ? 0.1 : 0
+  });
+  return (mats[key] = m);
+}
+
+function geometry(p) {
+  const d = p.dimensions;
+  switch (p.type) {
+    case 'sphere': return new THREE.SphereGeometry(d.r, 48, 32);
+    case 'ellipsoid': return new THREE.SphereGeometry(1, 64, 40).scale(d.rx, d.ry, d.rz);
+    case 'capsule': return new THREE.CapsuleGeometry(d.radius, d.length, 16, 48);
+    case 'cylinder': return new THREE.CylinderGeometry(d.radiusTop ?? d.radius, d.radiusBottom ?? d.radius, d.height, 48);
+    case 'cone': return new THREE.ConeGeometry(d.radius, d.height, 48);
+    default: throw new Error('Unknown part type: ' + p.type);
+  }
+}
+
+const root = new THREE.Group();
+root.name = 'amigurumi_teddy_bear';
+const nodes = {};
+for (const p of spec.parts) {
+  const mesh = new THREE.Mesh(geometry(p), material(p.color));
+  mesh.name = p.id;
+  mesh.userData = { name: p.name, type: p.type, dimensions: p.dimensions };
+  mesh.position.fromArray(p.position);
+  const r = p.rotationDeg.map(THREE.MathUtils.degToRad);
+  mesh.rotation.set(r[0], r[1], r[2], 'XYZ');
+  nodes[p.id] = mesh;
+}
+for (const p of spec.parts) (p.parent ? nodes[p.parent] : root).add(nodes[p.id]);
+
+stage.setObject(root);
+</script>
+</body>
+</html>

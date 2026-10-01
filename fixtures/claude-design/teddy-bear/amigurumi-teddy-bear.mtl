@@ -1,0 +1,25 @@
+# Exported by three-d-stage
+newmtl caramel_yarn
+Kd 0.4342 0.1946 0.0685
+Ks 0.2000 0.2000 0.2000
+Ns 10
+d 1.0000
+
+newmtl cream_yarn
+Kd 0.8879 0.7682 0.5647
+Ks 0.2000 0.2000 0.2000
+Ns 10
+d 1.0000
+
+newmtl dark_brown_yarn
+Kd 0.0437 0.0232 0.0144
+Ks 0.2000 0.2000 0.2000
+Ns 10
+d 1.0000
+
+newmtl black_safety_eye
+Kd 0.0056 0.0056 0.0056
+Ks 0.2000 0.2000 0.2000
+Ns 170
+d 1.0000
+
