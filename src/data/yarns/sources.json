@@ -1,0 +1,35 @@
+{
+  "$comment": "Input of scripts/import-yarns.mjs (DESIGN.md §5.6 'Yarn data'). Every line needs a complete provenance record and a licence on the allowlist; the script refuses anything else. Inputs are pinned by sha256.",
+  "lines": [
+    {
+      "id": "red-heart-super-saver",
+      "brand": "Red Heart",
+      "line": "Super Saver",
+      "cyc": 4,
+      "input": {
+        "path": "upstream/makebead-red-heart-super-saver.json",
+        "format": "makebead",
+        "sha256": "c971adb32043a13d50d53e6b83eb0f61970f5baf9b581c24c9e4e75443e9b7d6"
+      },
+      "provenance": {
+        "source": "https://github.com/makebead/craft-color-codes/blob/84dbdc26a961247f2aba58c91f314966a38e64ae/data/json/red-heart-super-saver.json",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "licenseEvidence": "https://github.com/makebead/craft-color-codes/blob/84dbdc26a961247f2aba58c91f314966a38e64ae/LICENSE-DATA.md",
+        "licenseStatement": "LICENSE-DATA.md: \"The files in data/ are licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0).\" The file's own \"license\" field is \"CC-BY-4.0\"; SOURCES.md lists red-heart-super-saver as CC-BY-4.0 and outside the MIT exception (perler-midi, hama-midi, artkal-s, nabbi). npm craft-color-codes@1.0.0 declares (MIT AND CC-BY-4.0).",
+        "repository": "https://github.com/makebead/craft-color-codes",
+        "commit": "84dbdc26a961247f2aba58c91f314966a38e64ae",
+        "tag": "v1.0.0",
+        "retrieved": "2026-10-01",
+        "attribution": "Color data: craft-color-codes by MakeBead (https://makebead.com), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+        "changes": "Converted to the app's YarnLine format: hex lowercased, ids and line metadata added, skein sizes added from the maker's product page, heathers flagged textured. Names, numbers and colors unchanged.",
+        "notes": "Upstream status 'approximate': codes and names checked against the Yarnspirations catalogue (2026-07-06); colors are uncalibrated approximations."
+      },
+      "skeins": {
+        "solid": { "yards": 364, "grams": 198 },
+        "textured": { "yards": 236, "grams": 141 },
+        "source": "https://www.yarnspirations.com/products/red-heart-super-saver-yarn ('Ball size': Solids 198 g/7 oz, 333 m/364 yd; Flecks/Heathers 141 g/5 oz, 215 m/236 yd), retrieved 2026-10-01"
+      }
+    }
+  ]
+}
