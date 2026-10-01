@@ -275,31 +275,40 @@ function resizeLimb(p: LimbPart, length: number, grow: -1 | 0 | 1): LimbPart {
   return p.type === 'capsule' ? { ...p, position, dims: { ...p.dims, length: next } } : { ...p, position, dims: { ...p.dims, h: next } };
 }
 
+/** A capsule limb's stretched segment stops this many radii short of each pole (see `stretchSegment`). */
+const CAP_ZONE = 0.5;
+
 /**
- * The straight part of a limb's axis — between its two cap centers for a capsule (`length − 2r`), its whole
- * height for a cylinder (flat ends) — as the limb's center, its +axis and the half length of that part.
+ * The segment of a limb's axis that `stretchChildren` stretches, as the limb's center, its +axis and the half
+ * length of the segment. A capsule's segment stops `CAP_ZONE`·r short of each pole — over the outer half of each
+ * cap — so it is at least r long even at the capsule's 2·r floor; a cylinder's (flat ends) is its whole height.
+ * The segment never has length 0, so the stretch from one length to another can always be undone.
  */
-function straightPart(p: LimbPart): { center: Vec3; axis: Vec3; half: number } {
-  const half = p.type === 'capsule' ? Math.max(0, Math.max(p.dims.length, 2 * p.dims.r) - 2 * p.dims.r) / 2 : p.dims.h / 2;
+function stretchSegment(p: LimbPart): { center: Vec3; axis: Vec3; half: number } {
+  const half = p.type === 'capsule' ? Math.max(p.dims.length, 2 * p.dims.r) / 2 - CAP_ZONE * p.dims.r : p.dims.h / 2;
   return { center: partCenter(p), axis: partAxis(p, 1), half };
 }
 
 /**
  * Re-anchors the direct children of a limb whose length changed (the limb's §4.2 re-anchoring): each child is
- * placed by where its center lies along the limb's axis, carried by the stretch of the limb — a child beyond
- * either end of the straight part moves with that end (a foot pad on the foot cap moves with the foot), a child
- * along the straight part keeps its fraction of it — and its subtree is translated by the same displacement
- * (along the axis; the child's distance from the axis and its rotation are kept). Unlike a ray from the limb's
- * center along a fixed direction (0.42 in apart on the toes-in teddy, nubs → long vs long), stretches compose, so
- * a limb's children end up in the same place whatever chips came before (while the straight part has a length:
- * a capsule at its 2·r floor keeps only which end each child is nearer).
+ * placed by where its center lies along the limb's axis, carried by the stretch of the limb's `stretchSegment` —
+ * a child beyond either end of the segment (within r/2 of a capsule's pole, or past it) moves with that end, so
+ * a foot pad on the foot cap moves with the foot; a child along the segment keeps its fraction of it — and its
+ * subtree is translated by the same displacement (along the axis; the child's distance from the axis and its
+ * rotation are kept). The segment's length is never 0 (≥ r for a capsule at its 2·r floor, ≥ 0.05 in for a
+ * cylinder), so this map is invertible for every limb length and stretches compose: a limb's children end up in
+ * the same place whatever chips came before, through the floor too. (The straight part between a capsule's cap
+ * centers did not: at the floor it has length 0, every child along it collapsed onto the limb's center, and the
+ * next chip put it back at the middle. A ray from the limb's center along a fixed direction did not either:
+ * 0.42 in apart on the toes-in teddy, nubs → long vs long.)
  */
 function stretchChildren(before: CrochetModelV1, after: CrochetModelV1, limbBefore: LimbPart, limbAfter: LimbPart, meshes?: Record<string, ColoredMesh>): CrochetModelV1 {
   const graph = attachGraph(before.parts);
   const at = graph.index.get(limbBefore.id);
   if (at === undefined || graph.children[at].length === 0) return after;
-  const old = straightPart(limbBefore);
-  const now = straightPart(limbAfter);
+  const old = stretchSegment(limbBefore);
+  const now = stretchSegment(limbAfter);
+  if (!(old.half > 0) || !(now.half > 0)) return after; // a zero-size limb (r = 0 or h = 0): nothing to stretch
   const a = old.axis;
   const shift = (now.center[0] - old.center[0]) * a[0] + (now.center[1] - old.center[1]) * a[1] + (now.center[2] - old.center[2]) * a[2];
   const move = new Map<string, Vec3>();
@@ -308,9 +317,9 @@ function stretchChildren(before: CrochetModelV1, after: CrochetModelV1, limbBefo
     const q = partCenter(child, meshOf(child, meshes));
     const y = (q[0] - old.center[0]) * a[0] + (q[1] - old.center[1]) * a[1] + (q[2] - old.center[2]) * a[2];
     let next: number;
-    if (y >= old.half && y > -old.half) next = y - old.half + shift + now.half;
-    else if (y <= -old.half && y < old.half) next = y + old.half + shift - now.half;
-    else next = shift - now.half + (old.half > 0 ? (y + old.half) / (2 * old.half) : 0.5) * 2 * now.half;
+    if (y >= old.half) next = y - old.half + shift + now.half;
+    else if (y <= -old.half) next = y + old.half + shift - now.half;
+    else next = shift + (y / old.half) * now.half;
     const dy = next - y;
     if (!Number.isFinite(dy) || dy === 0) continue;
     const d: Vec3 = [a[0] * dy, a[1] * dy, a[2] * dy];

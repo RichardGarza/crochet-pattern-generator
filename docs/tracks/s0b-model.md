@@ -287,7 +287,7 @@ fixture URLs. `__tests__/helpers/everyType.ts`: `buildEveryType()`, `readEveryTy
 | `nameParts` on anonymous parts; `keepIds` | `naming.test.ts` | The parentless, label-less teddy with ids `p00…p16` → body, head, muzzle, ear_l/ear_r, arm_l/arm_r, leg_l/leg_r, tail, part_1…part_7 by volume; kept ids stay and are not reused |
 | `placeChildOnSurface`, every parent type | `place.test.ts` | 9 primitive types, plain and rotated, 9 directions (a torus: 3 in its ring plane, its axis, world +Y): kernel overlap 0.1 ± 8.5e-7; measured on the builder meshes 0.1 ± 0.0034 (flat parents: plus the bevel the SDF ignores, ≤ 0.095); `{ hit, normal }` on every type; mesh parents by SDF and by triangles; every child type |
 | G23 head 1:1 / 1:3 | `proportions.test.ts` | Head fraction 0.50005 / 0.24996 (targets 0.5 / 0.25); height 9.878906 / 9.878905 vs 9.878905 (< 1e-5 %); ear gaps −0.655 / −0.918 in (they enter the head) |
-| G23 limbs "long" | `proportions.test.ts` | arm_l, arm_r 0.55004·H, legs 0.44003·H; proximal poles moved 7.5e-7 in before the rescale; `arm_r` is the exact mirror of `arm_l`. Chip order does not matter: 9 chips in a row (nubs, short, medium, long, nubs, long, short, nubs, medium) move the shoulders and hips by at most 1.3e-6 in; any chip followed by any other equals the second applied directly to 2.3e-6 in (every part) on the teddy, on the teddy with toes-in legs (rotations `[82, 0, ±12]`) and on the teddy with arms hanging straight down its sides (`[0, 0, 0]` at `[±2.3, 2.9, 0]`); 4.4e-4 in on the §3.6 bunny (its height changes with the limbs, so this is the bisection's 2e-4 tolerance) |
+| G23 limbs "long" | `proportions.test.ts` | arm_l, arm_r 0.55004·H, legs 0.44003·H; proximal poles moved 7.5e-7 in before the rescale; `arm_r` is the exact mirror of `arm_l`. Chip order does not matter: 9 chips in a row (nubs, short, medium, long, nubs, long, short, nubs, medium) move the shoulders and hips by at most 1.3e-6 in; any chip followed by any other equals the second applied directly to 2.3e-6 in (every part) on the teddy, on the teddy with toes-in legs (rotations `[82, 0, ±12]`), on the teddy with arms hanging straight down its sides (`[0, 0, 0]` at `[±2.3, 2.9, 0]`) and to 3.2e-6 in on the teddy with six knees on the side of `leg_l` (axial −1.0…1.4 in, 0.75 in off the axis; the "nubs" leg at its 2·r floor — before deviation 23's fix a knee at +0.5 in ended 2.313 in off, nubs → long); 4.4e-4 in on the §3.6 bunny (its height changes with the limbs, so this is the bisection's 2e-4 tolerance). Seeded random leg poses with the foot pads anywhere from pole to pole, random chip runs through "nubs": the pads agree with the last chip applied directly to 1.7e-5 in (before the fix: up to 2.99 in), every part to 4.3e-4 in (the arms; the legs set the model's bottom there, so the bisection's tolerance again). Before the rescale (`resizeLimbs`), random runs of 2–5 lengths from 0.3 in (below the floor) to 6 in with 12 studs anywhere on the leg equal the last length applied directly to 4.2e-6 in (asserted < 1e-4 in: positions are rounded to 1e-6 in at each step) |
 | G23 `readProportions(teddy)` | `proportions.test.ts` | `{ headBody: 1.3, limbs: 'short', disabled: {} }` (raw 1.2974; arms 3.0/9.879 = 0.304 = 1.21 × 0.25) |
 | Disabled reasons of §4.2 | `proportions.test.ts` | Above, each tested |
 | `applyProportions` ≤ 200 ms | `proportions.test.ts` | 2.8 ms (1:1), 2.2 ms (1:3), 14.5 ms (long), 11.7 ms (both) |
@@ -423,12 +423,20 @@ the analytic surface of its part to 1e-5 in).
     center). A limb's center moves when it grows from one end, so a child off the limb's axis slides along it:
     the toes-in teddy's foot pad (73° from its leg's center) ended 0.42 in from where `long` puts it after `nubs`
     → `long`, and sank 0.25 in deeper. `resizeLimbs` instead moves each direct child (and its subtree) along the
-    axis by where its center lies: beyond either end of the straight part (between the cap centers of a capsule;
-    the whole height of a cylinder) it moves with that end, along it it keeps its fraction. Stretches compose, so
-    every chip order gives the same model (2.3e-6 in), the pad keeps its gap to the leg (−0.232 in) on every
-    chip, and the canonical teddy (pads on the leg axis) is unchanged. A capsule at its 2·r floor has no straight
-    part and keeps only which end a child is nearer. The head edit and `reanchorChildren` (T6) keep the spec's
-    ray.
+    axis by where its center lies on the limb's stretched segment — a capsule's axis less r/2 at each pole (the
+    outer half of each cap), a cylinder's whole height: beyond either end of the segment (within r/2 of a pole, or
+    past it) the child moves with that end; along it, it keeps its fraction of the segment. The segment is never
+    shorter than r (a capsule at its 2·r floor) or 0.05 in (a cylinder), so the stretch between any two lengths
+    can be undone, stretches compose, and any chip order gives the same model: 2.3e-6 in for every part on the
+    teddy and its posed variants, 3.2e-6 in with six knees along a leg, through the "nubs" floor; 1.7e-5 in for
+    foot pads anywhere on the leg in seeded random poses (every part within the bisection's tolerance, 4.3e-4 in,
+    where the limbs change the model's height). The pad keeps its gap to the leg (−0.232 in) on every chip, and
+    the canonical teddy (pads 0.15 in from the foot pole, on the leg axis) is unchanged. The first version
+    stretched the straight part between the cap centers; at the floor ("nubs" legs: 0.12·H = 1.19 in < 2·r =
+    1.5 in) that part has length 0, every child along it collapsed onto the limb's center and the next chip put it
+    back at the middle (a knee 2.313 in off, nubs → long; pads up to 2.99 in off in random poses). The cost of the
+    fix: a child in the inner half of a cap (between r/2 and r from its pole) now partly stretches instead of
+    riding with the pole. The head edit and `reanchorChildren` (T6) keep the spec's ray.
 
 ## Ambiguities resolved
 

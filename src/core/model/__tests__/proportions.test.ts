@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ColoredMesh } from '../../../types/geometry';
 import type { CrochetModelV1, Part, Vec3 } from '../../../types/model';
+import { anyPerpendicular } from '../../kernel/vec';
+import { mulberry32, randomInt, randomRange } from '../../kernel/prng';
 import { isOneTree, subtreeIds } from '../attach';
 import { captureAnchor, overlapAlongRay } from '../place';
 import {
@@ -457,7 +459,7 @@ describe('applyProportions: limb length (§4.2, G23)', HEAVY, () => {
     expect(by(applyProportions(teddy, { headBody: 2 }).model).arm_l[LIMB_PROXIMAL_KEY]).toBeUndefined();
   });
 
-  it('a limb’s children ride with the end they are on, or keep their fraction of the straight part; resizes compose', () => {
+  it('a limb’s children ride with the end they are on, or keep their fraction of the stretched segment; resizes compose', () => {
     // A vertical arm hanging from a sphere, top (shoulder) inside it: a mitten on the hand cap, a patch on the side
     // near the top of the straight part, a dot on the patch.
     const base = modelOf([
@@ -472,14 +474,135 @@ describe('applyProportions: limb length (§4.2, G23)', HEAVY, () => {
     const short = by(resizeLimbs(base, { arm_l: 2 }));
     expect(poles(short.arm_l)[0][1]).toBeCloseTo(5.4, 6); // the shoulder stays
     expect(short.mitten.position[1]).toBeCloseTo(1.3 + 2, 6); // the mitten rides with the hand
-    // the patch keeps its fraction of the straight part: 0.4 in below its top of 3.2 in, 0.15 in of 1.2 in
-    expect(short.patch.position[1]).toBeCloseTo(5 - 0.125 * 1.2, 6);
+    // the patch keeps its fraction of the stretched segment (the axis less r/2 = 0.2 in at each pole): 0.6 in
+    // below its top of 3.6 in, then 1/6 of 1.6 in below the top at 5.4 − 0.2 in
+    expect(short.patch.position[1]).toBeCloseTo(5.2 - 1.6 / 6, 6);
     expect(short.patch.position[0]).toBe(1.65);
     expect(short.eye_dot.position[1] - short.patch.position[1]).toBeCloseTo(0.4, 6); // the subtree follows its child
     // 4 → 2 → 6 in is 4 → 6 in, for every part
     const twice = by(resizeLimbs(resizeLimbs(base, { arm_l: 2 }), { arm_l: 6 }));
     const once = by(resizeLimbs(base, { arm_l: 6 }));
     for (const id of Object.keys(once)) expect(dist(twice[id].position, once[id].position), id).toBeLessThan(1e-5);
+  });
+
+  // Verifier round 3: a "nubs" leg sits at its capsule floor (0.12·H = 1.19 in < 2·r = 1.5 in), where a capsule
+  // has no straight part. Stretching children over the straight part sent every child along it onto the limb's
+  // center at "nubs" and back to the middle on the next chip (a knee 2.3 in off, nubs → long). The stretched
+  // segment now stops r/2 short of each pole, so it is never shorter than r and every chip order composes.
+  const CHIPS = ['nubs', 'short', 'medium', 'long'] as const;
+  /** The teddy with extra parts attached to `leg_l`, each at its leg's center + axial·axis + radial·perpendicular. */
+  const onLeg = (base: CrochetModelV1, extras: { id: string; axial: number; radial: number }[]): CrochetModelV1 => {
+    const leg = by(base).leg_l;
+    const c = partCenter(leg);
+    const a = partAxis(leg, 1);
+    const n = anyPerpendicular(a);
+    const at = (axial: number, radial: number): Vec3 => [0, 1, 2].map((i) => c[i] + axial * a[i] + radial * n[i]) as Vec3;
+    return {
+      ...base,
+      parts: [...base.parts, ...extras.map((e) => part('sphere', { r: 0.25 }, { id: e.id, position: at(e.axial, e.radial), color: 'caramel_yarn', attach: { to: 'leg_l' } }))],
+    };
+  };
+  /** The worst distance between the same part of two models. */
+  const worstMove = (x: CrochetModelV1, y: CrochetModelV1): { d: number; id: string } => {
+    const other = by(y);
+    let worst = { d: 0, id: '' };
+    for (const p of x.parts) {
+      const d = dist(p.position, other[p.id].position);
+      if (d > worst.d) worst = { d, id: p.id };
+    }
+    return worst;
+  };
+
+  it('a knee along the straight part of a leg lands in the same place whatever chip came before, through the nubs floor', () => {
+    // knees at axial offsets ±0.5 in (the confirmer's repro: 2.313 in / 0.534 in off, nubs → long), on the leg's
+    // middle, near a cap center and in the outer half of each cap
+    const knees = [0.5, -0.5, 0, 0.8, -1.0, 1.4].map((axial, i) => ({ id: `knee_${i}`, axial, radial: 0.75 }));
+    const model = onLeg(teddy, knees);
+    expect(validateModel(model).ok).toBe(true);
+    const direct = Object.fromEntries(CHIPS.map((c) => [c, applyProportions(model, { limbs: c }).model]));
+    // the nubs leg is at its floor (no straight part), and its knees keep their order along the leg
+    const nubs = by(direct.nubs);
+    expect(limbLength(nubs.leg_l)).toBeCloseTo(2 * (nubs.leg_l.dims as { r: number }).r, 6);
+    const along = (m: Record<string, Part>, id: string): number => {
+      const a = partAxis(m.leg_l, 1);
+      const c = partCenter(m.leg_l);
+      return [0, 1, 2].reduce((s, i) => s + (m[id].position[i] - c[i]) * a[i], 0);
+    };
+    const order = [...knees].sort((x, y) => x.axial - y.axial).map((k) => along(nubs, k.id));
+    for (let i = 1; i < order.length; i++) expect(order[i]).toBeGreaterThan(order[i - 1]);
+    let worst = 0;
+    for (const first of CHIPS) {
+      const once = direct[first];
+      for (const second of CHIPS) {
+        const twice = applyProportions(once, { limbs: second }).model;
+        const w = worstMove(twice, direct[second]);
+        worst = Math.max(worst, w.d);
+        expect(w.d, `${first} → ${second}: ${w.id}`).toBeLessThan(1e-3);
+      }
+    }
+    expect(worst).toBeLessThan(1e-4);
+  });
+
+  it('seeded random poses: foot pads anywhere on the leg, any chip sequence equals its last chip applied directly', () => {
+    const rng = mulberry32(2323);
+    const b = by(teddy);
+    let worst = 0;
+    let alongStraight = 0;
+    for (let pose = 0; pose < 8; pose++) {
+      // a random leg direction (mirrored on the right) and a pad anywhere from pole to pole, or just beyond one
+      const rot: Vec3 = [randomRange(rng, 30, 130), randomRange(rng, -20, 20), randomRange(rng, -35, 35)];
+      const legL: Part = { ...b.leg_l, rotationDeg: rot };
+      const c = partCenter(legL);
+      const a = partAxis(legL, 1);
+      const n = anyPerpendicular(a);
+      const half = limbLength(legL) / 2;
+      const axial = randomRange(rng, -half - 0.2, half + 0.2);
+      if (Math.abs(axial) < half - 0.75) alongStraight++;
+      const radial = randomRange(rng, 0.3, 0.8);
+      const pad: Vec3 = [0, 1, 2].map((i) => c[i] + axial * a[i] + radial * n[i]) as Vec3;
+      const mirror = (v: Vec3): Vec3 => [-v[0], v[1], v[2]];
+      const changes: Record<string, Partial<Part>> = {
+        leg_l: { rotationDeg: rot },
+        leg_r: { rotationDeg: [rot[0], -rot[1], -rot[2]] },
+        foot_pad_l: { position: pad },
+        foot_pad_r: { position: mirror(pad) },
+      };
+      const model: CrochetModelV1 = { ...teddy, parts: teddy.parts.map((p) => (Object.hasOwn(changes, p.id) ? ({ ...p, ...changes[p.id] } as Part) : p)) };
+      // a random run of 2–4 chips, always through "nubs"
+      const run = [CHIPS[randomInt(rng, 4)], 'nubs' as const, ...Array.from({ length: randomInt(rng, 3) }, () => CHIPS[randomInt(rng, 4)])];
+      let m = model;
+      for (const chip of run) m = applyProportions(m, { limbs: chip }).model;
+      const direct = applyProportions(model, { limbs: run[run.length - 1] }).model;
+      for (const id of ['foot_pad_l', 'foot_pad_r']) expect(dist(by(m)[id].position, by(direct)[id].position), `pose ${pose}: ${id}`).toBeLessThan(1e-4);
+      const w = worstMove(m, direct);
+      worst = Math.max(worst, w.d);
+      expect(w.d, `pose ${pose} (${run.join(' → ')}): ${w.id}`).toBeLessThan(1e-3);
+    }
+    expect(alongStraight).toBeGreaterThan(0); // some pads were on the straight part (the confirmer's 2.99 in case)
+    // Where the legs reach the bottom of the model its height changes with them, and the arms carry the bisection's
+    // 2e-4 relative tolerance (4.3e-4 in here, as on the §3.6 bunny); the pads themselves agree to 2e-5 in.
+    expect(worst).toBeLessThan(1e-3);
+  });
+
+  it('resizeLimbs composes for children anywhere on a limb: random length runs through and below the 2·r floor', () => {
+    const rng = mulberry32(2324);
+    const model = onLeg(
+      teddy,
+      Array.from({ length: 12 }, (_, i) => ({ id: `stud_${i}`, axial: randomRange(rng, -2, 2), radial: randomRange(rng, 0, 0.9) })),
+    );
+    let worst = 0;
+    for (let run = 0; run < 40; run++) {
+      // leg lengths from well below the floor (1.5 in) to well above the canonical 3.1 in; arms alike
+      const lengths = Array.from({ length: 2 + randomInt(rng, 4) }, () => ({ leg_l: randomRange(rng, 0.3, 6), arm_l: randomRange(rng, 0.5, 6) }));
+      let m = model;
+      for (const l of lengths) m = resizeLimbs(m, l);
+      const direct = resizeLimbs(model, lengths[lengths.length - 1]);
+      const w = worstMove(m, direct);
+      worst = Math.max(worst, w.d);
+      // positions are rounded to 1e-6 in at every step, and a short segment stretched long multiplies that
+      expect(w.d, `run ${run}: ${w.id}`).toBeLessThan(1e-4);
+    }
+    expect(worst).toBeLessThan(1e-4);
   });
 
   it('limbProximalEnd: the larger parent SDF; on a tie the pole nearer the parent center', () => {
