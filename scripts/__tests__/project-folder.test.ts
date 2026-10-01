@@ -154,9 +154,12 @@ describe('isolation (§5.5.4): the default folder is refused for tests, agents, 
     fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${path.join(main, '.git', 'worktrees', 'w1')}\n`);
     expect(gitBranch(wt)).toBe('track/t9-x');
     expect(gitBranch(path.join(main, 'nested', 'dir'))).toBe('master'); // walks up to the checkout
-    // This test runs in a track worktree: never master.
-    expect(gitBranch(process.cwd())).not.toBe('master');
-    expect(isolationReason({}, process.cwd())).not.toBeNull();
+    // In a track worktree the branch is never master; in the main checkout it is, and VITEST still refuses.
+    if (process.cwd().includes(`${path.sep}.claude${path.sep}worktrees${path.sep}`)) {
+      expect(gitBranch(process.cwd())).not.toBe('master');
+      expect(isolationReason({}, process.cwd())).not.toBeNull();
+    }
+    expect(isolationReason(process.env, process.cwd())).not.toBeNull();
   });
 
   it('refuses the REAL default folder in this very process (VITEST is set) without touching it', () => {

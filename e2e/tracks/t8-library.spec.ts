@@ -138,7 +138,7 @@ test.describe('T8 library and folder mirror in a real browser', () => {
     await expect(teddy.locator('img')).toHaveAttribute('src', /^blob:/);
     await expect(card(page, 'Heart blanket').getByText('2D chart')).toBeVisible();
     await expect(card(page, 'Bunny from photos').getByText('3D toy')).toBeVisible();
-    await expect(page.getByText('3 projects')).toBeVisible();
+    await expect(page.getByText('3 projects', { exact: true })).toBeVisible();
     await shot(page, info, 't8-library', () => card(page, 'Heart blanket').hover());
 
     // Keyboard: Tab reaches a card's actions.
