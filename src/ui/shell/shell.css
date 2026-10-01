@@ -862,6 +862,17 @@ main:focus {
   gap: 3px;
 }
 
+.shell-shortcuts__title {
+  margin: var(--space-4) 0 var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+section:first-child > .shell-shortcuts__title {
+  margin-top: 0;
+}
+
 .shell-shortcuts__or {
   margin-right: 3px;
   color: var(--color-text-subtle);

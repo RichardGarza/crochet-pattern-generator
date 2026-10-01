@@ -331,12 +331,12 @@ describe('expand(encodeOps(ops)) deep-equals ops (R10)', () => {
     }
   });
 
-  it('for thousands of random lines, in both modes, with segments, across the 120-token limit', { timeout: 60_000 }, () => {
+  it('for thousands of random lines, in both modes, with segments, across the 250-token limit', { timeout: 120_000 }, () => {
     const rng = mulberry32(31337);
     let long = 0;
     let checked = 0;
     for (let i = 0; i < 6000; i++) {
-      const length = i % 10 === 0 ? 100 + Math.floor(rng() * 400) : Math.floor(rng() * 140);
+      const length = i % 10 === 0 ? 200 + Math.floor(rng() * 400) : Math.floor(rng() * 140);
       const alphabet = 1 + Math.floor(rng() * 16);
       const ops = i % 2 === 0 ? randomOps(rng, length, alphabet) : structuredOps(rng, length, alphabet);
       if (ops.length > EXACT_MAX_TOKENS) long++;
@@ -352,7 +352,7 @@ describe('expand(encodeOps(ops)) deep-equals ops (R10)', () => {
       }
     }
     expect(checked).toBe(12000);
-    expect(long).toBeGreaterThan(600);
+    expect(long).toBeGreaterThan(200);
   });
 });
 
@@ -443,24 +443,27 @@ describe('encodeOps — segments (research 07 §6.9, §7.6 vector 14)', () => {
     expect(text(ops, { segments: 'x' as unknown as EncodeOptions['segments'] })).toBe('(sc, inc) x 6');
   });
 
-  it('the 120-token limit applies per segment', () => {
-    const half = times(50, sc, inc, sc); // 150 tokens: the fallback when alone
-    expect(text(half)).toBe('sc, (inc, 2 sc) x 49, inc, sc');
-    expect(text([...half, ...half], { segments: [{ at: 150 }] })).toBe('sc, (inc, 2 sc) x 49, inc, sc, sc, (inc, 2 sc) x 49, inc, sc');
-    const short = times(30, sc, inc, sc); // 90 tokens: exact
-    expect(text([...short, ...short], { segments: [{ at: 90 }] })).toBe('(sc, inc, sc) x 30, (sc, inc, sc) x 30');
+  it('the token limit applies per segment', () => {
+    const half = times(90, sc, inc, sc); // 270 tokens: the fallback when alone
+    expect(text(half)).toBe('sc, (inc, 2 sc) x 89, inc, sc');
+    expect(text([...half, ...half], { segments: [{ at: 270 }] })).toBe('sc, (inc, 2 sc) x 89, inc, sc, sc, (inc, 2 sc) x 89, inc, sc');
+    const short = times(50, sc, inc, sc); // 150 tokens: exact, although the whole line has 300
+    expect(text([...short, ...short], { segments: [{ at: 150 }] })).toBe('(sc, inc, sc) x 50, (sc, inc, sc) x 50');
   });
 });
 
-describe('encodeOps — linear fallback above 120 tokens (§2.6.1, D8)', () => {
-  it('uses the exact search up to 120 tokens and the fallback from 121', () => {
-    expect(EXACT_MAX_TOKENS).toBe(120);
+describe('encodeOps — linear fallback above 250 tokens (§2.6.1, D8; 120 before design v1.4)', () => {
+  it('uses the exact search up to 250 tokens and the fallback from 251', () => {
+    expect(EXACT_MAX_TOKENS).toBe(250);
     expect(FALLBACK_MAX_PERIOD).toBe(8);
-    expect(text(times(40, sc, inc, sc))).toBe('(sc, inc, sc) x 40'); // 120 tokens: exact
-    // 123 tokens: runs = sc, inc, (2 sc, inc) × 40, sc. Not periodic as a whole; scanning from the left, the
-    // first run starts no repeat, the second starts (inc, 2 sc) × 40.
-    expect(text(times(41, sc, inc, sc))).toBe('sc, (inc, 2 sc) x 40, inc, sc');
-    expect(text(times(41, sc, inc, sc), { exactMaxTokens: 200 })).toBe('(sc, inc, sc) x 41');
+    expect(text(times(50, sc, inc, sc, sc, sc))).toBe('(sc, inc, 3 sc) x 50'); // 250 tokens: exact
+    // 252 tokens: runs = sc, inc, (2 sc, inc) × 83, sc. Not periodic as a whole; scanning from the left, the
+    // first run starts no repeat, the second starts (inc, 2 sc) × 83.
+    expect(text(times(84, sc, inc, sc))).toBe('sc, (inc, 2 sc) x 83, inc, sc');
+    expect(text(times(84, sc, inc, sc), { exactMaxTokens: 600 })).toBe('(sc, inc, sc) x 84');
+    expect(text(times(83, sc, inc, sc))).toBe('(sc, inc, sc) x 83'); // 249 tokens: exact
+    expect(text(times(41, sc, inc, sc))).toBe('(sc, inc, sc) x 41'); // 123 tokens: the fallback before v1.4
+    expect(text(times(41, sc, inc, sc), { exactMaxTokens: 120 })).toBe('sc, (inc, 2 sc) x 40, inc, sc');
     expect(text(times(40, sc, inc, sc), { exactMaxTokens: 119 })).toBe('sc, (inc, 2 sc) x 39, inc, sc');
   });
 
@@ -497,13 +500,13 @@ describe('encodeOps — linear fallback above 120 tokens (§2.6.1, D8)', () => {
     const block8 = block9.slice(0, 8);
     const lead = [...times(2, colored(sc, 'Z'))];
     const nine = [...lead, ...times(14, ...block9)]; // 1 + 126 runs
-    const fallback = encodeOps(nine, { mode: 'runs' });
+    const fallback = encodeOps(nine, { mode: 'runs', exactMaxTokens: 120 });
     expect(fallback.every((item) => item.kind === 'run')).toBe(true);
     expect(fallback.length).toBe(127);
     expect(expand(fallback)).toStrictEqual(nine);
     expect(text(nine, { mode: 'runs', exactMaxTokens: 1000 })).toBe('2 sc Z, (sc A, sc B, sc C, sc D, sc E, sc F, sc G, sc H, sc I) x 14');
     const eight = [...lead, ...times(16, ...block8)]; // 1 + 128 runs
-    expect(text(eight, { mode: 'runs' })).toBe('2 sc Z, (sc A, sc B, sc C, sc D, sc E, sc F, sc G, sc H) x 16');
+    expect(text(eight, { mode: 'runs', exactMaxTokens: 120 })).toBe('2 sc Z, (sc A, sc B, sc C, sc D, sc E, sc F, sc G, sc H) x 16');
   });
 
   it('keeps one bracket level and round-trips', { timeout: 60_000 }, () => {
@@ -541,9 +544,9 @@ describe('encodeOps — memo (§2.6.1: LRU of 4 096 entries)', () => {
 
   it('keeps the exact search and the fallback apart for the same tokens', () => {
     const ops = times(41, sc, inc, sc);
-    expect(text(ops)).toBe('sc, (inc, 2 sc) x 40, inc, sc');
-    expect(text(ops, { exactMaxTokens: 500 })).toBe('(sc, inc, sc) x 41');
-    expect(text(ops)).toBe('sc, (inc, 2 sc) x 40, inc, sc');
+    expect(text(ops, { exactMaxTokens: 120 })).toBe('sc, (inc, 2 sc) x 40, inc, sc');
+    expect(text(ops)).toBe('(sc, inc, sc) x 41');
+    expect(text(ops, { exactMaxTokens: 120 })).toBe('sc, (inc, 2 sc) x 40, inc, sc');
     expect(encodeMemoStats()).toMatchObject({ size: 2, hits: 1 });
   });
 

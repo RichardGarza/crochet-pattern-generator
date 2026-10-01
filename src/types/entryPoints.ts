@@ -11,7 +11,7 @@
 import type { ManifoldToplevel } from 'manifold-3d';
 import type { AmiRequest, AmiResult } from './ami';
 import type { ChartGrid, ChartRequest, ChartResult, ChartSettings } from './chart';
-import type { ResolvedGauge, TechniqueId } from './gauge';
+import type { GaugeSpec, ResolvedGauge, TechniqueId } from './gauge';
 import type { ColoredMesh, RgbaImage, ViewLabel } from './geometry';
 import type { ImportContext, ImportInput, ImportResult, Repair } from './importer';
 import type { CrochetModelV1, Dims, Hex, Part, PartType, Vec3 } from './model';
@@ -90,6 +90,11 @@ export type ScaleModelFn = (
   meshes?: Record<string, ColoredMesh>,
 ) => { model: CrochetModelV1; meshes?: Record<string, ColoredMesh> };
 
+// ---- core/gauge/resolve.ts (S0, implemented; used by T2, T4, T6)
+
+/** §2.2.5; throws RangeError on input `checkGauge` reports as `E_GAUGE_INPUT`. */
+export type ResolveGaugeFn = (g: GaugeSpec) => ResolvedGauge;
+
 // ---- core/kernel/png.ts, core/kernel/geom/manifold.ts (S0, implemented)
 
 /** RGBA8, filter 0, fflate zlib (1-px export, tests). */
@@ -129,9 +134,10 @@ export type BuildPattern2DFn = (i: {
   dialect: 'compact' | 'verbose';
   title: string;
 }) => PatternDoc;
+/** Lines are written for `PatternDoc.hand` and printed as written; `docKind` = `PatternDoc.kind` (chart vs amigurumi round). */
 export type RenderLineFn = (
   line: Line,
-  o: { dialect: 'compact' | 'verbose'; terms: Terms; hand: Hand; decMethod?: 'invdec' | 'sc2tog' },
+  o: { dialect: 'compact' | 'verbose'; terms: Terms; hand: Hand; decMethod?: 'invdec' | 'sc2tog'; docKind?: '2d' | '3d' },
 ) => string;
 
 // ---- T2 — core/techniques/export.ts, core/pattern/{text,skill,notes,terminology}.ts: T8's export dialog and
@@ -163,10 +169,15 @@ export type NotesForFn = (
     joinedRounds?: boolean;
     leanStPerRnd?: number;
     roundLean?: ChartSettings['roundLean'];
+    /** Rounds of a tapestry round chart: the §2.7.5 drift sentence. */
+    rounds?: number;
+    /** The graph's stitch: "Each square = 1 hdc", "Ch 2". */
+    stitch?: 'sc' | 'hdc';
   },
 ) => string[];
-export type AbbreviationsForFn = (lines: Line[], terms: Terms) => PatternDoc['abbreviations'];
-export type SpecialStitchesForFn = (lines: Line[], terms: Terms) => PatternDoc['specialStitches'];
+/** `decMethod`: the decrease the pattern uses (`AmiSettings.decMethod`), so the other is not listed. */
+export type AbbreviationsForFn = (lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog') => PatternDoc['abbreviations'];
+export type SpecialStitchesForFn = (lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog') => PatternDoc['specialStitches'];
 
 // ---- T3 — core/recon/fit.ts
 

@@ -12,6 +12,14 @@ type Loader = () => Promise<Record<string, unknown>>;
 
 const CORE_ENTRY_POINTS: [path: string, names: string[], load: Loader][] = [
   ['core/kernel/png', ['encodePng', 'decodePng'], () => import('../../core/kernel/png')],
+  ['core/model/sdf', ['partSdf', 'overlapVolume', 'surfaceGap'], () => import('../../core/model/sdf')],
+  ['core/model/attach', ['inferAttach', 'inferMirrorPairs'], () => import('../../core/model/attach')],
+  ['core/model/revisions', ['carryOver'], () => import('../../core/model/revisions')],
+  ['core/model/naming', ['nameParts'], () => import('../../core/model/naming')],
+  ['core/model/place', ['placeChildOnSurface'], () => import('../../core/model/place')],
+  ['core/model/proportions', ['readProportions', 'applyProportions'], () => import('../../core/model/proportions')],
+  ['core/model/scale', ['scaleModel'], () => import('../../core/model/scale')],
+  ['core/kernel/geom/manifold', ['getManifold'], () => import('../../core/kernel/geom/manifold')],
   ['core/image2d/run', ['runChart'], () => import('../../core/image2d/run')],
   ['core/yarn/match', ['nearestYarn'], () => import('../../core/yarn/match')],
   ['core/techniques/index', ['buildPattern2D'], () => import('../../core/techniques/index')],
@@ -53,5 +61,11 @@ describe('cross-track entry points of src/core', () => {
     const png = await import('../../core/kernel/png');
     expect(isImplemented(png.encodePng)).toBe(true);
     expect(isImplemented(png.decodePng)).toBe(true);
+    for (const [path, names, load] of CORE_ENTRY_POINTS.filter(([p]) => p.startsWith('core/model/') || p.startsWith('core/kernel/'))) {
+      const mod = await load();
+      for (const name of names) expect(isImplemented(mod[name]), `${path} ${name}`).toBe(true);
+    }
+    const proportions = await import('../../core/model/proportions');
+    expect(Object.keys(proportions.LIMB_TEMPLATE).sort()).toEqual(['biped', 'creature', 'quadruped', 'quadruped-standing']);
   });
 });

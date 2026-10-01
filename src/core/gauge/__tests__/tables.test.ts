@@ -404,7 +404,8 @@ describe('Table E — amigurumi, tight sc in rounds (§2.2.3)', () => {
   });
 
   it.each(PRINTED_TABLE_E)('CYC %i: hook %f mm, w %f in, %f sts/in', (cyc, hookMm, w, stsPerIn) => {
-    expect(TABLE_E[cyc as Exclude<Cyc, 0>]).toEqual({ hookMm, wIn: w });
+    // tol (design v1.4, research 01 §5.4): 0.10 for the calibrated worsted row, 0.20 for the others
+    expect(TABLE_E[cyc as Exclude<Cyc, 0>]).toEqual({ hookMm, wIn: w, tol: cyc === 4 ? 0.1 : 0.2 });
     expect(amiHookMm(cyc)).toBe(hookMm);
     const cell = amiCell(cyc);
     expect(cell.w).toBe(w);

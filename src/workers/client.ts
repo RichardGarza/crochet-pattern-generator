@@ -60,9 +60,10 @@ export function isWorkerTerminated(error: unknown): error is WorkerTerminated {
 
 /**
  * The client's view of a worker API: no `supersede` (the latest-wins channels send it), and a job method
- * takes its request without `jobId` (the channel assigns it).
+ * takes its request without `jobId` (the channel assigns it). An optional method of the API (`MeshApi.redoSculpt`)
+ * is always present on the client; a worker without it rejects the call.
  */
-export type ClientOf<Api> = { [K in Exclude<keyof Api, 'supersede'>]: ClientMethod<Api[K]> };
+export type ClientOf<Api> = { [K in Exclude<keyof Api, 'supersede'>]-?: ClientMethod<NonNullable<Api[K]>> };
 
 /** A method whose only parameter is a request with a `jobId` is a job method; every other method is unchanged. */
 type ClientMethod<F> = F extends (...args: infer A) => infer P
@@ -281,9 +282,12 @@ export function createWorkerClient(o: { spawn?: SpawnWorker } = {}): WorkerClien
       voxelize: (m, n, options) => mesh.call((w) => w.voxelize(m, n, options)),
       sculpt: (volumeId, stroke) => mesh.call((w) => w.sculpt(volumeId, stroke)),
       undoSculpt: (undoId) => mesh.call((w) => w.undoSculpt(undoId)),
+      // Optional in MeshApi (design v1.4): a worker without it rejects the call like any unknown method.
+      redoSculpt: (undoId) =>
+        mesh.call((w) => w.redoSculpt?.(undoId) ?? Promise.reject(new Error('MeshApi.redoSculpt is not available in this worker'))),
       cut: (volumeId, plane) => mesh.call((w) => w.cut(volumeId, plane)),
       fit: (m) => mesh.call((w) => w.fit(m)),
-      fromPart: (part) => mesh.call((w) => w.fromPart(part)),
+      fromPart: (part, options) => mesh.call((w) => w.fromPart(part, options)),
     },
     ami: {
       generate: amiJobs.channel<AmiRequest, AmiResult>((r) => ami.call((w) => w.generate(r))),

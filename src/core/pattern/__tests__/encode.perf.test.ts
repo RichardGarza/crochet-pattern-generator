@@ -48,7 +48,7 @@ function timeEach(n: number, rounds: number, exactMaxTokens: number): number[] {
 }
 
 describe('encoder budgets (§5.8)', () => {
-  it('exact search: ≤ 5 ms per line at 120 tokens', { retry: 2, timeout: 60_000 }, () => {
+  it('exact search: ≤ 5 ms per line at the token limit (250 tokens)', { retry: 2, timeout: 60_000 }, () => {
     timeEach(EXACT_MAX_TOKENS, 5, EXACT_MAX_TOKENS); // warm-up
     const elapsed = timeEach(EXACT_MAX_TOKENS, 50, EXACT_MAX_TOKENS); // 400 lines, 50 of each shape
     // Every line is held to the budget except the slowest 1 % (4 lines), which a loaded machine may preempt

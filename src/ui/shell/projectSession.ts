@@ -102,18 +102,25 @@ export async function leaveProject(): Promise<void> {
   projectStore.getState().close({ discardUnsaved: true });
 }
 
-/** Creates a project of `kind`, opens it and returns it. The caller navigates to it. */
+/**
+ * Creates a project of `kind`, opens it and returns it. The caller navigates to it. The open project is left
+ * first: when leaving fails (unsaved changes a repository backend could not save), nothing is created and no
+ * lock is taken.
+ */
 export async function createProject(kind: NewProjectKind): Promise<ProjectDoc> {
   const { prefs } = appStore.getState();
-  const doc = await backend.create(newProjectDoc(kind, { id: newId(), now: new Date(), prefs }));
   await leaveProject();
+  const doc = await backend.create(newProjectDoc(kind, { id: newId(), now: new Date(), prefs }));
+  await leaveProject(); // only if another project was opened meanwhile
   projectStore.getState().open(doc);
   appStore.getState().upsertSummary(summaryOf(doc));
   return doc;
 }
 
 /**
- * Makes `id` the open project (no-op when it already is). False when the backend has no such project.
+ * Makes `id` the open project (no-op when it already is). False when the backend has no such project. The
+ * current project is left BEFORE the next one is opened, so a repository backend never takes the next lock
+ * while the current project cannot be left (its rejection reaches the caller; the current project stays open).
  */
 export function openProject(id: string): Promise<boolean> {
   if (projectStore.getState().doc?.id === id) return Promise.resolve(true);
@@ -121,6 +128,7 @@ export function openProject(id: string): Promise<boolean> {
   const running = opening.get(id);
   if (running) return running;
   const run = (async () => {
+    await leaveProject();
     const found = await backend.open(id);
     if (!found) return false;
     if (projectStore.getState().doc?.id === id) return true;

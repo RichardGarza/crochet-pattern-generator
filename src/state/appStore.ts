@@ -186,15 +186,25 @@ function browserCapabilityEnv(): CapabilityEnv {
  * mirror probe other than the header `x-cpg-mirror: on` — a static host's included — means off (§5.5.4).
  */
 export async function probeCapabilities(env: CapabilityEnv = browserCapabilityEnv()): Promise<{ webgpu: boolean; storagePersisted: boolean; folderMirror: boolean }> {
-  const attempt = async (probe: () => Promise<boolean>): Promise<boolean> => {
-    try {
-      return await probe();
-    } catch {
-      return false;
-    }
-  };
-  const [webgpu, storagePersisted, folderMirror] = await Promise.all([
-    attempt(async () => (env.gpu ? (await env.gpu.requestAdapter()) != null : false)),
+  const [webgpu, startup] = await Promise.all([probeWebGpu(env), probeStartupCapabilities(env)]);
+  return { webgpu, ...startup };
+}
+
+const attempt = async (probe: () => Promise<boolean>): Promise<boolean> => {
+  try {
+    return await probe();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * What the app probes when it starts: persistent storage and the folder mirror — not WebGPU. Chromium logs the
+ * console warning "No available adapters." whenever `requestAdapter()` finds none (every headless run, every
+ * machine without a GPU), so WebGPU is probed on demand by the feature that needs it (`ensureWebGpuProbed`).
+ */
+export async function probeStartupCapabilities(env: CapabilityEnv = browserCapabilityEnv()): Promise<{ storagePersisted: boolean; folderMirror: boolean }> {
+  const [storagePersisted, folderMirror] = await Promise.all([
     attempt(async () => (env.storage?.persisted ? (await env.storage.persisted()) === true : false)),
     attempt(async () => {
       if (!env.fetch) return false;
@@ -202,7 +212,31 @@ export async function probeCapabilities(env: CapabilityEnv = browserCapabilityEn
       return response.headers.get(MIRROR_HEADER) === 'on';
     }),
   ]);
-  return { webgpu, storagePersisted, folderMirror };
+  return { storagePersisted, folderMirror };
+}
+
+/** True when WebGPU has an adapter. Never rejects. */
+export function probeWebGpu(env: CapabilityEnv = browserCapabilityEnv()): Promise<boolean> {
+  return attempt(async () => (env.gpu ? (await env.gpu.requestAdapter()) != null : false));
+}
+
+let webGpuProbe: Promise<boolean> | null = null;
+
+/**
+ * Probes WebGPU once per page and stores the answer in `capabilities.webgpu` (null until then). Call it where
+ * the answer is needed (the Photos tab's depth option, §2.9.4), not at start-up.
+ */
+export function ensureWebGpuProbed(env?: CapabilityEnv, store: { getState(): Pick<AppState, 'setCapabilities'> } = appStore): Promise<boolean> {
+  webGpuProbe ??= probeWebGpu(env).then((webgpu) => {
+    store.getState().setCapabilities({ webgpu });
+    return webgpu;
+  });
+  return webGpuProbe;
+}
+
+/** Tests: forget the page's WebGPU answer. */
+export function resetWebGpuProbe(): void {
+  webGpuProbe = null;
 }
 
 // ---- toasts

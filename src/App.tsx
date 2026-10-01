@@ -4,7 +4,7 @@ import { Suspense, useEffect } from 'react';
 import { ErrorBoundary } from './app/ErrorBoundary';
 import { useRoute } from './app/router';
 import { startScreen } from './app/tabs';
-import { appStore, probeCapabilities } from './state/appStore';
+import { appStore, probeStartupCapabilities } from './state/appStore';
 import { Spinner } from './ui/common/Progress';
 import { ToastRegion } from './ui/shell/ToastRegion';
 import { Workspace } from './ui/shell/Workspace';
@@ -13,10 +13,13 @@ import { useUnloadGuard } from './ui/shell/unloadGuard';
 
 let probed: Promise<void> | null = null;
 
-/** Probes WebGPU, persistent storage and the folder mirror once per page (§5.5.4: HEAD /__projects → x-cpg-mirror). */
+/**
+ * Probes persistent storage and the folder mirror once per page (§5.5.4: HEAD /__projects → x-cpg-mirror).
+ * WebGPU is probed on demand (`ensureWebGpuProbed`), so a machine without a GPU gets no console warning.
+ */
 function useCapabilities(): void {
   useEffect(() => {
-    probed ??= probeCapabilities().then((c) => appStore.getState().setCapabilities(c));
+    probed ??= probeStartupCapabilities().then((c) => appStore.getState().setCapabilities(c));
   }, []);
 }
 

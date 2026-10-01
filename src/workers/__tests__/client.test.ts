@@ -77,6 +77,7 @@ function fakeApis() {
     voxelize: record('mesh.voxelize', () => ({ volumeId: 'v1' })),
     sculpt: record('mesh.sculpt', () => ({ undoId: 'u1' })),
     undoSculpt: record('mesh.undoSculpt', () => ({ mesh: null })),
+    redoSculpt: record('mesh.redoSculpt', () => ({ mesh: { labels: new Uint8Array(0) } })),
     cut: record('mesh.cut', () => [null, null]),
     fit: record('mesh.fit', () => ({ type: 'sphere', residual: 0 })),
     fromPart: record('mesh.fromPart', () => ({ labels: new Uint8Array(0) })),
@@ -276,7 +277,8 @@ describe('direct methods', () => {
     await client.mesh.undoSculpt('u1');
     await client.mesh.cut('v1', { point: [0, 0, 0], normal: [0, 1, 0] });
     await client.mesh.fit(req());
-    await client.mesh.fromPart(req({ id: 'body' }));
+    await client.mesh.fromPart(req({ id: 'body' }), { paletteIds: ['main'] });
+    expect(await client.mesh.redoSculpt('u1')).toEqual({ mesh: { labels: new Uint8Array(0) } });
     expect(await client.importer.importInputs([{ kind: 'text', text: '{}' }], { expectedHeightIn: 8 })).toEqual({ ok: true });
 
     const byMethod = Object.fromEntries(calls.map((c) => [c.method, c.args]));
@@ -287,7 +289,8 @@ describe('direct methods', () => {
     expect(byMethod['mesh.sculpt']).toEqual(['v1', { tool: 'inflate', points: [[0, 0, 0]], radius: 1, strength: 0.5, mirrorX: false }]);
     expect(byMethod['mesh.undoSculpt']).toEqual(['u1']);
     expect(byMethod['mesh.cut']).toEqual(['v1', { point: [0, 0, 0], normal: [0, 1, 0] }]);
-    expect(byMethod['mesh.fromPart']).toEqual([{ id: 'body' }]);
+    expect(byMethod['mesh.fromPart']).toEqual([{ id: 'body' }, { paletteIds: ['main'] }]);
+    expect(byMethod['mesh.redoSculpt']).toEqual(['u1']);
     expect(byMethod['import.importInputs']).toEqual([[{ kind: 'text', text: '{}' }], { expectedHeightIn: 8 }]);
     expect(calls.map((c) => c.method).sort()).toEqual(
       [
@@ -298,6 +301,7 @@ describe('direct methods', () => {
         'mesh.fit',
         'mesh.fromPart',
         'mesh.merge',
+        'mesh.redoSculpt',
         'mesh.sculpt',
         'mesh.undoSculpt',
         'mesh.voxelize',

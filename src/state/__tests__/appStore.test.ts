@@ -15,6 +15,10 @@ import {
   MIRROR_PROBE_URL,
   parseHash,
   probeCapabilities,
+  probeStartupCapabilities,
+  probeWebGpu,
+  ensureWebGpuProbed,
+  resetWebGpuProbe,
   QA_ROUTE,
   sameRoute,
   sanitizePrefs,
@@ -247,6 +251,43 @@ describe('capabilities', () => {
       }),
     ).toEqual({ webgpu: false, storagePersisted: false, folderMirror: false });
     expect((await probeCapabilities({ fetch: async () => headers(null) })).folderMirror).toBe(false); // a static host
+  });
+
+  it('the start-up probe never asks WebGPU for an adapter (Chromium warns when it finds none)', async () => {
+    let asked = 0;
+    const env = {
+      gpu: {
+        requestAdapter: async () => {
+          asked += 1;
+          return null;
+        },
+      },
+      storage: { persisted: async () => true },
+      fetch: async () => headers('off'),
+    };
+    expect(await probeStartupCapabilities(env)).toEqual({ storagePersisted: true, folderMirror: false });
+    expect(asked).toBe(0);
+    expect(await probeWebGpu(env)).toBe(false);
+    expect(asked).toBe(1);
+  });
+
+  it('WebGPU is probed once per page, on demand, into the store', async () => {
+    resetWebGpuProbe();
+    const store = createAppStore();
+    let asked = 0;
+    const env = {
+      gpu: {
+        requestAdapter: async () => {
+          asked += 1;
+          return { name: 'adapter' };
+        },
+      },
+    };
+    expect(store.getState().capabilities.webgpu).toBeNull();
+    const [a, b] = await Promise.all([ensureWebGpuProbed(env, store), ensureWebGpuProbed(env, store)]);
+    expect([a, b, asked]).toEqual([true, true, 1]);
+    expect(store.getState().capabilities.webgpu).toBe(true);
+    resetWebGpuProbe();
   });
 
   it('does not throw where there is no browser at all', async () => {

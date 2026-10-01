@@ -1,7 +1,7 @@
 // Rounding rules shared by the gauge kernels (DESIGN.md §2.2.6, §2.3.3, §2.7.10, §2.8). Step 0 kernel: pure.
 //
-// Every stitch, row and round count in the app is "the nearest whole number, ties up" (§2.10.5: "Math.round =
-// JS half-up rounding everywhere"). Plain `Math.round` keeps that promise only when the number it is given is
+// Every stitch, row and round count in the app is "the nearest whole number, ties up" (§0.1 "Rounding":
+// `round` = `roundHalfUp` everywhere). Plain `Math.round` keeps that promise only when the number it is given is
 // exact. A count is a quotient of decimal inputs, and a quotient that is a tie on paper can come out a few ulps
 // short in binary: 35 in of super bulky hdc is 62.5 stitches on paper and 62.49999999999999 in a double, which
 // `Math.round` turns into 62. The helpers here decide ties as exact arithmetic would, so the same request always

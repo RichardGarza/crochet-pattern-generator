@@ -1,6 +1,6 @@
 // Workspace keyboard shortcuts. ⌘Z / Ctrl+Z undo; ⇧⌘Z, ⇧Ctrl+Z and Ctrl+Y redo — on the project's history
 // (projectStore). In a text field the browser's own text undo runs instead. "?" opens the shortcut list.
-import { useEffect } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { projectStore } from '../../state/projectStore';
 
 export const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -49,4 +49,68 @@ export function useWorkspaceShortcuts(o: { onHelp(): void }): void {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onHelp]);
+}
+
+// ---- Tab shortcut rows in the "?" list (design v1.4)
+
+/** One row of the shortcut list: alternative key combos (each a list of keys) and what they do. */
+export interface ShortcutRow {
+  keys: string[][];
+  what: string;
+}
+
+/** A tab's (or tool's) section of the "?" list, shown under its title while it is registered. */
+export interface ShortcutGroup {
+  id: string;
+  title: string;
+  rows: ShortcutRow[];
+}
+
+const groups = new Map<string, ShortcutGroup>();
+let snapshot: readonly ShortcutGroup[] = [];
+const listeners = new Set<() => void>();
+
+function publish(): void {
+  snapshot = [...groups.values()];
+  for (const l of listeners) l();
+}
+
+/**
+ * Adds a section to the "?" shortcut list (a group with the same id is replaced). Returns the function that
+ * removes it again. Tabs use `useShortcutGroup`, which does both while mounted.
+ */
+export function registerShortcutGroup(group: ShortcutGroup): () => void {
+  const entry: ShortcutGroup = { id: group.id, title: group.title, rows: group.rows.map((r) => ({ keys: r.keys.map((k) => [...k]), what: r.what })) };
+  groups.set(entry.id, entry);
+  publish();
+  return () => {
+    if (groups.get(entry.id) !== entry) return; // replaced since
+    groups.delete(entry.id);
+    publish();
+  };
+}
+
+/** The registered sections, in registration order. */
+export function shortcutGroups(): readonly ShortcutGroup[] {
+  return snapshot;
+}
+
+export function useShortcutGroups(): readonly ShortcutGroup[] {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    shortcutGroups,
+    shortcutGroups,
+  );
+}
+
+/** Lists `group` in the "?" dialog while the calling component is mounted (pass null to list nothing). */
+export function useShortcutGroup(group: ShortcutGroup | null): void {
+  const key = group ? JSON.stringify(group) : '';
+  useEffect(() => {
+    if (!key) return undefined;
+    return registerShortcutGroup(JSON.parse(key) as ShortcutGroup);
+  }, [key]);
 }

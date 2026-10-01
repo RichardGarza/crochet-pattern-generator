@@ -24,7 +24,10 @@ export interface ColoredMesh {
 
 /** Stored per recon mesh part as asset `sdf:<meshRef>` (§2.9.7). */
 export interface SdfVolume {
-  /** voxel/256 units, positive inside. */
+  /**
+   * voxel/256 units, positive inside, saturating at ±127.996 voxels. Sample (x, y, z) is the point
+   * `origin + voxel·(x, y, z)`, x fastest.
+   */
   data: Int16Array<ArrayBuffer>;
   dims: [number, number, number];
   origin: Vec3;
@@ -40,6 +43,10 @@ export interface PhotoView {
   maskKey?: string;
   /** Asset: CPGL header + Int8 labels into photoPalette (§2.9.6). */
   labelsKey?: string;
+  /**
+   * `dx`, `dy` in world units (object heights) along the view's image right and up; `scale` > 1 enlarges the
+   * outline in the world; `rot90` quarter turns clockwise; `mirror` flips left ↔ right after the turn (§2.9.2).
+   */
   align: { scale: number; dx: number; dy: number; rot90: 0 | 1 | 2 | 3; mirror: boolean };
 }
 

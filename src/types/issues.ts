@@ -5,5 +5,6 @@ export interface Issue {
   code: string;
   severity: 'error' | 'warn' | 'info';
   message: string;
-  where?: { piece?: string; line?: number; row?: number; col?: number; part?: string };
+  /** `view` = `PhotoView.id` (photo masks and alignment, §2.9.1–2.9.2). */
+  where?: { piece?: string; line?: number; row?: number; col?: number; part?: string; view?: string };
 }

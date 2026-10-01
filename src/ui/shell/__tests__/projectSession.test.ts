@@ -72,6 +72,40 @@ describe('projectSession (memory backend)', () => {
     expect(hasUnsavedWork()).toBe(false); // persistence decides then
   });
 
+  it('leaves the current project before opening or creating the next one, and opens nothing when leaving fails', async () => {
+    const memory = createMemoryBackend();
+    const calls: string[] = [];
+    let refuseLeave = false;
+    setProjectBackend({
+      kind: 'repository',
+      create: async (doc) => {
+        calls.push(`create`);
+        return memory.create(doc);
+      },
+      open: async (id) => {
+        calls.push(`open ${id}`);
+        return memory.open(id);
+      },
+      leave: async (doc, assets) => {
+        calls.push(`leave ${doc.id}`);
+        if (refuseLeave) throw new Error('Your latest changes aren’t saved yet.');
+        return memory.leave(doc, assets);
+      },
+    });
+    const a = await createProject('picture');
+    const b = await createProject('photos');
+    expect(calls).toEqual(['create', `leave ${a.id}`, 'create']);
+    calls.length = 0;
+    expect(await openProject(a.id)).toBe(true);
+    expect(calls).toEqual([`leave ${b.id}`, `open ${a.id}`]);
+    calls.length = 0;
+    refuseLeave = true;
+    await expect(openProject(b.id)).rejects.toThrow('aren’t saved yet');
+    await expect(createProject('describe')).rejects.toThrow('aren’t saved yet');
+    expect(calls).toEqual([`leave ${a.id}`, `leave ${a.id}`]); // never opened b, never created
+    expect(projectStore.getState().doc?.id).toBe(a.id);
+  });
+
   it('the summary carries the Claude Design wait', async () => {
     const doc = await createProject('describe');
     expect(summaryOf(doc).awaitingClaudeDesign).toBeUndefined();

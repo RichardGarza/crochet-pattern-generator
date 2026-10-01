@@ -27,11 +27,13 @@ import {
   SWATCH_TOL,
   TABLE_A,
   TABLE_B,
+  TABLE_E,
   amiCell,
   amiHookMm,
   hookFactor,
   scCell,
   techniqueCell,
+  type AmiCyc,
   type Stuffing,
 } from './tables';
 import { C2C_TILE_YARN_MULT, CALIBRATION_STITCHES, MULT, lAmi, lSc, yardageBand } from './yarnPerStitch';
@@ -236,13 +238,16 @@ function compute(g: GaugeSpec): ResolvedGauge {
   let stretch = 1;
 
   if (g.technique === 'amigurumi_sc') {
+    stretch = STUFFING_STRETCH.firm;
     if (present(g.testBall)) {
-      const w = g.testBall.circumferenceIn / g.testBall.maxSts; // = w·s, so s := 1
+      // The ball is stuffed firmly, so C/N = w·s: store the stitch before stuffing (w = C/N / s) and keep s, so a
+      // firm piece gets exactly C/N and a lightly stuffed or unstuffed one the narrower w (design v1.4).
+      const wS = g.testBall.circumferenceIn / g.testBall.maxSts;
+      const w = wS / stretch;
       cell = { w, h: w / (g.yarnUnder === true ? AMI_ASPECT.yarnUnder : AMI_ASPECT.yarnOver) };
       source = 'swatch';
     } else {
       cell = amiCell(g.cyc, { hookMm, yarnUnder: g.yarnUnder });
-      stretch = STUFFING_STRETCH.firm;
     }
   } else if (g.technique === 'c2c') {
     if (present(g.c2cSwatch)) {
@@ -265,8 +270,8 @@ function compute(g: GaugeSpec): ResolvedGauge {
 
   const cal = present(g.lscCalibratedIn) ? g.lscCalibratedIn : undefined;
   const lscIn = g.technique === 'amigurumi_sc' ? lAmi(g.cyc, hookMm, cal) : lSc(wSc, cal);
-  const tol = source === 'swatch' ? SWATCH_TOL : TABLE_A[g.cyc].tol;
-  const resolved: ResolvedGauge = { cell, wSc, hSc, lscIn, hookMm, stretch, tol, source };
+  const tol = source === 'swatch' ? SWATCH_TOL : g.technique === 'amigurumi_sc' ? TABLE_E[g.cyc as AmiCyc].tol : TABLE_A[g.cyc].tol;
+  const resolved: ResolvedGauge = { cell, wSc, hSc, lscIn, hookMm, stretch, tol, source, ...(cal !== undefined ? { lscCalibrated: true } : {}) };
   for (const v of [cell.w, cell.h, wSc, hSc, lscIn, hookMm, stretch, tol]) {
     if (!positive(v)) throw new RangeError('resolveGauge: the gauge is out of range'); // unreachable within the input limits
   }
@@ -277,13 +282,14 @@ function compute(g: GaugeSpec): ResolvedGauge {
  * The gauge every generator works with (§2.2.5):
  *
  * 1. A measurement wins: `swatch` → `cell = { w: span/sts, h: span/rows }` (row techniques); `c2cSwatch` →
- *    a square tile `span/tiles`; `testBall` → `w = circumference/maxSts`, which already includes the stuffing,
- *    so `stretch` becomes 1 (`h = w / 1.05`, or `/ 1.11` with yarn under).
+ *    a square tile `span/tiles`; `testBall` → `circumference/maxSts` is the stuffed stitch `w·s`, so
+ *    `w = C/N / 1.05` with `stretch` 1.05 (`h = w / 1.05`, or `/ 1.11` with yarn under).
  * 2. Otherwise Table A × hook factor → Table B, or Table E × hook factor for amigurumi (`stretch` 1.05).
  * 3. `wSc`, `hSc` = Table A sc width and row height × hook factor (relative to the Table A hook), whatever the
  *    technique; an `sc_graphgan` swatch sets them directly. `lscIn` = `L_sc` (2D) or `L_ami` (amigurumi);
  *    `lscCalibratedIn` overrides both.
- * 4. `tol` = the Table A tolerance, or 0.04 with a measurement; `source` = 'default' | 'swatch'.
+ * 4. `tol` = the Table A tolerance (Table E's for amigurumi: 0.10 worsted, 0.20 the others), or 0.04 with a
+ *    measurement; `source` = 'default' | 'swatch'; `lscCalibrated` = true when `lscCalibratedIn` set `lscIn`.
  *
  * `stretch` is the stretch of a firmly or medium stuffed piece; lightly stuffed and unstuffed pieces use 1
  * (`stuffingStretch`). Every number returned is finite and above zero.
