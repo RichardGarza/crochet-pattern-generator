@@ -1841,6 +1841,11 @@
   gap: var(--space-4);
 }
 
+/* A collapsed Panel: the rule above would otherwise outrank the `hidden` attribute (design v1.5, T6 request 10). */
+.ui-panel__body[hidden] {
+  display: none;
+}
+
 .ui-toolbar {
   display: flex;
   align-items: center;

@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 // The design-system components: accessible names and states, keyboard behavior, and the contracts tracks rely on.
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -101,6 +103,16 @@ describe('Icon', () => {
     expect(plain.getAttribute('aria-hidden')).toBe('true');
     expect(labelled.getAttribute('role')).toBe('img');
     expect(screen.getByRole('img', { name: 'Warning' })).toBeTruthy();
+  });
+
+  it('has the Shape tab mirror and link icons (design v1.5), drawn in strokes', () => {
+    const { container } = render(
+      <>
+        <Icon name="mirror" />
+        <Icon name="link" />
+      </>,
+    );
+    for (const svg of container.querySelectorAll('svg')) expect(svg.querySelectorAll('path').length).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -350,5 +362,13 @@ describe('layout', () => {
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(screen.getByText('content').closest('[hidden]')).toBeTruthy();
+  });
+
+  it('a collapsed Panel body is display: none in components.css (its flex rule must not beat the hidden attribute)', () => {
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/common/components.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = /\.ui-panel__body\[hidden\]\s*\{([^}]*)\}/.exec(css);
+    expect(rule?.[1]).toMatch(/display:\s*none/);
+    // and it comes after the flex rule (same specificity would otherwise depend on order; [hidden] adds one)
+    expect(css.indexOf('.ui-panel__body[hidden]')).toBeGreaterThan(css.indexOf('.ui-panel__body {'));
   });
 });

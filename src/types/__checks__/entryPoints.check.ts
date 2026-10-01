@@ -96,14 +96,15 @@ export type T1EntryPoints = [
 export type T2EntryPoints = [
   Check<SameSignature<typeof import('../../core/techniques/index').buildPattern2D, E.BuildPattern2DFn>>,
   Check<SameSignature<typeof import('../../core/pattern/render').renderLine, E.RenderLineFn>>,
+  Check<SameSignature<typeof import('../../core/pattern/render').renderFoundation, E.RenderFoundationFn>>,
+  Check<SameSignature<typeof import('../../core/pattern/render').renderLineExtras, E.RenderLineExtrasFn>>,
   Check<SameSignature<typeof import('../../core/techniques/export').exportChart, E.ExportChartFn>>,
   Check<SameSignature<typeof import('../../core/pattern/text').renderPatternText, E.RenderPatternTextFn>>,
   Check<SameSignature<typeof import('../../core/pattern/skill').computeSkill, E.ComputeSkillFn>>,
   Check<SameSignature<typeof import('../../core/pattern/notes').notesFor, E.NotesForFn>>,
-  // Design v1.4 added the optional `decMethod` parameter; T2.2 adds it to the implementations, then integration
-  // turns these two back into SameSignature checks (tasks in docs/tracks/integration-s1.md).
-  Check<PendingSignature<typeof import('../../core/pattern/terminology').abbreviationsFor, E.AbbreviationsForFn, DropLast<Parameters<E.AbbreviationsForFn>>>>,
-  Check<PendingSignature<typeof import('../../core/pattern/terminology').specialStitchesFor, E.SpecialStitchesForFn, DropLast<Parameters<E.SpecialStitchesForFn>>>>,
+  // `decMethod` (design v1.4) is taken since T2.2; design v1.5 restored the exact checks.
+  Check<SameSignature<typeof import('../../core/pattern/terminology').abbreviationsFor, E.AbbreviationsForFn>>,
+  Check<SameSignature<typeof import('../../core/pattern/terminology').specialStitchesFor, E.SpecialStitchesForFn>>,
   Check<SameProps<typeof import('../../ui/pattern/PatternView').PatternView, U.PatternViewProps>>,
   Check<SameProps<typeof import('../../ui/pattern/MaterialsView').MaterialsView, U.MaterialsViewProps>>,
 ];

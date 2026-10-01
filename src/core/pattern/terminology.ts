@@ -307,14 +307,7 @@ function byAbbreviation(a: { abbr: string }, b: { abbr: string }): number {
  * decrease the pattern uses, so the other one is not listed; without it both are. Never throws: malformed lines
  * contribute what can be read from them.
  */
-export function abbreviationsFor(lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog'): PatternDoc['abbreviations'];
-/**
- * Bridge overload (remove it when integration restores `SameSignature` for this function): the signature guard
- * still pins the v1.3 parameter list through `PendingSignature`, which reads the LAST overload; callers resolve
- * to the first one and can pass `decMethod`.
- */
-export function abbreviationsFor(lines: Line[], terms: Terms): PatternDoc['abbreviations'];
-export function abbreviationsFor(lines: Line[], terms: Terms, decMethod?: DecMethodOption): PatternDoc['abbreviations'] {
+export function abbreviationsFor(lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog'): PatternDoc['abbreviations'] {
   const list = Array.isArray(lines) ? lines : [];
   const out: PatternDoc['abbreviations'] = [];
   const seen = new Set<string>();
@@ -416,10 +409,7 @@ const SPECIAL: ReadonlyArray<{ key: string; name: string; text: string }> = [
  * decrease, `invdec` the invisible decrease without the sc2tog alternative; without it the invisible decrease is
  * listed with sc2tog as the alternative. Never throws.
  */
-export function specialStitchesFor(lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog'): PatternDoc['specialStitches'];
-/** Bridge overload, as for `abbreviationsFor`: remove it when integration restores `SameSignature`. */
-export function specialStitchesFor(lines: Line[], terms: Terms): PatternDoc['specialStitches'];
-export function specialStitchesFor(lines: Line[], terms: Terms, decMethod?: DecMethodOption): PatternDoc['specialStitches'] {
+export function specialStitchesFor(lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog'): PatternDoc['specialStitches'] {
   const method = decMethodOf(decMethod);
   const used = new Set<string>();
   for (const line of Array.isArray(lines) ? lines : []) {

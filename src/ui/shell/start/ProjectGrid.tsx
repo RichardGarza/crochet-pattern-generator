@@ -17,6 +17,11 @@ export interface ProjectGridProps {
   /** Buttons shown on a card (they must stop the click from opening the project). */
   renderActions?(summary: ProjectSummary): ReactNode;
   thumbnailUrl?(summary: ProjectSummary): string | undefined;
+  /**
+   * An extra line under the mode and date (design v1.5; T8 uses it to tell same-name projects apart without
+   * changing the shown name). Nothing is rendered when it returns null, undefined or false.
+   */
+  meta?(summary: ProjectSummary): ReactNode;
   /** What an empty library shows. */
   empty?: ReactNode;
   /** Newest first by default. */
@@ -28,7 +33,7 @@ function Thumb({ summary, url }: { summary: ProjectSummary; url?: string }) {
   return <span className="shell-project__art">{summary.mode === '2d' ? <HeartChartArt cell={9} gap={1.5} /> : <ToyArt size={84} />}</span>;
 }
 
-export function ProjectGrid({ summaries, onOpen, renderActions, thumbnailUrl, empty, sort = 'updated' }: ProjectGridProps) {
+export function ProjectGrid({ summaries, onOpen, renderActions, thumbnailUrl, meta, empty, sort = 'updated' }: ProjectGridProps) {
   if (summaries === null) {
     return (
       <ul className="shell-projects" aria-busy="true" aria-label="Loading projects">
@@ -56,7 +61,9 @@ export function ProjectGrid({ summaries, onOpen, renderActions, thumbnailUrl, em
   const list = sort === 'updated' ? [...summaries].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) : summaries;
   return (
     <ul className="shell-projects" aria-label="Your projects">
-      {list.map((s) => (
+      {list.map((s) => {
+        const extra = meta?.(s);
+        return (
         <li key={s.id} className="shell-project">
           <button type="button" className="shell-project__open" onClick={() => onOpen(s.id)} data-project-id={s.id}>
             <span className="shell-project__thumb">
@@ -72,6 +79,7 @@ export function ProjectGrid({ summaries, onOpen, renderActions, thumbnailUrl, em
                 <span aria-hidden="true">·</span>
                 <span>Edited {formatRelativeTime(s.updatedAt)}</span>
               </span>
+              {extra === null || extra === undefined || extra === false ? null : <span className="shell-project__meta shell-project__meta--extra">{extra}</span>}
             </span>
           </button>
           {s.awaitingClaudeDesign ? (
@@ -81,7 +89,8 @@ export function ProjectGrid({ summaries, onOpen, renderActions, thumbnailUrl, em
           ) : null}
           {renderActions ? <div className="shell-project__actions">{renderActions(s)}</div> : null}
         </li>
-      ))}
+        );
+      })}
     </ul>
   );
 }

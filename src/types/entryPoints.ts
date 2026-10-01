@@ -139,6 +139,13 @@ export type RenderLineFn = (
   line: Line,
   o: { dialect: 'compact' | 'verbose'; terms: Terms; hand: Hand; decMethod?: 'invdec' | 'sc2tog'; docKind?: '2d' | '3d' },
 ) => string;
+/**
+ * Design v1.5 (T4's 3D text): the sentence printed before a line worked into chains or a border's Rnd 1
+ * (`Foundation: With A, ch 6.`), null when the line has none.
+ */
+export type RenderFoundationFn = (line: Line, o: { terms: Terms; docKind?: '2d' | '3d' }) => string | null;
+/** Design v1.5: the sentences printed on their own lines after a line (non-color cues, then `Line.notes`). */
+export type RenderLineExtrasFn = (line: Line, o: { terms: Terms }) => string[];
 
 // ---- T2 — core/techniques/export.ts, core/pattern/{text,skill,notes,terminology}.ts: T8's export dialog and
 //      T4's 3D PatternDoc call these; T8 never formats pattern text or chart files itself

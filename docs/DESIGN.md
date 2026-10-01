@@ -2539,7 +2539,7 @@ interface SpecCandidate { id: string; path: string; source: 'html' | 'glb' | 'ch
   revision: number; parts: number; chosen: boolean }
 interface UnitsDecision { rawHeight: number; readings: { unit: LengthUnit; heightIn: number }[];
   chosen: LengthUnit | 'normalized'; reason: 'spec' | 'gltf-extras-ratio' | 'expected-height' | 'stage-header'
-  | 'small-bbox' | 'user'; confirm: boolean }            // confirm = ask the user, showing both readings
+  | 'small-bbox' | 'user' | 'default'; confirm: boolean } // confirm = ask the user; 'default' = no evidence (v1.5)
 interface Repair { code: 'attach-inferred' | 'mirror-inferred' | 'units' | 'ground' | 'axes' | 'radians' | 'color'
                        | 'dims-clamped' | 'id' | 'unknown-key' | 'feature-dropped' | 'limits' | 'versions' | 'spec-rebuilt'
                        | 'type-aliased' | 'mirror-removed' | 'part-added';
@@ -3226,7 +3226,7 @@ export interface ReconSettings { N: 64 | 128 | 192; kappa: number;
                                                         // default 'part' (front/top), 'mirror' (left/right)
   oneSidedDetail: boolean;                              // default true (front/top), false (left/right)
   useDepth: boolean; keepHoles: boolean; mergeTouching: boolean; splitNeck: boolean; openingFrac: number;
-  fitTolerance: number; targetHeightIn: Inches }        // photoView 'top': the longest extent in the photo plane
+  fitTolerance: number; targetHeightIn: Inches }        // the target height; single 'top' photo: the longest extent in the photo plane
 export interface ReconRequest { jobId: number;
   views: { view: PhotoView; image: Blob | RgbaImage; mask: Uint8Array<ArrayBuffer>; maskW: number; maskH: number }[];
   settings: ReconSettings; gauge: ResolvedGauge; depth?: { data: Float32Array<ArrayBuffer>; w: number; h: number } }
@@ -3288,7 +3288,7 @@ export interface Chart2dApi extends Cancellable { run(r: ChartRequest): Promise<
 export interface GeomApi extends Cancellable {
   mask(image: Blob | RgbaImage, o?: { keepHoles?: boolean }): Promise<{ mask: Uint8Array<ArrayBuffer>; w: number; h: number;
     raw?: Uint8Array<ArrayBuffer>; scale?: number; issues?: Issue[] }>;   // raw = before refineMask; scale = mask px per photo px
-  build(r: ReconRequest): Promise<ReconResult>;
+  build(r: ReconRequest): Promise<ReconResult>;   // rejects with an Error named `ReconError`, message "E_…: …" (§2.9.3)
   projectColors(r: { jobId: number; model: CrochetModelV1; meshes: Record<string, ColoredMesh>;
     views: { view: PhotoView; labels: Int8Array<ArrayBuffer>; mask: Uint8Array<ArrayBuffer>; w: number; h: number }[];   // read from labelsKey/maskKey
     photoPalette: { hex: string; name?: string }[]; palette: PaletteColor[] }):            // labels → palette, ΔE00 < 5 merge
@@ -3300,7 +3300,8 @@ export interface MlApi extends Cancellable { status(): Promise<{ webgpu: boolean
   samEncode(image: Blob | RgbaImage): Promise<void>;
   samMask(points: { x: number; y: number; positive: boolean }[]): Promise<{ mask: Uint8Array<ArrayBuffer>; w: number; h: number }> }
 export interface MeshApi extends Cancellable { pathB(r: { jobId: number; mesh: ColoredMesh; partId: string; frame: Partial<PieceFrame>; gauge: ResolvedGauge;
-  settings: AmiSettings }): Promise<RoundsResult | { needsSplit: { level: number; loops: number[] } }>;
+  settings: AmiSettings; seed?: Vec3; attach?: Vec3[] }):   // v1.5, part-local: crochet.seed; the attachment boundary (none = root)
+    Promise<RoundsResult | { needsSplit: { level: number; loops: number[] } }>;
   merge(parts: { part: Part; mesh?: ColoredMesh; sdf?: SdfVolume }[], o?: { N?: number; paletteIds?: string[] }):   // §2.9.8, ⌘J;
     Promise<{ mesh: ColoredMesh; sdf: SdfVolume; volumeIn3: number; unionVolumeIn3: number; genus: number }>;
                                                         // geometry + labels only, model space; T6 picks the kept id/attach
@@ -3382,6 +3383,11 @@ export function buildPattern2D(i: { chart: ChartGrid; settings: ChartSettings; g
   dialect: 'compact' | 'verbose'; title: string }): PatternDoc;   // border rounds from settings.border + gauge.hSc (§2.7.10)
 export function renderLine(line: Line, o: { dialect: 'compact' | 'verbose'; terms: Terms; hand: Hand;
   decMethod?: 'invdec' | 'sc2tog'; docKind?: '2d' | '3d' }): string;   // lines print as written for PatternDoc.hand
+// T2 — core/pattern/render.ts, frozen in v1.5 for T4's 3D text: the sentence printed before a line worked into chains
+// or a border's Rnd 1 (`Foundation: With A, ch 6.`; null when the line has none), and the sentences printed on their
+// own lines after a line (cues that are not color cues, then `Line.notes`), both in the given terms
+export function renderFoundation(line: Line, o: { terms: Terms; docKind?: '2d' | '3d' }): string | null;
+export function renderLineExtras(line: Line, o: { terms: Terms }): string[];
 // T2 — core/techniques/export.ts, core/pattern/{text,skill,notes,terminology}.ts: T8's export dialog and T4's 3D
 // PatternDoc call these; T8 never formats pattern text or chart files itself
 export function exportChart(grid: ChartGrid, kind: 'png1px' | 'csv' | 'json'): Blob;     // png via core/kernel/png.ts

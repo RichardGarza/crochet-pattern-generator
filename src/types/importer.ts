@@ -32,7 +32,8 @@ export interface UnitsDecision {
   rawHeight: number;
   readings: { unit: LengthUnit; heightIn: number }[];
   chosen: LengthUnit | 'normalized';
-  reason: 'spec' | 'gltf-extras-ratio' | 'expected-height' | 'stage-header' | 'small-bbox' | 'user';
+  /** `'default'` (v1.5): no evidence — plain inches, or the mm / cm fallback above 60 in (§3.7.5). */
+  reason: 'spec' | 'gltf-extras-ratio' | 'expected-height' | 'stage-header' | 'small-bbox' | 'user' | 'default';
   /** Ask the user, showing both readings. */
   confirm: boolean;
 }
