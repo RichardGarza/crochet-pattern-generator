@@ -5,6 +5,7 @@ import { decodeText } from './text';
 export type DetectedKind =
   | 'zip'
   | 'gzip'
+  | 'tar'
   | 'glb'
   | 'gltf'
   | 'json'
@@ -78,10 +79,11 @@ export function detectText(text: string, name = ''): DetectedKind {
   }
 }
 
-/** §3.7.2: magic bytes first (zip, gzip, glb, images, pdf, ply, binary stl), then the text sniff, then the extension. */
+/** §3.7.2: magic bytes first (zip, gzip, tar, glb, images, pdf, ply, binary stl), then the text sniff, then the extension. */
 export function detectFile(name: string, bytes: Uint8Array): DetectedKind {
   if (startsWith(bytes, [0x50, 0x4b, 0x03, 0x04]) || startsWith(bytes, [0x50, 0x4b, 0x05, 0x06])) return 'zip';
   if (startsWith(bytes, [0x1f, 0x8b])) return 'gzip';
+  if (startsWith(bytes, [0x75, 0x73, 0x74, 0x61, 0x72], 257)) return 'tar'; // "ustar" (an unpacked .tar.gz)
   if (startsWith(bytes, [0x67, 0x6c, 0x54, 0x46])) return 'glb'; // "glTF"
   if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47])) return 'image';
   if (startsWith(bytes, [0xff, 0xd8, 0xff])) return 'image';
@@ -94,6 +96,9 @@ export function detectFile(name: string, bytes: Uint8Array): DetectedKind {
       const n = (bytes[80] | (bytes[81] << 8) | (bytes[82] << 16) | (bytes[83] << 24)) >>> 0;
       if (84 + 50 * n === bytes.length) return 'stl';
     }
+    // binary files whose header is off (an STL with a trailing byte, a PLY saved with CRLF quirks): the extension
+    const ext = extensionOf(name);
+    if (ext === 'stl' || ext === 'ply') return ext;
     return 'unknown';
   }
   const sniff = decodeText(bytes.subarray(0, SNIFF_BYTES * 4));

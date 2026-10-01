@@ -12,7 +12,8 @@ import { composeRigid, decomposeRigid, multiplyRigid, positionForCenter, type Ri
 import { MODEL_LIMITS } from '../model/limits';
 import { depthOf, IMPORT_CODES, ImportFailure, isPlainObject, issue, lookup, RepairLog } from './common';
 
-export type Dialect = 'canonical-1' | 'cd-observed-2026-09';
+/** `ImportResult.dialect` of a model that was read (failures report `'none'`). */
+export type Dialect = 'canonical-1' | 'cd-observed-2026-09' | 'geometry-only';
 
 /** The name a model gets when its source has none (the canonical teddy fixture uses it). */
 export const DEFAULT_MODEL_NAME = 'Imported model';
@@ -600,7 +601,8 @@ export function normalizeSpec(raw: Record<string, unknown>): Normalized {
     out.dims = dr.dims;
     for (const n of dr.notes) {
       if (n.kind === 'repair') repairs.add('dims', { code: 'dims-clamped', message: `${tag}: ${n.message}`, part: id || undefined });
-      else warnings.push(issue(n.kind === 'type' ? IMPORT_CODES.unknownType : IMPORT_CODES.defaulted, 'warn', `${tag}: ${n.message}`, id ? { part: id } : undefined));
+      if (n.kind === 'type') repairs.add('dims', { code: 'type-aliased', message: `${tag}: ${n.message}`, ...(id ? { part: id } : {}), data: { from: typeText, to: dr.type } });
+      if (n.kind !== 'repair') warnings.push(issue(n.kind === 'type' ? IMPORT_CODES.unknownType : IMPORT_CODES.defaulted, 'warn', `${tag}: ${n.message}`, id ? { part: id } : undefined));
     }
     for (const k of dr.unused) unknownKey(k, `in the dims of ${tag}`, id || undefined);
 

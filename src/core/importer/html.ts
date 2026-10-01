@@ -338,7 +338,7 @@ export function specFromHtml(html: string): HtmlSpec {
     standalone = true;
     const t = unbundleTemplate(templateScript.body);
     if (t.ok) pages.push(tokenizeHtml(t.html));
-    else warnings.push(issue(IMPORT_CODES.parse, 'warn', `the standalone page's template could not be unpacked: ${t.error}`));
+    else warnings.push(issue(IMPORT_CODES.parseWarn, 'warn', `the standalone page's template could not be unpacked: ${t.error}`));
   }
   pages.push(outer);
 
@@ -369,7 +369,7 @@ export function specFromHtml(html: string): HtmlSpec {
     if (manifest) {
       const decoded = decodeBundlerAssets(manifest.body);
       assets = decoded.assets;
-      for (const e of decoded.errors) warnings.push(issue(IMPORT_CODES.parse, 'info', e));
+      for (const e of decoded.errors) warnings.push(issue(IMPORT_CODES.parseInfo, 'info', e));
       for (const a of assets) {
         if (!/html/i.test(a.mime)) continue;
         const nested = tokenizeHtml(a.text);

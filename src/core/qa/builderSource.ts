@@ -1,4 +1,78 @@
-// Track T7 — src/core/qa/builderSource.ts
-// Step 0 placeholder: DESIGN.md §5.1 assigns this module to T7 (scope: §6.3 T7). It has no cross-track entry
-// point, so nothing in it is frozen. T7 writes it.
-export {};
+// Track T7 — the reference builder the prompt embeds (DESIGN.md §3.4 "Reference builder", §3.4.1 `builder-v1`):
+// the plain-JS form of `buildModel` at `unitScale = 0.0254`, exactly as §3.4.1 writes it (null-prototype `pal` and
+// `mats`, so `constructor` and `__proto__` are valid palette ids; a polygon without points draws as a rectangle).
+// `builderSource.test.ts` checks it against the DESIGN.md block byte for byte, and Step 0's claudeDesign.test.ts
+// checks that block against the app's own `buildModel`. Used by the prompt builder (T7.4) and the derived fixtures.
+
+/** The version the prompt records (`QaState.builderVersion`). */
+export const BUILDER_VERSION_ID = 'builder-v1';
+
+/** The §3.4.1 builder, line for line. */
+export const BUILDER_V1_SOURCE: string = [
+  "import * as THREE from 'three';",
+  "const D2R = THREE.MathUtils.degToRad;",
+  "export function buildModel(spec, unitScale = 0.0254) {",
+  "  // null-prototype maps: `constructor` and `__proto__` are valid palette ids (/^[a-z0-9_]{1,16}$/)",
+  "  const S = unitScale, pal = Object.assign(Object.create(null), Object.fromEntries(spec.palette.map(c => [c.id, c.hex]))), mats = Object.create(null);",
+  "  const solid = id => mats[id] ??= Object.assign(new THREE.MeshStandardMaterial({ color: pal[id] ?? '#cccccc', roughness: 0.85, metalness: 0 }), { name: id });",
+  "  const group = new THREE.Group(); group.name = spec.name || 'model'; group.userData.crochetModel = spec;",
+  "  for (const p of spec.parts) {",
+  "    const g = geometryFor(p, S); let mat = solid(p.color);",
+  "    if (p.regions?.length) { paint(g, p, pal, S); mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, name: p.color + '_painted' }); }",
+  "    const m = new THREE.Mesh(g, mat); m.name = p.id; m.userData.crochet = p;",
+  "    m.position.set(...p.position.map(v => v * S));",
+  "    const r = (p.rotationDeg ?? [0, 0, 0]).map(D2R); m.rotation.set(r[0], r[1], r[2], 'XYZ');",
+  "    group.add(m);",
+  "  }",
+  "  return group;",
+  "}",
+  "function geometryFor(p, S) {",
+  "  const d = p.dims;",
+  "  switch (p.type) {",
+  "    case 'sphere':    return new THREE.SphereGeometry(d.r * S, 48, 32);",
+  "    case 'ellipsoid': return new THREE.SphereGeometry(1, 48, 32).scale(d.rx * S, d.ry * S, d.rz * S);",
+  "    case 'capsule':   return new THREE.CapsuleGeometry(d.r * S, Math.max(0, d.length - 2 * d.r) * S, 12, 32);",
+  "    case 'cylinder':  return new THREE.CylinderGeometry(d.rTop * S, d.rBottom * S, d.h * S, 48, 1, d.open === 'both');",
+  "    case 'cone':      return new THREE.ConeGeometry(d.r * S, d.h * S, 48);",
+  "    case 'torus':     return new THREE.TorusGeometry(d.R * S, d.r * S, 24, 64, D2R(d.arcDeg ?? 360));",
+  "    case 'lathe':     return new THREE.LatheGeometry(d.profile.map(([r, y]) => new THREE.Vector2(r * S, y * S)), 48);",
+  "    case 'box':       return new THREE.BoxGeometry(d.w * S, d.h * S, d.d * S, 4, 4, 4);",
+  "    case 'flat': { const t = d.thickness * S;",
+  "      return new THREE.ExtrudeGeometry(shape2D(d, S), { depth: t * 0.4, bevelEnabled: true, bevelThickness: t * 0.3,",
+  "        bevelSize: Math.min(t * 0.3, 0.1 * Math.min(d.w, d.h) * S), bevelSegments: 4, curveSegments: 32 }).center(); }",
+  "  }",
+  "  throw new Error('unknown part type ' + p.type);",
+  "}",
+  "function shape2D(d, S) {                                 // local XY plane, facing +Z",
+  "  const w = d.w * S, h = d.h * S, s = new THREE.Shape();",
+  "  if (d.shape === 'circle' || d.shape === 'oval') s.absellipse(0, 0, w / 2, h / 2, 0, Math.PI * 2);",
+  "  else if (d.shape === 'teardrop') { s.moveTo(0, h / 2); s.bezierCurveTo(w * .55, 0, w * .5, -h / 2, 0, -h / 2); s.bezierCurveTo(-w * .5, -h / 2, -w * .55, 0, 0, h / 2); }",
+  "  else if (d.shape === 'triangle') { s.moveTo(0, h / 2); s.lineTo(w / 2, -h / 2); s.lineTo(-w / 2, -h / 2); s.closePath(); }",
+  "  else if (d.shape === 'polygon' && d.points?.length >= 3) { d.points.forEach(([x, y], i) => i ? s.lineTo(x * S, y * S) : s.moveTo(x * S, y * S)); s.closePath(); }",
+  "  else { s.moveTo(-w / 2, -h / 2); s.lineTo(w / 2, -h / 2); s.lineTo(w / 2, h / 2); s.lineTo(-w / 2, h / 2); s.closePath(); }",
+  "  return s;",
+  "}",
+  "function paint(g, p, pal, S) {                           // regions → vertex colors, part-local frame",
+  "  g.computeBoundingBox(); const bb = g.boundingBox, ctr = bb.getCenter(new THREE.Vector3());",
+  "  const pos = g.attributes.position, col = new Float32Array(pos.count * 3), v = new THREE.Vector3(), c = new THREE.Color();",
+  "  const H = Math.max(1e-6, bb.max.y - bb.min.y);",
+  "  for (let i = 0; i < pos.count; i++) {",
+  "    v.fromBufferAttribute(pos, i);",
+  "    const t = (v.y - bb.min.y) / H, dx = v.x - ctr.x, dy = v.y - ctr.y, dz = v.z - ctr.z, rad = Math.hypot(dx, dy, dz) || 1e-6;",
+  "    const az = Math.atan2(dx, dz) * 180 / Math.PI; let id = p.color;",
+  "    for (const r of p.regions) {",
+  "      const inT = t >= (r.from ?? 0) && t <= (r.to ?? 1);",
+  "      if (r.kind === 'band' && inT) id = r.color;",
+  "      else if (r.kind === 'stripes' && inT) id = r.colors[Math.floor((v.y - bb.min.y) / (r.widthIn * S)) % r.colors.length];",
+  "      else if (r.kind === 'patch' && inT && Math.abs((((az - r.azimuthDeg) % 360) + 540) % 360 - 180) <= r.spanDeg / 2) id = r.color;",
+  "      else if (r.kind === 'spot') { const a = D2R(r.azimuthDeg), e = D2R(r.elevationDeg);",
+  "        const dot = (dx * Math.cos(e) * Math.sin(a) + dy * Math.sin(e) + dz * Math.cos(e) * Math.cos(a)) / rad;",
+  "        if (Math.acos(Math.min(1, dot)) * rad <= r.radiusIn * S) id = r.color; }",
+  "    }",
+  "    c.set(pal[id] ?? '#cccccc'); col[3 * i] = c.r; col[3 * i + 1] = c.g; col[3 * i + 2] = c.b;   // set() converts sRGB → linear",
+  "  }",
+  "  g.setAttribute('color', new THREE.BufferAttribute(col, 3));",
+  "}",
+  "// page glue: const stage = document.querySelector('three-d-stage'); await stage.ready;",
+  "// stage.setObject(buildModel(JSON.parse(document.getElementById('crochet-model').textContent)));",
+].join('\n');

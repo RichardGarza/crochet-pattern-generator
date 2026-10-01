@@ -159,7 +159,7 @@ describe('ladder', HEAVY, () => {
   });
 
   it('format drift: a page without any known fingerprint gets an info warning; the teddy page does not', () => {
-    expect(specFromHtml(`<html><script id="crochet-model" type="application/json">${JSON.stringify(MINI)}</script></html>`).warnings.map((w) => w.code)).toEqual(['W_FORMAT_DRIFT']);
+    expect(specFromHtml(`<html><script id="crochet-model" type="application/json">${JSON.stringify(MINI)}</script></html>`).warnings.map((w) => w.code)).toEqual(['I_FORMAT_DRIFT']);
     expect(specFromHtml(ARCHIVE_PAGE).warnings).toEqual([]);
   });
 

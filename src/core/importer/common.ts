@@ -17,8 +17,9 @@ export const IMPORT_LIMITS = {
 } as const;
 
 /**
- * Issue codes the importer raises (`ImportResult.warnings`). `E_*` = nothing usable was imported from that input;
- * `W_*` = imported, but look at this. `W_GAP` is the shared rule of §2.13.
+ * Issue codes the importer raises (`ImportResult.warnings`, §2.13). The prefix is the severity, one code one
+ * severity: `E_*` = nothing usable was imported from that input; `W_*` = imported, but look at this; `I_*` = a
+ * remark. `W_GAP` is the shared rule of §2.13.
  */
 export const IMPORT_CODES = {
   /** No crochet-model spec anywhere in the input (§3.7.4 E8): offer the fix-up message. */
@@ -39,14 +40,18 @@ export const IMPORT_CODES = {
   projectFile: 'E_IMPORT_PROJECT_FILE',
   /** A part's gap to its parent is above 0.1 in (§2.13). */
   gap: 'W_GAP',
-  /** A part thinner than MIN_FEATURE_IN across (§3.7.6). */
-  minFeature: 'W_MIN_FEATURE',
+  /** A part thinner than MIN_FEATURE_IN across (§3.7.6; info). */
+  minFeature: 'I_MIN_FEATURE',
   /** A part type we do not know, replaced by its bounding ellipsoid (§3.5.2). */
   unknownType: 'W_IMPORT_TYPE',
-  /** An HTML page without any fingerprint we know (§3.7.4 "format drift"). */
-  formatDrift: 'W_FORMAT_DRIFT',
-  /** An unknown named HTML entity, kept verbatim (§3.7.4). */
-  entity: 'W_HTML_ENTITY',
+  /** An HTML page without any fingerprint we know (§3.7.4 "format drift"; info). */
+  formatDrift: 'I_FORMAT_DRIFT',
+  /** An unknown named HTML entity, kept verbatim (§3.7.4; info). */
+  entity: 'I_HTML_ENTITY',
+  /** A part of an input that could not be read while the import went on (the standalone template, a geometry file). */
+  parseWarn: 'W_IMPORT_PARSE',
+  /** A remark about something that could not be read and did not matter (an asset entry, a page without a spec next to one with it; info). */
+  parseInfo: 'I_IMPORT_PARSE',
   /** An archive entry that was skipped (unsafe path, too deep, ratio). */
   entrySkipped: 'W_ARCHIVE_ENTRY',
   /** A spec candidate of an archive that could not be used (the others were). */
@@ -139,7 +144,7 @@ export function baseName(path: string): string {
  * The repair steps of §3.7.6, in their order. Chips are listed in this order whatever step found them (the
  * dialect normalization finds unknown keys and radians before the repairs run).
  */
-export const REPAIR_STAGES = ['versions', 'limits', 'id', 'unknown-key', 'units', 'radians', 'ground', 'axes', 'color', 'dims', 'attach', 'mirror'] as const;
+export const REPAIR_STAGES = ['versions', 'source', 'limits', 'id', 'unknown-key', 'units', 'radians', 'ground', 'axes', 'color', 'dims', 'attach', 'mirror'] as const;
 export type RepairStage = (typeof REPAIR_STAGES)[number];
 
 /** Chips of one code in one stage before the rest are summed up. */

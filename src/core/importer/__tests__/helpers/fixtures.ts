@@ -79,3 +79,8 @@ export function standalonePage(pageHtml: string, manifest: Record<string, unknow
     '</body></html>',
   ].join('\n');
 }
+
+/** The derived fixtures written by scripts/make-cd-fixtures.mjs (fixtures/claude-design/teddy-derived/). */
+export const DERIVED_DIR = new URL('claude-design/teddy-derived/', FIXTURES);
+export const readDerived = (name: string): Uint8Array<ArrayBuffer> => new Uint8Array(readFileSync(new URL(name, DERIVED_DIR)));
+export const derivedInput = (name: string): ImportInput => fileInput(name, readDerived(name));
