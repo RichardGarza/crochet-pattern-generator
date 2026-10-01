@@ -31,7 +31,7 @@ describe('the module', () => {
     expect(typeof window).toBe('undefined');
     const s = appStore.getState();
     expect(s.route).toEqual({ screen: 'start' });
-    expect(s.prefs).toEqual({ units: 'in', terms: 'us', hand: 'right', dialect: 'compact', features: { mosaic: false } });
+    expect(s.prefs).toEqual({ units: 'in', terms: 'us', hand: 'right', dialect: 'compact', theme: 'system', features: { mosaic: false } });
     expect(s.prefsHydrated).toBe(false);
     expect(s.capabilities).toEqual({ webgpu: null, storagePersisted: null, folderMirror: null });
     expect(s.library).toBeNull();
@@ -172,7 +172,7 @@ describe('preferences', () => {
     const store = createAppStore();
     store.getState().setPrefs({ units: 'cm', hand: 'left' });
     store.getState().setPrefs({ features: { mosaic: true } });
-    expect(store.getState().prefs).toEqual({ units: 'cm', terms: 'us', hand: 'left', dialect: 'compact', features: { mosaic: true } });
+    expect(store.getState().prefs).toEqual({ units: 'cm', terms: 'us', hand: 'left', dialect: 'compact', theme: 'system', features: { mosaic: true } });
     expect(DEFAULT_PREFS.units).toBe('in'); // the defaults are not touched
     const before = store.getState().prefs;
     store.getState().setPrefs({ units: 'cm' }); // no change: no new object, nothing to save
@@ -185,10 +185,20 @@ describe('preferences', () => {
     expect(store.getState().prefs).toEqual(DEFAULT_PREFS);
   });
 
+  it('keeps the theme choice (system, light, dark) and refuses anything else', () => {
+    const store = createAppStore();
+    store.getState().setPrefs({ theme: 'dark' });
+    expect(store.getState().prefs.theme).toBe('dark');
+    store.getState().setPrefs({ theme: 'sepia' } as never);
+    expect(store.getState().prefs.theme).toBe('dark');
+    expect(sanitizePrefs({ theme: 'light' }).theme).toBe('light');
+    expect(sanitizePrefs({ theme: 3 }).theme).toBe('system');
+  });
+
   it('hydrates from whatever was stored', () => {
     const store = createAppStore();
     store.getState().hydratePrefs({ units: 'cm', terms: 'uk', hand: 'sideways', extra: 1, features: { mosaic: true, warp: true } });
-    expect(store.getState().prefs).toEqual({ units: 'cm', terms: 'uk', hand: 'right', dialect: 'compact', features: { mosaic: true } });
+    expect(store.getState().prefs).toEqual({ units: 'cm', terms: 'uk', hand: 'right', dialect: 'compact', theme: 'system', features: { mosaic: true } });
     expect(store.getState().prefsHydrated).toBe(true);
     for (const garbage of [undefined, null, 'text', 7, [], { features: 'x' }]) {
       expect(sanitizePrefs(garbage)).toEqual(DEFAULT_PREFS);
