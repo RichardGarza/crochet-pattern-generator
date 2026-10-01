@@ -11,10 +11,12 @@ in "Tasks handed to tracks for Sprint 3".
 Decisions: **Accept** (applied as asked), **Accept*** (accepted with changes; the reason says which), **Reject**.
 "Where" names the spec section, type file or S0 file changed, or "—".
 
-Commits: `6ded7af` S0-amend (asset codecs, frozen render helpers, exact `decMethod` checks, additive types, icons,
-panel CSS, `ProjectGrid` slot, shared HEIF sniffer), `a5b3fa8` S0-amend (wall-clock budgets: perf tag, `budget()`,
-`npm run perf`, load-robust waits), `a8f635a` S0-amend (`validateDoc2D` and `openAttachTool` frozen), `cc4da7e`
-Design v1.5, then this file and the review fixes (below).
+Commits: `ab9d586` S0-amend (asset codecs, frozen render helpers, exact `decMethod` checks, additive types, icons,
+panel CSS, `ProjectGrid` slot, shared HEIF sniffer), `4c7fe16` S0-amend (wall-clock budgets: perf tag, `budget()`,
+`npm run perf`, load-robust waits), `fd8e8f0` S0-amend (`validateDoc2D` and `openAttachTool` frozen), `0d8b45c`
+Design v1.5, `950a4b6` this file, then the review fixes (below). The three S0-amend commits were rebuilt
+before any push: partial staging had put their new §5.2.1 spec lines outside the type blocks (each commit now
+typechecks and passes `check-spec-types` on its own: 137, 137, 139 declarations).
 
 ## Decisions
 
@@ -189,7 +191,7 @@ with `npm run perf` once on a quiet machine and report its load line. Binary mes
 1. Keep the §2.13 codes as now registered (the six T1.2 codes unchanged).
 2. Cleanup (§2.5) runs after `colorize` and keeps protected (salient, override, locked) cells; overrides follow §5.5.5
    as written in v1.5 (identity hex + yarn id, ΔE00 < 2 mapping, `remapEdits`, `I_EDITS_REMAPPED`, `W_EDITS_INVALID`).
-3. Performance: flat-art `colorize` on a 2000 × 1500 logo measured 474–551 ms against the 300 ms chart budget (§5.8);
+3. Performance (pulled forward from T1.4 because it decides the cleanup design): flat-art `colorize` on a 2000 × 1500 logo measured 474–551 ms against the 300 ms chart budget (§5.8);
    profile `protectThin` / `poolLabels` and get the 200 × 200 chart (sample → cleanup) under budget; add a perf-tagged
    test with `budget(300)`.
 4. Metrics (§2.5): every metric a pure function with a test; nothing reads `Date` or `Math.random`.
@@ -229,17 +231,17 @@ with `npm run perf` once on a quiet machine and report its load line. Binary mes
    `W_STAGGER` count on the 2000 random lathes before and after.
 4. `W_JOG` per §2.13 v1.5, also for whole-round color changes in spirals that cannot be jogless (colors are T4.4; add the
    rule where the color cues are placed).
-5. Mesh parts: pass `MeshApi.pathB` the part's `crochet.seed` as `seed` and the attachment boundary as `attach`
-   (part-local points where the part meets its parent, e.g. the parent's surface samples inside the child); the root
-   sends neither.
+5. Mesh parts: pass `MeshApi.pathB` the part's `crochet.seed` as `seed` whenever it is set (the root too: a picked
+   start point always wins) and the attachment boundary as `attach` (part-local points where the part meets its
+   parent, e.g. the parent's surface samples inside the child); the root sends no `attach`.
 6. Plan / frames / trimming / cues / lean / assembly per §2.10.1–2.10.6, §2.12 with `E_EYE_ORDER`, `E_ASSEMBLY`,
    `E_OPEN_EDGE`, `W_GAP`, G17, G18, G20; snap safety-eye sizes with `snapSafetyEyeMm` in the plan.
 7. Still open from integration-s1 for T4.4: yardage band with `calibrated: gauge.lscCalibrated`, size bands from
    `gauge.tol`.
 
 ### T5 — T5.3 DTW, transducer, Path B driver, worker
-1. `mesh.worker` `pathB`: use the request's `seed` (nearest vertex) and `attach` (farthest tip from it); neither = the
-   root rule (lowest-patch centroid) — §2.10.7 step 1.
+1. `mesh.worker` `pathB`: the request's `seed` wins (nearest vertex), also on the root; else the tip farthest from
+   `attach`; no `attach` = the root rule (lowest-patch centroid) — §2.10.7 step 1.
 2. Results carry `W_MESH_PIECES` (re-mesh kept the largest of several pieces) and `W_MESH_OPEN` (odd parity columns).
 3. Read stored parts through `meshAssetCodec` / `sdfAssetCodec` (a reconstructed part's `sdf:<meshRef>` volume is
    reused by merge/voxelize, §2.9.8); every returned mesh stays a copy.
@@ -259,8 +261,9 @@ with `npm run perf` once on a quiet machine and report its load line. Binary mes
    stub test with real tests.
 5. Live loop and ghost (§4.3, §2.10.10): the Yarn & size panel shows the toy ghost height with its band once the loop
    exists (T6.2 shows the model height).
-6. Mesh parts: decode `threeD.meshAssets` with `meshAssetCodec` for the viewport and for paint on vertex labels;
-   palette edits (merge, delete, reorder) re-index mesh vertex labels (s1 task 4).
+6. Mesh parts, as far as paint needs them: decode `threeD.meshAssets` with `meshAssetCodec` so the viewport shows
+   them and Paint can write vertex labels; palette edits (merge, delete, reorder) re-index mesh vertex labels (s1 task
+   4). Mirror, resize and Scale of mesh parts stay refused until T6.4's mesh plumbing (§4.2, §4.5).
 7. Proportions panel per §4.2 (kernel `applyProportions`, G23).
 
 ### T7 — Sprint 3 = the trial-independent part of T7.4 (owner's decision: the S-CD send-side trial is postponed)
@@ -268,14 +271,18 @@ with `npm run perf` once on a quiet machine and report its load line. Binary mes
    message, send step and Q&A wizard wait for the S-CD trial (`fixtures/claude-design/s-cd/`, §6.5).
 2. `acceptImport`: default `meshCodec` to `meshAssetCodec` (`core/kernel/assetCodecs.ts`); keep the parameter for tests;
    accepting an import with mesh parts no longer needs a caller-supplied codec.
-3. Units: report `reason: 'default'` for a plain-inches reading and for the mm/cm fallback above 60 in (§3.7.5).
+3. Units: report `reason: 'default'` for a plain-inches reading, for the mm/cm fallback above 60 in, and for the case
+   where neither fits (inches, confirm set, scaled to the limit) — `core/importer/units.ts` still says `'spec'`
+   (§3.7.5).
 4. **Import tab and import dialog UI:** drop / paste; carrier, dialect and confidence; repair chips — `attach-inferred`
    chips open the Attach tool through `openAttachTool(partId)` (frozen; while it is a stub, check `isImplemented` and
    fall back to opening the Shape tab); the units confirm ("0.25 in tall, or 9.9 in tall?"), re-running with
    `ctx.units`; the versions chip and picker (`ctx.pickCandidate`); the diff view (`diffModels`) with "Carry anyway";
    Accept (`acceptImport`, one undo step), then `<YarnSizePanel context="post-import" onDone>` — the panel pre-fills
    from `model.yarn` itself (T6 deviation 21), so T7 does not import T6's `yarnSize` helpers.
-5. The pre-fill's lace note is T6's (`LACE_NOTE`, §4.5 wording); T7 shows nothing of its own for CYC 0.
+5. The pre-fill's lace note is T6's (`LACE_NOTE`, §4.5 wording); T7 shows nothing of its own for CYC 0: delete
+   `LACE_AS_CYC1_NOTE` in `core/importer/accept.ts` (it still says "may come out larger") and the `note` that
+   `yarnPrefill` returns, or make it the §4.5 text if the import dialog must show it.
 6. Start → "Import from Claude Design"; with `qa.awaiting` set the import opens at once with "Copy prompt again"
    offered (s1 task 7) — the copy itself waits for prompt-v1, so offer it only when the stored prompt text exists.
 7. Return-path matching (§3.7.7): `x-cpg` tag, else ≥ 60% of seed ids → "Import into <project> (where you made the
@@ -288,7 +295,8 @@ with `npm run perf` once on a quiet machine and report its load line. Binary mes
 2. Folder plugin: import `sniffHeifBrand` from `src/core/kernel/heif.ts` (no imports of its own) and delete the copy and
    its equality test.
 3. PDF text through `renderPatternText(doc, { format: 'md', terms, hand, dialect })` (T2.3 implements it this sprint;
-   gate the text tests with `it.runIf(isImplemented(renderPatternText))` until merge); chart pages from `doc.chart`;
+   gate the text tests with `it.runIf(isImplemented(renderPatternText))`; the G9 PDF acceptance completes at the
+   Sprint 3 merge, when integration removes the gate); chart pages from `doc.chart`;
    materials, gauge and notions from the doc (§2.8); section order §1.3 F8; never format pattern text yourself.
 4. Pre-export check: `validateDoc2D(doc, { settings: project.twoD.settings, gauge })` (frozen); any `E_*` disables
    PDF export with the issue shown. It takes 0.5–1.5 s on a large chart (T2 notes): run it once when the export opens,
@@ -297,9 +305,50 @@ with `npm run perf` once on a quiet machine and report its load line. Binary mes
 6. No Settings screen in v1: storage, folder path and free-space warnings stay in the library (§5.5.2, §5.5.4).
 7. The folder's write-once `assets/` is never collected in v1 (§7.3).
 
+### Carried to Sprint 4 (recorded so they are not lost)
+- T6 (T6.4): integration-s1 T6 task 3 — `paletteIds` to `merge` / `fromPart`, place merged parts with `recenterMesh`,
+  ⇧⌘Z → `redoSculpt`, `mirrorPlane` for off-center or rotated mesh parts; mirror / resize / Scale of mesh parts.
+- T3 (T3.4): integration-s1 T3 task 5 — `ensureWebGpuProbed()` (or `ml.status()`) where the depth option needs it;
+  the Photos tab creates `threeD.recon` (task T3-6 above).
+- T4 (T4.4): yardage band with `calibrated`, size bands from `gauge.tol`, the ghost part of `W_SIZE`.
+- T7: T7.3 and the prompt / fix-up / send / Q&A parts of T7.4, after the S-CD trial.
+
 ## Checks
 
-(Filled in below after the runs.)
+On the final tree (after the review fixes), Node 22, 12 cores:
+
+| Check | Result |
+|---|---|
+| `npm run typecheck` | clean |
+| `npm run lint` (oxlint) | 0 findings |
+| `node scripts/check-spec-types.mjs` | 139 declarations identical; the new reverse check (every `src/types` export declared in a spec block) passes |
+| `npm test` (×2) | 188 files, 3418 passed, 8 skipped — both runs (load ≈ 15–27) |
+| `npm run build` | green (only the known > 500 kB lazy-chunk warning) |
+| `npm run e2e` | 31 passed (2.5 min; on the pre-review tree — the review fixes touch no UI or e2e code) |
+| `npm run perf` | 19 files, 41 passed, 375 skipped, 28 s, load line `4.3 / 26.2 on 12 cores` (16:20); reviewer's run at `83.4 / 68.5` also green |
+| Load proof | fork: 4 × `npm test` at once, load up to 305 then 91–169: all green after the TMPDIR fix; reviewer: two rounds of 3 background + 1 measured `npm test`, load 3.4 → 93.6 and 86 → 124: all 8 runs green (188 files, 3416 passed) |
+| Each S0-amend commit alone | `tsc -b` clean; `check-spec-types` 137 / 137 / 139 |
+
+## Review fixes
+
+An independent reviewer checked completeness (48 rows, counts), spec/type/code agreement, that `src/types` is purely
+additive, the codec under adversarial input, the timing mechanism under load (above), cross-track imports and the
+Sprint 3 list. No blockers. Fixed from its findings:
+- T4/T5 tasks: a root mesh part keeps a picked `crochet.seed` (only `attach` is absent on the root).
+- T7 task 5: delete T7's own wrong lace note (`LACE_AS_CYC1_NOTE`); T7 task 3 covers the "neither fits" units case
+  (now also in §3.7.5).
+- Codec: refuses wrongly typed arrays (a plain array of indices encoded as zeros), negative / fractional indices,
+  more indices than the decoder reads, non-canonical 32-bit indices for ≤ 65 536 vertices, labels below −1 (tests).
+- `npm run perf -- <path>` now narrows the timing files (it widened them); timing files are found by any spelling of
+  the helper import or a literal `perf` tag.
+- DESIGN.md: stale "S-CD in sprint 1" texts marked postponed; PLY loader mentions; §6.3 Provides/Consumes list the
+  v1.5 frozen functions and the asset codecs; §5.8 states the exact sanity bound; §6.1 exempts lower bounds.
+- `check-spec-types` gained the reverse check (an export of `src/types` that no spec block declares fails), which
+  would have caught the misplaced lines of the first S0-amend commits; its test expects ≥ 139 declarations.
+- Sprint 3 list: the s1 carry-overs to Sprint 4, T1's performance task marked as pulled forward, T6's mesh scope
+  stated, T8's G9 PDF acceptance completing at the merge.
+Kept: the `/__convert` test restores `TMPDIR` after the fetch resolves (`convertHeicToJpeg` awaits its temp-folder removal before it
+answers; held in all load runs); −0 and 0 encode differently (documented in the codec).
 
 ## Not done here
 

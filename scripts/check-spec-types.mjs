@@ -17,7 +17,7 @@
 // Exit codes: 0 identical · 1 they differ · 2 the check could not run (TypeScript missing, spec layout changed).
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -126,6 +126,22 @@ for (const [file, lines] of Object.entries(files)) {
   }
 }
 if (checks.length < 100) fail(2, `only ${checks.length} declarations were found in the spec blocks; the extraction no longer fits the document.`);
+
+// The other direction (design v1.5): every type src/types declares must be declared in one of the four blocks.
+// Without it a declaration added to src/types whose spec line landed outside a ```ts block (or was forgotten) was
+// never compared, and the script still passed.
+const specNames = new Set();
+for (const lines of Object.values(files)) for (const [kind, name] of declared(lines)) specNames.add(ours(kind, name) ?? name);
+const typesDir = path.join(root, 'src', 'types');
+const unspecified = [];
+for (const file of readdirSync(typesDir).filter((f) => f.endsWith('.ts') && f !== 'index.ts').sort()) {
+  for (const m of readFileSync(path.join(typesDir, file), 'utf8').matchAll(/^export (?:type|interface) ([A-Za-z_][A-Za-z0-9_]*)/gm)) {
+    if (!specNames.has(m[1])) unspecified.push(`${file}: ${m[1]}`);
+  }
+}
+if (unspecified.length > 0) {
+  fail(1, `src/types declares types that no type block of docs/DESIGN.md declares (add them to §3.5.1, §3.7.1, §5.2 or §5.2.1):\n  ${unspecified.join('\n  ')}`);
+}
 
 // A directory of its own per run, inside node_modules so that `react` and `manifold-3d` resolve: two runs at
 // once (a manual run during `npm test`, say) must not share files.

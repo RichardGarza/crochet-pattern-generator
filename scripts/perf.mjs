@@ -5,7 +5,9 @@
 // time in one worker, with CPG_PERF=1 so `budget(ms)` is the strict budget. `npm test` runs the same tests in
 // parallel against a loose sanity bound only, because other agents may load the machine.
 //
-// Extra arguments are passed to vitest (e.g. `npm run perf -- src/core/meshtools` narrows the files further).
+// Extra arguments: a path filter (`npm run perf -- src/core/meshtools`) keeps only the timing files whose path
+// contains it; options (`--reporter=verbose`) are passed to vitest. A file is a timing file when it imports
+// src/test/timing (any spelling: `…/test/timing`, `…/test/timing.ts`) or names the `perf` tag itself.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -23,14 +25,20 @@ function timingTests(dir) {
     if (SKIP_DIRS.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) out.push(...timingTests(full));
-    else if (TEST_FILE.test(entry.name) && /test\/timing['"]/.test(fs.readFileSync(full, 'utf8'))) out.push(path.relative(root, full));
+    else if (TEST_FILE.test(entry.name) && /test\/timing(\.ts)?['"]|tags:\s*\[[^\]]*['"]perf['"]/.test(fs.readFileSync(full, 'utf8'))) out.push(path.relative(root, full));
   }
   return out;
 }
 
-const files = ['src', 'scripts'].flatMap((d) => timingTests(path.join(root, d))).sort();
+const extra = process.argv.slice(2);
+const filters = extra.filter((a) => !a.startsWith('-'));
+const options = extra.filter((a) => a.startsWith('-'));
+const files = ['src', 'scripts']
+  .flatMap((d) => timingTests(path.join(root, d)))
+  .filter((f) => filters.length === 0 || filters.some((x) => f.includes(path.normalize(x))))
+  .sort();
 if (files.length === 0) {
-  console.error('perf: no test file imports src/test/timing');
+  console.error(filters.length ? `perf: no timing test file matches ${filters.join(', ')}` : 'perf: no test file imports src/test/timing');
   process.exit(1);
 }
 
@@ -42,7 +50,7 @@ if (load1 > 0.75 * cores) {
 }
 
 const vitest = path.join(root, 'node_modules', 'vitest', 'vitest.mjs');
-const args = [vitest, 'run', ...files, '--tags-filter=perf', '--no-file-parallelism', '--maxWorkers=1', ...process.argv.slice(2)];
+const args = [vitest, 'run', ...files, '--tags-filter=perf', '--no-file-parallelism', '--maxWorkers=1', ...options];
 const result = spawnSync(process.execPath, args, { cwd: root, stdio: 'inherit', env: { ...process.env, CPG_PERF: '1' } });
 if (result.error) {
   console.error(`perf: could not start vitest: ${result.error.message}`);

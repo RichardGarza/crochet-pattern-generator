@@ -181,6 +181,31 @@ describe('mesh assets (CPGM)', () => {
     expect(codeOf(() => decodeMeshAsset(lie))).toBe('flags');
   });
 
+  it('refuses untyped or wrongly typed arrays (they would encode garbage) and non-integer or negative indices', () => {
+    const ok = randomMesh(10, 5, 1);
+    const big = randomMesh(70_000, 1, 2);
+    expect(codeOf(() => encodeMeshAsset({ ...big, indices: [69_999, 1, 2] as unknown as Uint32Array<ArrayBuffer> }))).toBe('value');
+    expect(codeOf(() => encodeMeshAsset({ ...ok, positions: Array.from(ok.positions) as unknown as Float32Array<ArrayBuffer> }))).toBe('value');
+    expect(codeOf(() => encodeMeshAsset({ ...ok, indices: new Int32Array([-1, 0, 1]) as unknown as Uint32Array<ArrayBuffer> }))).toBe('value');
+    expect(codeOf(() => encodeMeshAsset({ ...ok, labels: new Uint16Array(10) as unknown as Uint8Array<ArrayBuffer> }))).toBe('value');
+    expect(codeOf(() => encodeMeshAsset({ ...ok, partId: [] as unknown as Uint8Array<ArrayBuffer> }))).toBe('value');
+    expect(codeOf(() => encodeSdfAsset({ data: [1] as unknown as Int16Array<ArrayBuffer>, dims: [1, 1, 1], origin: [0, 0, 0], voxel: 1 }))).toBe('value');
+    expect(codeOf(() => encodeLabelsAsset({ labels: new Uint8Array(1) as unknown as Int8Array<ArrayBuffer>, w: 1, h: 1 }))).toBe('value');
+  });
+
+  it('accepts only the canonical index width (32-bit indices for ≤ 65 536 vertices are refused)', () => {
+    const mesh = randomMesh(4, 2, 3);
+    const canonical = encodeMeshAsset(mesh);
+    // rebuild the same mesh with 32-bit indices by hand
+    const I = mesh.indices.length;
+    const wide = new Uint8Array(canonical.length + I * 2);
+    wide.set(canonical.subarray(0, 16 + 4 * 12));
+    new DataView(wide.buffer).setUint16(6, 0, true);
+    for (let i = 0; i < I; i++) new DataView(wide.buffer).setUint32(16 + 48 + 4 * i, mesh.indices[i], true);
+    wide.set(canonical.subarray(16 + 48 + 2 * I), 16 + 48 + 4 * I);
+    expect(codeOf(() => decodeMeshAsset(wide))).toBe('flags');
+  });
+
   it('the Blob codec stores and reads back through putAsset-style Blobs', async () => {
     const mesh = randomMesh(64, 100, 11, true);
     const blob = meshAssetCodec.encode(mesh);
@@ -246,7 +271,7 @@ describe('sdf assets (CPGS)', () => {
 
 describe('photo-label assets (CPGL, §2.9.6)', () => {
   it('round-trips the §2.9.6 layout: CPGL, version 1, reserved 0, w, h, Int8 labels with −1 outside', async () => {
-    const labels = new Int8Array([-1, 0, 1, 2, 127, -128]);
+    const labels = new Int8Array([-1, 0, 1, 2, 127, 15]);
     const b = encodeLabelsAsset({ labels, w: 3, h: 2 });
     expect(String.fromCharCode(...b.subarray(0, 4))).toBe('CPGL');
     expect([u16(b, 4), u16(b, 6), u32(b, 8), u32(b, 12)]).toEqual([1, 0, 3, 2]);
@@ -254,7 +279,7 @@ describe('photo-label assets (CPGL, §2.9.6)', () => {
     const back = decodeLabelsAsset(b);
     expect(back.w).toBe(3);
     expect(back.h).toBe(2);
-    expect(Array.from(back.labels)).toEqual([-1, 0, 1, 2, 127, -128]);
+    expect(Array.from(back.labels)).toEqual([-1, 0, 1, 2, 127, 15]);
     const blob = labelsAssetCodec.encode({ labels, w: 3, h: 2 });
     expect(blob.type).toBe(LABELS_ASSET_MIME);
     expect(Array.from((await labelsAssetCodec.decode(blob)).labels)).toEqual(Array.from(labels));
@@ -263,6 +288,10 @@ describe('photo-label assets (CPGL, §2.9.6)', () => {
   it('refuses a wrong size or a damaged header', () => {
     expect(codeOf(() => encodeLabelsAsset({ labels: new Int8Array(5), w: 3, h: 2 }))).toBe('length');
     expect(codeOf(() => encodeLabelsAsset({ labels: new Int8Array(0), w: 0, h: 0 }))).toBe('range');
+    expect(codeOf(() => encodeLabelsAsset({ labels: new Int8Array([0, -2]), w: 2, h: 1 }))).toBe('value');
+    const below = encodeLabelsAsset({ labels: new Int8Array([0, 1]), w: 2, h: 1 });
+    below[17] = 0xfe; // −2
+    expect(codeOf(() => decodeLabelsAsset(below))).toBe('value');
     const good = encodeLabelsAsset({ labels: new Int8Array(4), w: 2, h: 2 });
     expect(codeOf(() => decodeLabelsAsset(good.subarray(0, 19)))).toBe('length');
     const flags = good.slice();

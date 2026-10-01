@@ -55,7 +55,7 @@ records the decision and the reason; agents MUST NOT re-open those decisions wit
 | D15 | 3D → pattern | Path A (primitive profiles → counts → staggered placement) for primitives and fitted meshes; Path B (heat geodesics + constrained DTW) for non-axisymmetric mesh parts [03 §6] | Path A gives readable, classic patterns; Path B covers the rest. |
 | D16 | Shaping layout | Counts from geometry; placement by grouped + alternating-rotation stagger [07 §6.6] | Matches published style; machine-checked examples. |
 | D17 | Amigurumi gauge | Table E widths, `w/h = 1.05` (yarn over) or 1.11 (yarn under), stuffing stretch `s = 1.05` applied isotropically [01 §3.7, §5] | Calibrated to PlanetJune sizes. |
-| D18 | Claude Design round trip | Send: one pasted text prompt (seed embedded, tagged with `x-cpg`) plus photos as the only attachments; the project then **waits for its result** (banner, Import entry) and a returning file lands in that project. Return: copy-paste and file drop only; importer accepts our canonical spec **and** the observed Claude Design dialect [08]; HTML is parsed by a worker-safe tokenizer (no DOM); a page without our JSON gets a one-click **fix-up message**. The send side is verified by the **S-CD spike** in sprint 1, before T7 builds the Q&A and prompt (§6.5) | Share links cannot be fetched [05 §1, 08]. Images are a documented Design input; `.txt`/`.json` uploads are not verified (§3.1). `DOMParser` does not exist in dedicated workers. A release-time-only check would rework T7 at the end. |
+| D18 | Claude Design round trip | Send: one pasted text prompt (seed embedded, tagged with `x-cpg`) plus photos as the only attachments; the project then **waits for its result** (banner, Import entry) and a returning file lands in that project. Return: copy-paste and file drop only; importer accepts our canonical spec **and** the observed Claude Design dialect [08]; HTML is parsed by a worker-safe tokenizer (no DOM); a page without our JSON gets a one-click **fix-up message**. The send side is verified by the **S-CD spike** before T7 builds the Q&A and prompt (§6.5; planned for sprint 1, postponed by the owner in v1.5 — T7.3 and the prompt wait for it) | Share links cannot be fetched [05 §1, 08]. Images are a documented Design input; `.txt`/`.json` uploads are not verified (§3.1). `DOMParser` does not exist in dedicated workers. A release-time-only check would rework T7 at the end. |
 | D19 | Persistence | IndexedDB autosave with a revision check and one writer per project (a conflicting tab continues in its copy; a hung writer can be taken over) + `.crochet.json` export/import + dev/preview folder mirror with change-only backups that share one content-addressed asset store; authored edits never overwritten by regeneration | User standing rule: never lose data; this Mac has 34 GiB free and `~/Documents` syncs to iCloud, so whole-folder copies are not affordable. |
 | D20 | Cross-origin isolation | Not enabled in v1 (no COOP/COEP) | Avoids breaking the sandbox runner and image loads; depth runs on WebGPU or 1-thread WASM (≈2.5 s). |
 | D21 | Attach tree | Every model, from every source (Claude Design dialect, GLB/OBJ/PLY/STL, photo reconstruction, editor), is normalized to **one attach tree** by one shared kernel (`inferAttach`, §3.7.6) | The only real Claude Design output leaves 7 of 17 parts without a parent; trimming, start poles and assembly all need the tree. |
@@ -2161,7 +2161,7 @@ muzzle (an oval: rx/ry = 1.0/0.75 = 1.33 > 1.15) pass every `E_*` rule and raise
   images/screenshots, documents and decks (DOCX/PPTX/XLSX) and codebases [05 §1; support article re-read
   2026-10-01]; uploading `.txt`/`.json` files is unverified. So the send step pastes the whole prompt as text and
   attaches only images (§3.4), and the send side is verified **before T7 builds on it**:
-  - **S-CD spike** (sprint 1, integration agent, §6.5): prompt-v1 filled by hand from the §3.6 bunny and the
+  - **S-CD spike** (planned for sprint 1, postponed by the owner in v1.5; integration agent, §6.5): prompt-v1 filled by hand from the §3.6 bunny and the
     canonical teddy, each in the full and the compact variant (4 runs), run at claude.ai/design → 3D object in the
     user's logged-in browser — driven through claude-in-chrome once the user approves (the runs count toward the
     user's Claude usage), otherwise run by the user from the checklist in `docs/S-CD.md`. Recorded per run: how the
@@ -2863,8 +2863,9 @@ inside a `<textarea>` is found by E4; a `<script id="crochet-model">` inside a c
      because the stage documents meters (`reason: 'stage-header'`); otherwise `h < 1.5` ⇒ meters
      (`reason: 'small-bbox'`); both with the confirm pre-set to meters; otherwise inches (`reason: 'default'`,
      v1.5). The observed teddy OBJ (header present, `h = 9.88`) stays inches: 9.88 m is 389 in. v1.5: an inches
-     reading above the schema's 60 in tries mm, then cm, and takes the first that fits, with the confirm set
-     (`reason: 'default'`; a 251 mm STL otherwise failed validation). GLB step 3 uses its exact ratio unless the user
+     reading above the schema's 60 in tries mm, then cm, and takes the first that gives 1–60 in, with the confirm set
+     (`reason: 'default'`; a 251 mm STL otherwise failed validation); when neither fits it stays inches with the
+     confirm set (`reason: 'default'`) and the model is scaled down to the limit. GLB step 3 uses its exact ratio unless the user
      answered (`ctx.units` wins) and sets the confirm when the parts' sizes disagree with their meshes by > 5%;
      `expectedHeightIn` outside 0.1–60 in is ignored.
   Every decision adds a `units` chip ("read as meters: 0.251 → 9.88 in"); `units.confirm` opens a dialog showing
@@ -4001,7 +4002,7 @@ back. A 30 k-vertex, 60 k-triangle mesh is ≈ 0.75 MB.
 | Package | Version | License | Use |
 |---|---|---|---|
 | react, react-dom | ^19.3.0 | MIT | UI |
-| three | ^0.186.1 | MIT | rendering, loaders (GLTF/OBJ/PLY/STL), MC tables |
+| three | ^0.186.1 | MIT | rendering, loaders (GLTF/OBJ/STL; PLY has our own reader since v1.5, §3.7.2), MC tables |
 | @react-three/fiber / @react-three/drei | ^9.8.1 / ^10.7.9 | MIT | viewport, TransformControls |
 | zustand / immer | ^5.0.15 / ^11.1.18 | MIT | state, patches for undo |
 | zod | ^4.6.5 | MIT | schemas, JSON Schema export |
@@ -4088,8 +4089,8 @@ pull through the API before shipping. So:
 | autosave of the doc | < 50 ms |
 | PDF of a 200 × 200 chart pattern | < 5 s |
 
-Each budget with a test is checked strictly by `npm run perf` (serial, one worker) and only against a 10× sanity
-bound by `npm test`, which runs while other agents load the machine (§6.1 rule 5, v1.5).
+Each budget with a test is checked strictly by `npm run perf` (serial, one worker) and only against the sanity bound
+`max(10·N, N + 250 ms)` by `npm test`, which runs while other agents load the machine (§6.1 rule 5, v1.5).
 
 Determinism: no `Math.random()`/`Date` in `src/core`; seeds = `fnv1a64(input bytes ‖ canonical JSON of settings ‖
 CODE_VERSION)` (`CODE_VERSION` lives in `src/core/kernel/hash.ts`; the integration agent bumps it when a merged
@@ -4136,7 +4137,9 @@ never raw floats.
    `perf`-tagged tests of the files that use `test/timing`, one file at a time in one worker with `CPG_PERF=1`, after
    printing the load average (and warning when the 1-minute load is above 0.75 × cores); it is where the §5.8 budgets
    are checked strictly, and every sprint's finish runs it once on a quiet machine (integration at each checkpoint).
-   A track adding a timing assertion uses the helper and the tag; `npm test` alone never fails on load. Non-timing
+   A track adding a timing assertion uses the helper and the tag, so `npm test` no longer fails on a budget because
+   of load (only a ≥ 10× slowdown fails it). Lower bounds on durations (T8's "Take over appears after ≥ 4.5 s") are
+   load-safe and stay plain assertions. Non-timing
    waits are time-bounded too: T8's `waitFor` fails only after its rounds **and** 10 s, Testing Library's
    `asyncUtilTimeout` is 10 s in happy-dom files, and Playwright runs with a 90 s test and 15 s `expect` timeout
    (e2e timing bounds use `budget` as well; the strict worker budget is the node test's). `@playwright/test` cannot be imported inside a
@@ -4339,7 +4342,8 @@ Each track lists scope, owned paths (§5.1), interfaces, acceptance, required te
   `export.ts`), `core/yardage/twoD.ts`, `ui/twoD`, `ui/pattern`, `state/slices/twoD.ts`, `docs/tracks/t2.md`.
 - **Consumes:** kernel encoder/compact renderer/validators/png, gauge, `ChartResult` (a committed fixture JSON until T1
   lands). **Provides:** `buildPattern2D`, `renderLine`, `exportChart`, `renderPatternText`, `computeSkill`,
-  `notesFor`, `abbreviationsFor`, `specialStitchesFor` (§5.2.1), the two views and two tabs.
+  `notesFor`, `abbreviationsFor`, `specialStitchesFor`, and since v1.5 `renderFoundation`, `renderLineExtras` (T4)
+  and `validateDoc2D` (T8) (§5.2.1), the two views and two tabs.
 - **Acceptance/tests:** G9, G10 (incl. RH bottom-left and LH bottom-left), G11 (61.9 yd, 14.95 in tile, skeins for the
   high end), G14 PNG round trip (node, `core/kernel/png.ts`), G16 and **G22** borders (odd row count, LH, join, C2C);
   `E_RUN_SUM`, `E_FOUNDATION`, `E_C2C_TILES`, `E_MOSAIC_ADJ`, `E_BORDER`, `E_COLOR` fire on crafted bad input; C2C
@@ -4384,7 +4388,8 @@ Each track lists scope, owned paths (§5.1), interfaces, acceptance, required te
   `fixtures/images/3d` (except `real/**`), `ui/photos`, `state/slices/recon.ts`, `e2e/tracks/t3-*.spec.ts`,
   `docs/tracks/t3.md`.
 - **Consumes:** kernel (color, EDT, MC, Taubin, png, manifold loader), model schema/transforms/sdf/attach/naming,
-  `workers/{rpc,decode}.ts`. **Provides:** `GeomApi`, `MlApi`, `fitPart` (§5.2.1; also used by T5 and T7),
+  `workers/{rpc,decode}.ts`, `assetCodecs` (v1.5: mesh, SDF and label assets). **Provides:** `GeomApi`, `MlApi`,
+  `fitPart` (§5.2.1; also used by T5 and T7),
   `ReconResult`.
 - **Acceptance/tests** (node environment; the PNG view fixtures are decoded with `core/kernel/png.ts`): three-view
   hull of a sphere r = 0.8 at N = 128 has volume ratio 1.119 ± 0.01; local thickness gives a hemisphere for a disc
@@ -4454,7 +4459,7 @@ Each track lists scope, owned paths (§5.1), interfaces, acceptance, required te
   `ami.worker`; it must not assume a single instance).
 - **Owns:** `core/meshtools`, `workers/mesh.worker.ts`, `docs/tracks/t5.md`.
 - **Consumes:** kernel geometry (MC, Taubin, EDT, manifold loader), `buildModel`, analytic SDFs, three-mesh-bvh,
-  `workers/rpc.ts`. **Provides:** `MeshApi`.
+  `workers/rpc.ts`, `assetCodecs` (v1.5). **Provides:** `MeshApi`.
 - **Acceptance/tests:** narrow-band `voxelizeMesh` matches a brute-force closest-point SDF within 1 voxel on a 2k
   triangle mesh and runs N = 96 / 40k triangles in ≤ 400 ms; heat-method distance on a sphere mesh within 3% (mean)
   of great-circle distance; capsule isolines are single loops; a Y-shaped mesh returns `needsSplit`; DTW on concentric
@@ -4478,8 +4483,8 @@ Each track lists scope, owned paths (§5.1), interfaces, acceptance, required te
   the 10-stitch yarn calibration; `renderPlacementImage` (§5.2.1) for the PDF; `state/slices/model3d.ts`.
 - **Owns:** `ui/shape`, `state/slices/model3d.ts`, `docs/tracks/t6.md`.
 - **Consumes:** builder, transforms, SDFs, model kernels (place, proportions, scale), `commitModelRevision`,
-  `AmiApi`, `MeshApi` (editor instance), `GeomApi.projectColors`, `projectStore`. **Provides:** `ShapeTab`,
-  `YarnSizePanel`, placement renderer.
+  `AmiApi`, `MeshApi` (editor instance), `GeomApi.projectColors`, `projectStore`, `assetCodecs` (v1.5).
+  **Provides:** `ShapeTab`, `YarnSizePanel`, placement renderer, `openAttachTool` (v1.5, for T7).
 - **Acceptance/tests:** model3d recipes are pure and unit-tested (mirror negates x and rotation y/z and links
   `mirrorOf`; delete re-attaches children; add-part attaches to the clicked part with a 0.10 in overlap; Attach
   refuses cycles and never detaches); the re-anchoring tests of §4.2 (head 1.2× keeps ear gaps ≤ 0.1 in and `(az, el)`
@@ -4514,9 +4519,9 @@ Each track lists scope, owned paths (§5.1), interfaces, acceptance, required te
 - **Owns:** `core/importer`, `core/qa`, `workers/import.worker.ts`, `data/templates`, `scripts/gen-schema.ts`,
   `scripts/make-cd-fixtures.mjs`, `fixtures/claude-design/teddy-derived/`, `docs/schema`, `public/sandbox.html`,
   `ui/qa`, `ui/import`, `state/slices/qa.ts`, `e2e/tracks/t7-*.spec.ts`, `docs/tracks/t7.md`.
-- **Consumes:** model schema/builder/transforms/sdf/attach/revisions/naming/place/proportions, kernel color, three's
-  OBJ/PLY/STL loaders, `fitPart` and `GeomApi.projectColors` (T3, gated), `YarnSizePanel` (T6, gated), the S-CD
-  fixtures (I). **Provides:** `ImportApi`, Q&A engine, prompt and fix-up text,
+- **Consumes:** model schema/builder/transforms/sdf/attach/revisions/naming/place/proportions, kernel color and
+  `assetCodecs` (v1.5), three's OBJ/STL loaders (PLY: our own reader), `fitPart` and `GeomApi.projectColors` (T3,
+  gated), `YarnSizePanel` and `openAttachTool` (T6, gated), the S-CD fixtures (I). **Provides:** `ImportApi`, Q&A engine, prompt and fix-up text,
   `docs/schema/crochet-model-1.0.schema.json`.
 - **Acceptance/tests:** G12 on every teddy carrier (node environment) and `e2e/tracks/t7-import-worker.spec.ts`
   through the real worker; **G26** (stale side file ⇒ rev 1 with the versions chip; builder-v1 GLB with root extras,
@@ -4563,7 +4568,7 @@ Each track lists scope, owned paths (§5.1), interfaces, acceptance, required te
   rounds, 3D pieces and assembly with placement images or a text fallback), print; `state/slices/library.ts`.
 - **Owns:** `core/persist`, `core/print`, `scripts/project-folder.ts`, `ui/library`, `ui/export`,
   `state/slices/library.ts`, `docs/tracks/t8.md`.
-- **Consumes:** `projectStore`, types, `PatternDoc`, T2 `exportChart`/`renderPatternText`, T6 placement renderer
+- **Consumes:** `projectStore`, types, `PatternDoc`, T2 `exportChart`/`renderPatternText`/`validateDoc2D` (v1.5), T6 placement renderer
   (optional), `src/test/fakes.ts`. **Provides:** `ProjectRepository` (`createProjectRepository`), `useAutosave`,
   `buildPdf` (§5.2.1), `/__convert`, library screens.
 - **Acceptance/tests:** fake-indexeddb save/load round trip; debounce and flush on `visibilitychange`; a save with a
@@ -4637,7 +4642,7 @@ Each track lists scope, owned paths (§5.1), interfaces, acceptance, required te
 | Sprint | Work | Commit points |
 |---|---|---|
 | 0 | Step 0 (first: commit the spec, item −1) | "Design v1.2 and research", then "Step 0: scaffold, shared types and kernels" on `master` → push |
-| 1 (parallel) | **S-CD spike** (integration agent with the user's logged-in browser, or the user from `docs/S-CD.md`; §3.1) | "S-CD: send-side fixtures and findings" on `master` (fixtures + README; DESIGN.md updated if prompt-v1, the builder or the schema must change) — **before T7.3 starts** |
+| 1 (parallel; postponed in v1.5, still before T7.3) | **S-CD spike** (integration agent with the user's logged-in browser, or the user from `docs/S-CD.md`; §3.1) | "S-CD: send-side fixtures and findings" on `master` (fixtures + README; DESIGN.md updated if prompt-v1, the builder or the schema must change) — **before T7.3 starts** |
 | 1–4 | T1–T8 in parallel, one track sprint each | `TN.k: …` per sprint, pushed to `track/tN-*` |
 | after 2 | integration checkpoint: merge T8.1, T1.2, T2.2, T4.2 to `master`, full tests, S0 amendments, tracks merge `master` | "Checkpoint: …" |
 | 5 | integration, e2e, docs, gates | "Merge TN" per track, "Integration: flows F1–F8", "E2E smoke tests", tag `v0.1.0` after the gates |
@@ -4666,7 +4671,7 @@ Each track lists scope, owned paths (§5.1), interfaces, acceptance, required te
 | Risk | Impact | Mitigation |
 |---|---|---|
 | Claude Design changes its formats, drops the 3D object skill, or ignores our schema (observed sample: one object) | imports fail | tolerant ladder (§3.7.4), dialect normalizer, attach inference for every carrier, fingerprint drift warning, five return channels (paste JSON, archive, standalone, GLB, OBJ) plus screenshots → F3; the fix-up message for pages without the JSON (§3.4.2); the S-CD spike and the release gate add five more objects; refresh fixtures each release |
-| The send side fails (prompt-v1 never run; `.txt` upload unverified; very long pastes may become text attachments) | Claude builds without our seed; import falls back to dialect or E8; a late surprise reworks T7 or the schema | the **S-CD spike in sprint 1**, before T7.3 builds the Q&A and prompt (§6.5); full prompt pasted as text with photos only (§3.4); kit route and compact prompt as fallbacks; the release gate repeats it as a regression check |
+| The send side fails (prompt-v1 never run; `.txt` upload unverified; very long pastes may become text attachments) | Claude builds without our seed; import falls back to dialect or E8; a late surprise reworks T7 or the schema | the **S-CD spike** (postponed from sprint 1 in v1.5), before T7.3 builds the Q&A and prompt (§6.5); full prompt pasted as text with photos only (§3.4); kit route and compact prompt as fallbacks; the release gate repeats it as a regression check |
 | An archive holds a stale copy of the spec (side file, older page) | the pattern is made for a rejected model | every candidate collected, highest revision wins, ties to the rendered page, a visible "versions" chip with a picker (§3.7.2); prompt rule 7 asks for no side file |
 | Exports in meters (builder-v1 at 0.0254, the stage's documented units) | parts read 39× too small, clamped and distorted | units decided on raw geometry before fitting and clamping, from the expected height or the stage header, with a confirm (§3.7.5); G26 fixtures in meters |
 | The user leaves for Claude Design and cannot find the way back | the result lands in a new project without photos, seed or carried colors | waiting state with banner and Import tab, the `x-cpg` tag and id matching on Start → Import (§3.7.7), `qa-return.spec` |
@@ -4752,7 +4757,8 @@ block v1.
   open T6's Attach tool; a new stub at `ui/shape/openAttachTool.ts`); doc
   comments for `GeomApi.build` (rejects with `ReconError`, message `E_…: …`) and `ReconSettings.targetHeightIn`. The
   signature guard checks `abbreviationsFor` / `specialStitchesFor` with `SameSignature` again (T2's bridge overloads
-  removed) and the two render helpers. Rejected: a `Line.border` field (the start corner and join stay in Rnd 1's
+  removed) and the two render helpers; `check-spec-types` now also fails when `src/types` declares a type no spec
+  block declares. Rejected: a `Line.border` field (the start corner and join stay in Rnd 1's
   arrow and a `join B` cue).
 - **New S0 code:** `core/kernel/assetCodecs.ts` — the mesh (`CPGM`), SDF volume (`CPGS`) and photo-label (`CPGL`)
   asset formats, versioned, strict, with Blob codecs (§5.5.6); `core/kernel/heif.ts` (HEIF sniffing shared by the

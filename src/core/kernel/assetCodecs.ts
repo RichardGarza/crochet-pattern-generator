@@ -6,6 +6,7 @@
 //   sdf    `application/x-cpg-sdf`     `SdfVolume` of a mesh part, `threeD.meshAssets['sdf:' + meshRef]` (T3, T5)
 //   labels `application/x-cpg-labels`  a view's photo-label image, `PhotoView.labelsKey`               (T3)
 //
+// (Equal content means equal numbers bit for bit: −0 and 0 are different floats and give different bytes.)
 // Each format starts with a 4-byte magic, a u16 LE version and a u16 LE flags/reserved word; every number is
 // little-endian. Encoding is deterministic (equal content → equal bytes → equal sha256, so content addressing
 // deduplicates), decoding is strict: a wrong magic, a newer version, unknown flags, a length that does not match the
@@ -127,9 +128,18 @@ function allFinite(a: ArrayLike<number>): boolean {
 
 function checkIndices(indices: ArrayLike<number>, vertices: number, what: string): void {
   for (let i = 0; i < indices.length; i++) {
-    if (indices[i] >= vertices) throw new AssetCodecError('range', `${what}: index ${indices[i]} at ${i} is past the ${vertices} vertices`);
+    const v = indices[i];
+    if (!(Number.isInteger(v) && v >= 0 && v < vertices)) throw new AssetCodecError('range', `${what}: index ${v} at ${i} is not a vertex (0 … ${vertices - 1})`);
   }
 }
+
+/** The declared array types are part of the format: an untyped caller passing a plain array would encode garbage. */
+function checkArray(value: unknown, type: { name: string; prototype: object }, what: string): void {
+  if (!(value instanceof (type as unknown as new () => object))) throw new AssetCodecError('value', `${what} must be a ${type.name}`);
+}
+
+/** Largest index count a mesh asset may hold (the decoder refuses more before allocating). */
+const MAX_INDICES = 6 * MAX_ELEMENTS;
 
 // ---- ColoredMesh (CPGM) -----------------------------------------------------------------------------------------
 //
@@ -142,10 +152,15 @@ function checkIndices(indices: ArrayLike<number>, vertices: number, what: string
 /** Encodes a mesh part's buffers (§5.5.6). Throws `AssetCodecError` for an inconsistent or non-finite mesh. */
 export function encodeMeshAsset(mesh: ColoredMesh): Uint8Array<ArrayBuffer> {
   const { positions, indices, labels, partId } = mesh;
+  checkArray(positions, Float32Array, 'encodeMeshAsset: positions');
+  checkArray(indices, Uint32Array, 'encodeMeshAsset: indices');
+  checkArray(labels, Uint8Array, 'encodeMeshAsset: labels');
+  if (partId !== undefined) checkArray(partId, Uint8Array, 'encodeMeshAsset: partId');
   if (positions.length % 3 !== 0) throw new AssetCodecError('length', `encodeMeshAsset: ${positions.length} position values are not whole vertices`);
   const V = positions.length / 3;
   if (V > MAX_ELEMENTS) throw new AssetCodecError('range', `encodeMeshAsset: ${V} vertices exceed the limit`);
   if (indices.length % 3 !== 0) throw new AssetCodecError('length', `encodeMeshAsset: ${indices.length} indices are not whole triangles`);
+  if (indices.length > MAX_INDICES) throw new AssetCodecError('range', `encodeMeshAsset: ${indices.length} indices exceed the limit`);
   if (labels.length !== V) throw new AssetCodecError('length', `encodeMeshAsset: ${labels.length} labels for ${V} vertices`);
   if (partId !== undefined && partId.length !== V) throw new AssetCodecError('length', `encodeMeshAsset: ${partId.length} part ids for ${V} vertices`);
   if (!allFinite(positions)) throw new AssetCodecError('value', 'encodeMeshAsset: a position is not a finite number');
@@ -189,11 +204,13 @@ export function decodeMeshAsset(input: Bytes): ColoredMesh {
   if ((flags & ~MESH_KNOWN_FLAGS) !== 0) throw new AssetCodecError('flags', `mesh asset: unknown flags 0x${flags.toString(16)}`);
   const V = view.getUint32(8, true);
   const I = view.getUint32(12, true);
-  if (V > MAX_ELEMENTS || I > 3 * 2 * MAX_ELEMENTS) throw new AssetCodecError('range', `mesh asset: ${V} vertices / ${I} indices exceed the limit`);
+  if (V > MAX_ELEMENTS || I > MAX_INDICES) throw new AssetCodecError('range', `mesh asset: ${V} vertices / ${I} indices exceed the limit`);
   if (I % 3 !== 0) throw new AssetCodecError('length', `mesh asset: ${I} indices are not whole triangles`);
   const index16 = (flags & MESH_FLAG_INDEX16) !== 0;
   const hasPartId = (flags & MESH_FLAG_PART_ID) !== 0;
   if (index16 && V > 65_536) throw new AssetCodecError('flags', `mesh asset: 16-bit indices cannot address ${V} vertices`);
+  // Canonical form only: one content, one byte string (content addressing deduplicates).
+  if (!index16 && V <= 65_536) throw new AssetCodecError('flags', `mesh asset: ${V} vertices must use 16-bit indices`);
   const indexBytes = I * (index16 ? 2 : 4);
   const total = MESH_HEADER + V * 12 + indexBytes + V + (hasPartId ? V : 0);
   if (b.length !== total) throw new AssetCodecError('length', `mesh asset: ${b.length} bytes, the header describes ${total}`);
@@ -220,6 +237,7 @@ export function decodeMeshAsset(input: Bytes): ColoredMesh {
 
 /** Encodes a stored signed-distance volume (§5.5.6). */
 export function encodeSdfAsset(v: SdfVolume): Uint8Array<ArrayBuffer> {
+  checkArray(v.data, Int16Array, 'encodeSdfAsset: data');
   const [nx, ny, nz] = v.dims;
   if (![nx, ny, nz].every((n) => Number.isInteger(n) && n >= 1)) throw new AssetCodecError('range', `encodeSdfAsset: bad dims [${v.dims.join(', ')}]`);
   const count = nx * ny * nz;
@@ -274,6 +292,7 @@ export interface LabelImage {
 /** Encodes a view's photo-label image (§2.9.6, §5.5.6). */
 export function encodeLabelsAsset(img: LabelImage): Uint8Array<ArrayBuffer> {
   const { w, h, labels } = img;
+  checkArray(labels, Int8Array, 'encodeLabelsAsset: labels');
   if (!(Number.isInteger(w) && Number.isInteger(h) && w >= 1 && h >= 1)) throw new AssetCodecError('range', `encodeLabelsAsset: bad size ${w} × ${h}`);
   if (w * h > MAX_ELEMENTS) throw new AssetCodecError('range', `encodeLabelsAsset: ${w * h} pixels exceed the limit`);
   if (labels.length !== w * h) throw new AssetCodecError('length', `encodeLabelsAsset: ${labels.length} labels for ${w} × ${h}`);
@@ -282,6 +301,9 @@ export function encodeLabelsAsset(img: LabelImage): Uint8Array<ArrayBuffer> {
   writeHeader(view, 'CPGL', LABELS_ASSET_VERSION, 0);
   view.setUint32(8, w, true);
   view.setUint32(12, h, true);
+  for (let i = 0; i < labels.length; i++) {
+    if (labels[i] < -1) throw new AssetCodecError('value', `encodeLabelsAsset: label ${labels[i]} at ${i} (−1 = outside, else ≥ 0)`);
+  }
   out.set(new Uint8Array(labels.buffer, labels.byteOffset, labels.byteLength), LABELS_HEADER);
   return out;
 }
@@ -298,8 +320,11 @@ export function decodeLabelsAsset(input: Bytes): LabelImage {
   const h = view.getUint32(12, true);
   if (w < 1 || h < 1 || w * h > MAX_ELEMENTS) throw new AssetCodecError('range', `labels asset: bad size ${w} × ${h}`);
   if (b.length !== LABELS_HEADER + w * h) throw new AssetCodecError('length', `labels asset: ${b.length} bytes, the header describes ${LABELS_HEADER + w * h}`);
-  const bytes = b.slice(LABELS_HEADER);
-  return { labels: new Int8Array(bytes.buffer), w, h };
+  const labels = new Int8Array(b.slice(LABELS_HEADER).buffer);
+  for (let i = 0; i < labels.length; i++) {
+    if (labels[i] < -1) throw new AssetCodecError('value', `labels asset: label ${labels[i]} at ${i} (−1 = outside, else ≥ 0)`);
+  }
+  return { labels, w, h };
 }
 
 // ---- Blob adapters (what `putAsset` / the asset loader exchange) -------------------------------------------------
