@@ -235,7 +235,20 @@ describe('shaping: W_RUFFLE, W_FAN3, W_SPACING, W_STAGGER, W_STACKED, W_MIN_PART
     expect(codes(check([g8[0], { ...g8[1], segments: undefined }]))).toEqual(['W_SPACING']);
     // a side of 7 holding two increases, unevenly
     const ops = parseOps('inc, inc, sc, inc, 3 sc, inc, 3 inc, 7 sc, 2 inc');
-    expect(codes(check([g8[0], { ...rnd(2, ops, 20), segments: segs }]))).toEqual(['W_RUFFLE', 'W_SPACING']); // +9 also ruffles
+    // +9 sts, but the sides take 2ΔS of it: the ends grow by less than the bound (v1.5: W_RUFFLE on the circular part)
+    expect(codes(check([g8[0], { ...rnd(2, ops, 20), segments: segs }]))).toEqual(['W_SPACING']);
+  });
+
+  it('W_RUFFLE on oval rounds checks the circular part only (v1.5, task T4-2)', () => {
+    // the teddy muzzle's Rnd 3: 14 → 22 is circular 12 → 18 (+6) and sides 1 → 2 (2ΔS = +2): no ruffle
+    const muzzle = placePiece({ counts: [8, 14, 22], circ: [6, 12, 18], ovalS: [1, 1, 2], start: { k: 'chainOval', chains: 4 } });
+    expect(codes(check(muzzle))).toEqual([]);
+    // without the counts the circular parts come from the side segments: the same answer
+    expect(codes(validatePiece3d({ id: 'm', lines: muzzle, style: 'exact', cell: { wS: 0.2, hS: 0.2 } }))).toEqual([]);
+    // ends that flare by more than ⌈2π·hS/wS⌉ = 7 still warn: circular 6 → 14 (+8)
+    const flare = placePiece({ counts: [20, 28], circ: [6, 14], ovalS: [7, 7], start: { k: 'chainOval', chains: 10 } });
+    expect(codes(check(flare))).toContain('W_RUFFLE');
+    expect(codes(validatePiece3d({ id: 'f', lines: flare, style: 'exact', cell: { wS: 0.2, hS: 0.2 } }))).toContain('W_RUFFLE');
   });
 
   it('W_MIN_PART: never 5 sts around', () => {

@@ -363,13 +363,41 @@ function sideSegments(line: Line): Op[][] {
   return parts.filter((x) => x.kind === 'side').map((x) => x.ops);
 }
 
+/**
+ * The circular part of every round (the stated count minus the two straight sides of an oval round). From the
+ * counts when they come with the piece; else from the lines: a chain oval starts with S = chains − 3, a shaped oval
+ * round's side segments hold 2S, and a round without segments keeps the S of the round before.
+ */
+function circularParts(p: Piece3dInput, rounds: { line: Line; n: number }[]): number[] {
+  const c = p.counts;
+  if (c?.ovalS && c.circ.length >= rounds.length && rounds.every((r, i) => r.n === i + 1 && c.counts[i] === r.line.stated)) {
+    return rounds.map((_, i) => c.circ[i]);
+  }
+  let S = 0;
+  return rounds.map(({ line }) => {
+    if (line.start?.k === 'chainOval') S = Math.max(0, line.start.chains - 3);
+    else if (line.start) S = 0;
+    if (line.segments && line.segments.length > 0 && line.prevCount !== null) {
+      const sides = sideSegments(line);
+      S = sides.reduce((s, ops) => s + produced(ops), 0) / 2;
+    }
+    return line.stated - 2 * S;
+  });
+}
+
 function shapeRules(p: Piece3dInput, rounds: { line: Line; n: number }[], add: Add): void {
   const { wS, hS } = p.cell;
   const maxStep = Math.ceil((2 * Math.PI * hS) / wS - 1e-9);
+  // v1.5: on oval rounds the bound applies to the circular part only (the side growth 2ΔS lengthens the straight
+  // sides, it does not flare the ends)
+  const circ = circularParts(p, rounds);
   for (let i = 1; i < rounds.length; i++) {
-    const a = rounds[i - 1].line.stated;
-    const b = rounds[i].line.stated;
-    if (Math.abs(b - a) > maxStep) add('W_RUFFLE', `Rnd ${rounds[i].n} changes by ${b - a} sts; more than ${maxStep} per round ruffles or puckers`, { line: rounds[i].n });
+    const a = circ[i - 1];
+    const b = circ[i];
+    const oval = circ[i] !== rounds[i].line.stated || circ[i - 1] !== rounds[i - 1].line.stated;
+    if (Math.abs(b - a) > maxStep) {
+      add('W_RUFFLE', `Rnd ${rounds[i].n} changes ${oval ? 'its ends ' : ''}by ${b - a} sts; more than ${maxStep} per round ruffles or puckers`, { line: rounds[i].n });
+    }
   }
   for (const line of p.lines) {
     const chainOvalRnd1 = line.start?.k === 'chainOval';

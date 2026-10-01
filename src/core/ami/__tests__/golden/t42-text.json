@@ -273,8 +273,6 @@
     ],
     "issues": [
       "W_CLOSE@10",
-      "W_RUFFLE@3",
-      "W_RUFFLE@9",
       "W_SIZE"
     ]
   },
@@ -286,9 +284,7 @@
       "Rnd 4: sc, inc, sc, 2 sc, (sc, inc, sc) x 3, 2 sc, (sc, inc, sc) x 2 (28)",
       "Rnd 5: 4 sc, inc, sc, 12 sc, inc, sc, 8 sc (30)"
     ],
-    "issues": [
-      "W_RUFFLE@3"
-    ]
+    "issues": []
   },
   "teddy-muzzle-exact-closed": {
     "text": [
@@ -305,8 +301,6 @@
     ],
     "issues": [
       "W_CLOSE@10",
-      "W_RUFFLE@3",
-      "W_RUFFLE@9",
       "W_SIZE"
     ]
   },
@@ -318,8 +312,6 @@
       "Rnd 4: inc, 2 sc, 2 sc, (2 sc, inc, sc) x 2, sc, 2 sc, 2 sc, inc, 3 sc (26)",
       "Rnd 5: 3 sc, inc, inc, sc, 10 sc, inc, inc, sc, 7 sc (30)"
     ],
-    "issues": [
-      "W_RUFFLE@3"
-    ]
+    "issues": []
   }
 }

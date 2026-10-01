@@ -188,16 +188,28 @@ export function placeCircular(P: number, T: number, changeIdx: number, o: RoundO
   const base = basePlacement(P, T);
   const rot = defaultRotation(base, changeIdx);
   const ops = rotateLeft(base.base, rot);
+  const asked = o.endPlain === true || o.startPlain === true;
   const want = (x: readonly Op[]) =>
     x.length > 0 && (!o.endPlain || isPlainSc(x[x.length - 1])) && (!o.startPlain || isPlainSc(x[0]));
-  if ((!o.endPlain && !o.startPlain) || want(ops)) return { ops, base, rotation: rot, overrideFailed: false };
+  // R8 against the previous change round; out of R8's scope (unequal k, g = 0, no previous round) it always holds
+  const r8 = (x: readonly Op[]) => base.k === 0 || r8Ok(o.prevChange, changeSites(x));
+  const defaultR8 = r8(ops);
+  if ((!asked || want(ops)) && defaultR8) return { ops, base, rotation: rot, overrideFailed: false };
+  // the overrides: the smallest extra left rotation that satisfies everything asked for and R8 (v1.5 third
+  // override: a change round in R8's scope whose default rotation violates R8)
   for (let m = 1; m < ops.length; m++) {
     const cand = rotateLeft(ops, m);
-    if (want(cand) && (base.k === 0 || r8Ok(o.prevChange, changeSites(cand)))) {
-      return { ops: cand, base, rotation: (rot + m) % ops.length, overrideFailed: false };
+    if ((!asked || want(cand)) && r8(cand)) return { ops: cand, base, rotation: (rot + m) % ops.length, overrideFailed: false };
+  }
+  // nothing satisfies both: a jogless / joined-round request keeps its own fallback (the jog note, "inc in same st
+  // as join"), but the round is still staggered when some rotation can do that (else the default and W_STAGGER)
+  if (!defaultR8 && !(asked && want(ops))) {
+    for (let m = 1; m < ops.length; m++) {
+      const cand = rotateLeft(ops, m);
+      if (r8(cand)) return { ops: cand, base, rotation: (rot + m) % ops.length, overrideFailed: asked && !want(cand) };
     }
   }
-  return { ops, base, rotation: rot, overrideFailed: true };
+  return { ops, base, rotation: rot, overrideFailed: asked && !want(ops) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------

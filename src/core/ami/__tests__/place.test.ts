@@ -158,6 +158,32 @@ describe('overrides of the rotation', () => {
     expect(placeCircular(6, 12, 0, { startPlain: true }).overrideFailed).toBe(true);
   });
 
+  it('v1.5 third override: a change round in R8 scope whose default violates R8 takes the smallest rotation that satisfies it (task T4-3)', () => {
+    // 20 → 26 → 32: equal k = 6, different g and r; the default rotation of the second round sits too close
+    const prev = changeSites(placeCircular(20, 26, 0).ops);
+    const b = basePlacement(26, 32);
+    const dflt = rotateLeft(b.base, defaultRotation(b, 1));
+    expect(r8Ok(prev, changeSites(dflt))).toBe(false);
+    const r = placeCircular(26, 32, 1, { prevChange: prev });
+    expect(r8Ok(prev, changeSites(r.ops))).toBe(true);
+    expect(r.overrideFailed).toBe(false);
+    // the smallest extra rotation: no smaller one satisfies R8
+    const extra = (r.rotation - defaultRotation(b, 1) + r.ops.length) % r.ops.length;
+    expect(extra).toBeGreaterThan(0);
+    for (let m = 0; m < extra; m++) expect(r8Ok(prev, changeSites(rotateLeft(dflt, m)))).toBe(false);
+    // without the previous round (or out of R8's scope) nothing moves
+    expect(placeCircular(26, 32, 1).rotation).toBe(defaultRotation(b, 1));
+    expect(placeCircular(26, 31, 1, { prevChange: prev }).rotation).toBe(defaultRotation(basePlacement(26, 31), 1));
+  });
+
+  it('third override, no rotation satisfies R8: the default stays (fallback W_STAGGER)', () => {
+    const prev = changeSites(placeCircular(24, 18, 0).ops);
+    const r = placeCircular(18, 12, 1, { prevChange: prev });
+    expect(r.rotation).toBe(defaultRotation(basePlacement(18, 12), 1));
+    expect(r.overrideFailed).toBe(false);
+    for (let m = 0; m < r.ops.length; m++) expect(r8Ok(prev, changeSites(rotateLeft(r.ops, m)))).toBe(false);
+  });
+
   it('rotateLeft', () => {
     expect(rotateLeft([1, 2, 3, 4], 1)).toEqual([2, 3, 4, 1]);
     expect(rotateLeft([1, 2, 3, 4], 5)).toEqual([2, 3, 4, 1]);
