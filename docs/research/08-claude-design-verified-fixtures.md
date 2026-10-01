@@ -68,9 +68,9 @@ We gave it only field names. It decided the rest, so **the importer must accept 
 | Extra top-level keys it added | `axes`, `palette` (hex → material name), `notes` |
 | Non-crochet parts | Eyes are parts with palette name `black_safety_eye`. The importer should treat names containing `eye` / tiny dark spheres as safety eyes (notions), not crocheted pieces |
 | Child scale | Children are **not** scaled by the parent: ellipsoid scale is baked into geometry (`SphereGeometry(1).scale(rx,ry,rz)`), so parent transforms are rotation + translation only |
-| Ground | The model is not grounded at y=0 by the spec (body center y=2.6, ry=2.6 puts its base at 0; legs dip slightly below). The stage shifts the rendered object to rest on the ground "without moving its origin" |
+| Ground | Not grounded by the spec: body base sits at y = 0 but the legs reach y = −0.078. The stage lowers its ground plane to the model's lowest point and leaves the model where it is |
 
-Total height of this bear from the spec: head top = 7.2 + 2.15 = 9.35 in, ears reach about 10 in. `finishedSize.height` = 10.
+Measured height of this bear: 9.88 in (y −0.078 to 9.8; head top 9.35, ear tips 9.8) against `finishedSize.height` = 10. Expect a small mismatch between the stated size and the real bounding box.
 
 ### Export options actually present (Share menu)
 
@@ -135,8 +135,10 @@ Consequences for the importer:
   38,165 `v` lines and 71,520 faces.
 - Vertices are in **world space** (parent transforms baked in). No hierarchy, no dimensions, no part type:
   importing an OBJ needs primitive fitting per object.
-- **Quirk: the model is shifted up.** The first vertex is `v 0 5.2 0` (top of the body, whose spec top is y = 5.2),
-  so here it matches, but the stage may move the object to rest on the ground; do not trust absolute Y, re-ground on import.
+- **Coordinates are unshifted spec coordinates.** The stage moves its ground plane down to the model
+  (`this._ground.position.y = box.min.y`), not the model, so exported vertices equal the spec's world positions.
+  Measured bounding box of this OBJ: x −2.906…2.906, y −0.078…9.8, z −2.25…2.82 (height 9.88 in). The legs dip
+  0.078 in below y = 0, so the importer should re-ground the model (shift so min y = 0) rather than assume it.
 - MTL: `newmtl <name>`, `Kd r g b` in **linear** values (same numbers as the GLB), `Ks 0.2 0.2 0.2`, `Ns`, `d`.
   Convert `Kd` linear → sRGB to recover the hex colors.
 - The file is large because every primitive is exported at 48–64 segments. The importer must handle ~10 MB of text
