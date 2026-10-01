@@ -2,6 +2,7 @@
 // commitModelRevision and the hooks T8's autosave builds on.
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { current, original } from 'immer';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { mulberry32, randomInt, type Rng } from '../../core/kernel/prng';
 import type { CommitModelRevisionFn } from '../../types/entryPoints';
@@ -302,9 +303,12 @@ describe('update', () => {
     expect(docOf(store)).toEqual(project());
     expect(store.getState().history.past).toEqual([]);
     expect(store.getState().changeId).toBe(0);
-    // replacing a branch around the revisions without changing them is fine
+    expect(() => s.update('drop 3D', (d) => delete d.threeD)).toThrow('commitModelRevision only'); // the revisions would go with it
+    // replacing a branch around the revisions without changing them is fine, also with an equal copy of the list
     expect(s.update('ami', (d) => void (d.threeD = { ...d.threeD!, ami: { ...AMI, spiral: false } }))).toBe(true);
     expect(docOf(store).threeD?.ami.spiral).toBe(false);
+    expect(s.update('ami again', (d) => void (d.threeD = { ...structuredClone(current(d.threeD!)), ami: AMI }))).toBe(true);
+    expect(docOf(store).threeD?.ami.spiral).toBe(true);
   });
 
   it('a coalesced drag is ONE history entry and one undo', () => {
@@ -322,7 +326,10 @@ describe('update', () => {
     }
     const s = store.getState();
     expect(s.history.past.map((e) => e.label)).toEqual(['Move head']);
-    expect(s.history.past[0].patches).toHaveLength(1);
+    expect(s.history.past[0].patches).toEqual([
+      { op: 'replace', path: ['threeD', 'model', 'parts', 1, 'position', 0], value: 12 },
+      { op: 'replace', path: ['threeD', 'model', 'parts', 1, 'position', 1], value: 2 },
+    ]); // 120 ticks, as small as one move
     expect(s.changeId).toBe(120); // every tick is a change to save …
     expect(selectModel(s)?.parts[1].position).toEqual([12, 2, 0]);
     expect(s.undo()).toBe(true); // … and one step to undo
@@ -529,6 +536,75 @@ describe('undo and redo through the store', () => {
       }
       expect(selectRedoLabel(store.getState())).toBeUndefined();
     }
+  });
+
+  it('redo is exact on a document that holds one object twice (found in review: a duplicated lathe point)', () => {
+    const profile: [number, number][] = [
+      [0, 0],
+      [1, 0.5],
+      [1, 1],
+      [0, 1.5],
+    ];
+    const body = { ...base, id: 'body', type: 'lathe', dims: { profile } } as Part;
+    const store = opened(project({ threeD: { origin: 'multiview', meshAssets: {}, revisions: [], views: [], ami: AMI, model: model([body]) } }));
+    const profileOf = (): [number, number][] => (selectModel(store.getState())!.parts[0].dims as { profile: [number, number][] }).profile;
+    const s = store.getState();
+    // "Duplicate point": the recipe inserts the point it read from the draft, so the document holds it twice
+    s.update('Duplicate point', (d) => {
+      const points = (d.threeD!.model!.parts[0].dims as { profile: [number, number][] }).profile;
+      points.splice(2, 0, points[1]);
+    });
+    expect(profileOf()[1]).toBe(profileOf()[2]);
+    // "Drag point": set y, keep the profile sorted by y
+    s.update('Drag point', (d) => {
+      const points = (d.threeD!.model!.parts[0].dims as { profile: [number, number][] }).profile;
+      points[1][1] = 0.7;
+      points.sort((a, b) => a[1] - b[1]);
+    });
+    const dragged = [
+      [0, 0],
+      [1, 0.5],
+      [1, 0.7],
+      [1, 1],
+      [0, 1.5],
+    ];
+    expect(profileOf()).toEqual(dragged); // one of the two moved, the other stayed
+    const edited = clone(docOf(store));
+    expect(store.getState().undo()).toBe(true);
+    expect(profileOf()).toEqual([
+      [0, 0],
+      [1, 0.5],
+      [1, 0.5],
+      [1, 1],
+      [0, 1.5],
+    ]);
+    expect(store.getState().redo()).toBe(true);
+    expect(profileOf()).toEqual(dragged); // immer's own patches gave [1, 0.7] twice here
+    expect(docOf(store)).toStrictEqual(edited);
+    store.getState().undo();
+    store.getState().undo();
+    expect(profileOf()).toEqual(profile);
+  });
+
+  it('records nothing for a recipe that ends where it started (found in review: a draft replaced by its original)', () => {
+    const store = opened(project({ threeD: { origin: 'multiview', meshAssets: {}, revisions: [], views: [], ami: AMI, model: model([sphere('body', 2), sphere('head', 1)]) } }));
+    const before = store.getState();
+    expect(
+      store.getState().update('Try a color, then reset the part', (d) => {
+        const part = d.threeD!.model!.parts[0];
+        part.color = 'c2';
+        d.threeD!.model!.parts[0] = original(part) as never;
+      }),
+    ).toBe(true);
+    // immer's own patches recorded "color = c2" for this, and a redo then produced a document the user never had
+    const after = store.getState();
+    expect(after.doc).toBe(before.doc);
+    expect(after.history.past).toEqual([]);
+    expect([after.changeId, after.saveStatus]).toEqual([0, 'saved']);
+    // the same for a branch replaced by an equal copy
+    store.getState().update('Equal copy', (d) => void (d.threeD!.model = structuredClone(current(d.threeD!.model!)) as never));
+    expect(store.getState().doc).toBe(before.doc);
+    expect(store.getState().history.past).toEqual([]);
   });
 
   it('never moves rev, updatedAt or id, which persistence owns', () => {

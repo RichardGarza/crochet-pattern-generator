@@ -27,7 +27,7 @@ import type { CarryReport, CommitModelRevisionFn } from '../types/entryPoints';
 import type { CrochetModelV1 } from '../types/model';
 import type { AssetRef, ModelRevision, ProjectDoc } from '../types/project';
 import { isProjectId } from './appStore';
-import { applyRecipe, emptyHistory, record, redo as redoStep, seal, undo as undoStep, type Change, type History } from './history';
+import { applyRecipe, diffDocuments, emptyHistory, record, redo as redoStep, seal, undo as undoStep, type Change, type History } from './history';
 
 // ---- errors
 
@@ -368,7 +368,7 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
           throw new Error(`projectStore.${what} ("${label}"): a recipe must not change "${field}"; persistence owns it (markSaved, rebind)`);
         }
       }
-      if (!o.allowRevisions && result.doc.threeD?.revisions !== doc.threeD?.revisions) {
+      if (!o.allowRevisions && diffDocuments(doc.threeD?.revisions, result.doc.threeD?.revisions).patches.length > 0) {
         throw new Error(`projectStore.${what} ("${label}"): the model revisions are written by commitModelRevision only`);
       }
       const partial: Partial<ProjectState> = {

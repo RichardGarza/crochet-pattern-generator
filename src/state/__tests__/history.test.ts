@@ -1,10 +1,13 @@
 import { isDeepStrictEqual } from 'node:util';
+import type { Patch } from 'immer';
 import { describe, expect, it } from 'vitest';
 import { mulberry32, randomInt, type Rng } from '../../core/kernel/prng';
 import {
+  applyPatches,
   applyRecipe,
   canRedo,
   canUndo,
+  diffDocuments,
   emptyHistory,
   HISTORY_LIMIT,
   record,
@@ -215,11 +218,17 @@ describe('coalescing', () => {
     expect(s.labels).toEqual(['Select', 'Move item']);
     const entry = s.history.past[1];
     expect(entry.coalesceKey).toBe('drag:item-2');
-    // the entry is as small as a single move
-    expect(entry.patches).toHaveLength(1);
-    expect(entry.inverse).toHaveLength(1);
-    expect(entry.patches[0]).toEqual({ op: 'replace', path: ['list', 1, 'pos'], value: [500, 1000, 1500] });
-    expect(entry.inverse[0]).toEqual({ op: 'replace', path: ['list', 1, 'pos'], value: [0, 0, 0] });
+    // the entry is as small as a single move: from where the drag started to where it ended
+    expect(entry.patches).toEqual([
+      { op: 'replace', path: ['list', 1, 'pos', 0], value: 500 },
+      { op: 'replace', path: ['list', 1, 'pos', 1], value: 1000 },
+      { op: 'replace', path: ['list', 1, 'pos', 2], value: 1500 },
+    ]);
+    expect(entry.inverse).toEqual([
+      { op: 'replace', path: ['list', 1, 'pos', 2], value: 0 },
+      { op: 'replace', path: ['list', 1, 'pos', 1], value: 0 },
+      { op: 'replace', path: ['list', 1, 'pos', 0], value: 0 },
+    ]);
     const afterDrag = clone(s.doc);
 
     s.undo();
@@ -523,5 +532,237 @@ describe('undo and redo over long random sequences (seeded)', () => {
       }
       expect(s.redo()).toBe(false);
     }
+  });
+});
+
+// ---- the structural diff and the patch applier under the history
+
+/** Deep freeze, as the documents of a store are. */
+function frozen<T>(value: T): T {
+  if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) frozen(child);
+  }
+  return value;
+}
+
+/** diff, then check both directions; returns the forward patches. */
+function patchesBetween(base: unknown, next: unknown): { op: string; path: (string | number)[]; value?: unknown }[] {
+  const a = frozen(structuredClone(base));
+  const b = frozen(structuredClone(next));
+  const { patches, inverse } = diffDocuments(a, b);
+  expect(applyPatches(a, patches)).toStrictEqual(b);
+  expect(applyPatches(b, inverse)).toStrictEqual(a);
+  expect(patches.length).toBe(inverse.length);
+  return patches;
+}
+
+describe('diffDocuments', () => {
+  it('finds nothing between equal documents, whether they share objects or not', () => {
+    const doc = frozen(initial());
+    expect(diffDocuments(doc, doc)).toEqual({ patches: [], inverse: [] });
+    expect(diffDocuments(doc, structuredClone(doc))).toEqual({ patches: [], inverse: [] });
+    expect(diffDocuments([], [])).toEqual({ patches: [], inverse: [] });
+    expect(diffDocuments(Number.NaN, Number.NaN).patches).toEqual([]);
+  });
+
+  it('patches object keys: replaced, added, removed, nested', () => {
+    expect(patchesBetween({ a: 1, b: { c: 2, d: 3 }, e: 5 }, { a: 1, b: { c: 9, x: 1 }, f: 6 })).toEqual([
+      { op: 'replace', path: ['b', 'c'], value: 9 },
+      { op: 'remove', path: ['b', 'd'] },
+      { op: 'add', path: ['b', 'x'], value: 1 },
+      { op: 'remove', path: ['e'] },
+      { op: 'add', path: ['f'], value: 6 },
+    ]);
+  });
+
+  it('tells a key that holds undefined from a key that is not there', () => {
+    expect(patchesBetween({ a: undefined }, {})).toEqual([{ op: 'remove', path: ['a'] }]);
+    expect(patchesBetween({}, { a: undefined })).toEqual([{ op: 'add', path: ['a'], value: undefined }]);
+    expect(patchesBetween({ a: undefined }, { a: null })).toEqual([{ op: 'replace', path: ['a'], value: null }]);
+    expect(patchesBetween({ a: 0 }, { a: -0 })).toHaveLength(1); // exact, not "about equal"
+  });
+
+  it('replaces a value whose kind changed as a whole', () => {
+    expect(patchesBetween({ a: [1, 2] }, { a: { 0: 1, 1: 2 } })).toEqual([{ op: 'replace', path: ['a'], value: { 0: 1, 1: 2 } }]);
+    expect(patchesBetween({ a: { b: 1 } }, { a: 'text' })).toEqual([{ op: 'replace', path: ['a'], value: 'text' }]);
+    expect(patchesBetween({ a: null }, { a: {} })).toEqual([{ op: 'replace', path: ['a'], value: {} }]);
+    expect(patchesBetween(1, { a: 1 })).toEqual([{ op: 'replace', path: [], value: { a: 1 } }]); // even the root
+    expect(patchesBetween([1], { a: 1 })).toEqual([{ op: 'replace', path: [], value: { a: 1 } }]);
+  });
+
+  it('patches arrays of one length index by index, into the elements', () => {
+    expect(patchesBetween([{ id: 1, t: ['a'] }, { id: 2 }, 3], [{ id: 1, t: ['a', 'b'] }, { id: 2 }, 4])).toEqual([
+      { op: 'add', path: [0, 't', 1], value: 'b' },
+      { op: 'replace', path: [2], value: 4 },
+    ]);
+  });
+
+  it('needs one patch per element for the usual array edits, however long the array is', () => {
+    const items = Array.from({ length: 1000 }, (_, i) => ({ id: i }));
+    const base = frozen({ items });
+    const edit = (change: (list: { id: number }[]) => void): unknown[] => {
+      const list = [...items];
+      change(list);
+      const next = frozen({ items: list });
+      const { patches, inverse } = diffDocuments(base, next);
+      expect(applyPatches(base, patches)).toStrictEqual(next);
+      expect(applyPatches(next, inverse)).toStrictEqual(base);
+      return patches;
+    };
+    expect(edit((l) => l.push({ id: 1000 }))).toEqual([{ op: 'add', path: ['items', 1000], value: { id: 1000 } }]);
+    expect(edit((l) => l.push({ id: 1000 }, { id: 1001 }))).toHaveLength(2);
+    expect(edit((l) => l.pop())).toEqual([{ op: 'remove', path: ['items', 999] }]);
+    expect(edit((l) => l.shift())).toEqual([{ op: 'remove', path: ['items', 0] }]);
+    expect(edit((l) => l.unshift({ id: -1 }))).toEqual([{ op: 'add', path: ['items', 0], value: { id: -1 } }]);
+    expect(edit((l) => l.splice(500, 1))).toEqual([{ op: 'remove', path: ['items', 500] }]);
+    expect(edit((l) => l.splice(500, 3))).toEqual([
+      { op: 'remove', path: ['items', 502] },
+      { op: 'remove', path: ['items', 501] },
+      { op: 'remove', path: ['items', 500] },
+    ]);
+    expect(edit((l) => l.splice(500, 0, { id: -5 }))).toEqual([{ op: 'add', path: ['items', 500], value: { id: -5 } }]);
+    // a splice that also replaces: the element at the common index is patched in place, the rest removed
+    expect(edit((l) => l.splice(10, 2, { id: -7 }))).toEqual([
+      { op: 'replace', path: ['items', 10, 'id'], value: -7 },
+      { op: 'remove', path: ['items', 11] },
+    ]);
+    expect(edit((l) => void (l.length = 0))).toHaveLength(1000);
+  });
+
+  it('handles reorders and unrelated arrays (correct, if not minimal)', () => {
+    patchesBetween([1, 2, 3, 4], [4, 3, 2, 1]);
+    patchesBetween([{ a: 1 }, { b: 2 }, { c: 3 }], [{ c: 3 }, { a: 1 }]);
+    patchesBetween([1, 2, 3], []);
+    patchesBetween([], [[1], [2, [3]]]);
+    patchesBetween([[1, 2], [3]], [[3], [1, 2], [4]]);
+    patchesBetween(['a', 'a', 'b', 'a'], ['a', 'b', 'a', 'a', 'a']);
+  });
+
+  it('treats a key named __proto__, constructor or toString as data', () => {
+    const base = JSON.parse('{"__proto__": {"x": 1}, "constructor": 1, "plain": {"__proto__": 2}}') as Record<string, unknown>;
+    const next = JSON.parse('{"__proto__": {"x": 2, "polluted": true}, "toString": "t", "plain": {}}') as Record<string, unknown>;
+    expect(Object.keys(base)).toEqual(['__proto__', 'constructor', 'plain']);
+    const patches = patchesBetween(base, next);
+    expect(patches.map((p) => `${p.op} ${p.path.join('/')}`)).toEqual(['replace __proto__/x', 'add __proto__/polluted', 'remove constructor', 'remove plain/__proto__', 'add toString']);
+    const applied = applyPatches(frozen(structuredClone(base)), diffDocuments(base, next).patches) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(applied)).toBe(Object.prototype); // an own key was written, not the prototype
+    expect(({} as { polluted?: unknown }).polluted).toBeUndefined();
+  });
+
+  it('does not look into branches that are the same object', () => {
+    const shared = frozen({ big: Array.from({ length: 50 }, (_, i) => ({ i })) });
+    const base = frozen({ a: shared, b: 1 });
+    const next = frozen({ a: shared, b: 2 });
+    const getters: string[] = [];
+    const spy = new Proxy(base, {
+      get(target, key, receiver) {
+        getters.push(String(key));
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+    expect(diffDocuments(spy, next).patches).toEqual([{ op: 'replace', path: ['b'], value: 2 }]);
+    expect(getters.filter((k) => k === 'big')).toEqual([]);
+  });
+
+  it('holds for any two JSON values (seeded): the patches turn one into the other, and back', () => {
+    const rng = mulberry32(31337);
+    const randomJson = (depth: number): unknown => {
+      const roll = rng();
+      if (depth <= 0 || roll < 0.3) return [0, 1, -1, 2.5, 'a', 'b', '', true, false, null][randomInt(rng, 10)];
+      if (roll < 0.65) return Array.from({ length: randomInt(rng, 5) }, () => randomJson(depth - 1));
+      const obj: Record<string, unknown> = {};
+      const n = randomInt(rng, 5);
+      for (let i = 0; i < n; i++) obj[['a', 'b', 'c', 'd', 'e', 'f'][randomInt(rng, 6)]] = randomJson(depth - 1);
+      return obj;
+    };
+    /** A value near `v`: the kind of difference an edit makes. */
+    const mutate = (v: unknown, depth: number): unknown => {
+      if (rng() < 0.15 || depth <= 0) return randomJson(2);
+      if (Array.isArray(v)) {
+        const copy = v.map((x) => (rng() < 0.2 ? mutate(x, depth - 1) : x));
+        const roll = rng();
+        if (roll < 0.25) copy.splice(randomInt(rng, copy.length + 1), 0, randomJson(2));
+        else if (roll < 0.5 && copy.length > 0) copy.splice(randomInt(rng, copy.length), 1 + randomInt(rng, 2));
+        else if (roll < 0.6) copy.reverse();
+        return copy;
+      }
+      if (typeof v === 'object' && v !== null) {
+        const copy: Record<string, unknown> = {};
+        for (const [k, x] of Object.entries(v)) {
+          if (rng() < 0.15) continue;
+          copy[k] = rng() < 0.3 ? mutate(x, depth - 1) : x;
+        }
+        if (rng() < 0.3) copy[['a', 'x', 'y'][randomInt(rng, 3)]] = randomJson(2);
+        return copy;
+      }
+      return randomJson(1);
+    };
+    for (let n = 0; n < 4000; n++) {
+      const a = frozen(randomJson(4));
+      const b = frozen(n % 2 === 0 ? mutate(a, 4) : randomJson(4));
+      const { patches, inverse } = diffDocuments(a, b);
+      expect(applyPatches(a, patches), `pair ${n}: forward`).toStrictEqual(b);
+      expect(applyPatches(b, inverse), `pair ${n}: back`).toStrictEqual(a);
+      expect(patches.length === 0, `pair ${n}: empty exactly when equal`).toBe(isDeepStrictEqual(a, b));
+    }
+  });
+});
+
+describe('applyPatches', () => {
+  it('copies only the way to the patched place, shares the rest, and returns frozen objects', () => {
+    const doc = frozen(initial());
+    const next = applyPatches(doc, [{ op: 'replace', path: ['nested', 'a', 'b', 'c'], value: 7 }]);
+    expect(next.nested.a.b.c).toBe(7);
+    expect(doc.nested.a.b.c).toBe(1);
+    expect(next.list).toBe(doc.list);
+    expect(next.map).toBe(doc.map);
+    expect(next.nested.arr).toBe(doc.nested.arr);
+    expect(next.nested).not.toBe(doc.nested);
+    for (const copy of [next, next.nested, next.nested.a, next.nested.a.b]) expect(Object.isFrozen(copy)).toBe(true);
+    expect(applyPatches(doc, [])).toBe(doc);
+  });
+
+  it('puts back the very objects a step removed, and never touches the identity of the rest', () => {
+    const s = new Session();
+    s.doc = frozen({ ...initial(), list: [...initial().list, { id: 3, tags: ['c'] }] });
+    const before = s.doc;
+    s.update('Edit', (d) => {
+      d.list.splice(1, 1); // remove an item
+      delete d.map.k0; // remove a key
+      d.nested.a.b.c = 2; // change a leaf
+    });
+    s.undo();
+    expect(s.doc).toStrictEqual(before);
+    expect(s.doc.list[1]).toBe(before.list[1]); // the removed item is the same object again
+    expect(s.doc.map.k0).toBe(before.map.k0); // so is the value of the removed key
+    expect(s.doc.list[0]).toBe(before.list[0]); // what was never touched never changed identity
+    expect(s.doc.list[2]).toBe(before.list[2]);
+    expect(s.doc.nested.arr).toBe(before.nested.arr);
+    expect(s.doc.nested.a.b).toStrictEqual(before.nested.a.b); // rebuilt on the way to the leaf: equal, not identical
+  });
+
+  it('refuses a patch that does not fit the document, and applies nothing', () => {
+    const doc = frozen(initial());
+    const bad: Patch[] = [
+      { op: 'replace', path: ['nope', 'x'], value: 1 }, // no such branch
+      { op: 'replace', path: ['nope'], value: 1 }, // replace needs the key
+      { op: 'remove', path: ['opt'] }, // remove needs the key
+      { op: 'add', path: ['name'], value: 'x' }, // add needs the key to be free
+      { op: 'replace', path: ['list', 4], value: {} }, // index out of range
+      { op: 'remove', path: ['list', -1] },
+      { op: 'add', path: ['list', 6], value: {} }, // beyond the end
+      { op: 'add', path: ['list', 1.5], value: {} },
+      { op: 'replace', path: ['name', 'length'], value: 3 }, // through a string
+      { op: 'add', path: [], value: {} }, // the root can only be replaced
+      { op: 'remove', path: [] },
+    ];
+    for (const patch of bad) {
+      const good: Patch = { op: 'replace', path: ['n'], value: 5 };
+      expect(() => applyPatches(doc, [good, patch]), JSON.stringify(patch)).toThrow('does not fit the document');
+    }
+    expect(doc).toStrictEqual(initial());
+    expect(applyPatches(doc, [{ op: 'add', path: ['list', 2], value: { id: 5, tags: [] } }]).list).toHaveLength(3); // at the end is fine
+    expect(applyPatches(doc, [{ op: 'replace', path: [], value: 'whole' }])).toBe('whole');
   });
 });
