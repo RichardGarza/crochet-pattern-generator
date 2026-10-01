@@ -37,6 +37,7 @@ import {
   FREE_STOP_BYTES,
   type BackupInfo,
 } from '../src/core/persist/backups.ts';
+import { sniffHeifBrand } from '../src/core/kernel/heif.ts';
 import {
   BACKUPS_ROUTE,
   BASE_SHA_HEADER,
@@ -816,27 +817,6 @@ export function createFolderStore(o: FolderStoreOptions): FolderStore {
 
 /** The server refuses more than this (the client's `MAX_CONVERT_BYTES` in src/workers/decode.ts). */
 export const MAX_CONVERT_BYTES = 50 * 1024 * 1024;
-const HEIF_BRANDS: readonly string[] = ['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'mif1', 'msf1'];
-const AVIF_BRANDS: readonly string[] = ['avif', 'avis'];
-
-/**
- * True when the bytes start with an ISO-BMFF `ftyp` box naming a HEIF brand (and no AVIF brand) — the same rule
- * as `sniffHeifBrand` in src/workers/decode.ts (tested equal). Kept here so the Vite config does not load a
- * browser module.
- */
-export function isHeif(bytes: Uint8Array): boolean {
-  if (bytes.length < 12) return false;
-  const ascii = (at: number): string => String.fromCharCode(bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]);
-  if (ascii(4) !== 'ftyp') return false;
-  const size = ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0;
-  const end = size >= 16 ? Math.min(size, bytes.length) : bytes.length;
-  const major = ascii(8);
-  const compatible: string[] = [];
-  for (let at = 16; at + 4 <= end; at += 4) compatible.push(ascii(at));
-  if (AVIF_BRANDS.includes(major) || compatible.some((b) => AVIF_BRANDS.includes(b))) return false;
-  return HEIF_BRANDS.includes(major) || compatible.some((b) => HEIF_BRANDS.includes(b));
-}
-
 export interface ConvertOptions {
   platform?: NodeJS.Platform;
   /** The converter (default `/usr/bin/sips`). */
@@ -968,7 +948,7 @@ export function folderRoutes(store: FolderStore | null, o: RoutesOptions = {}): 
         sendJson(res, 413, { error: `At most ${maxBytes} bytes.` });
         return;
       }
-      if (!isHeif(new Uint8Array(body.buffer, body.byteOffset, Math.min(body.length, 64)))) {
+      if (sniffHeifBrand(new Uint8Array(body.buffer, body.byteOffset, Math.min(body.length, 64))) === null) {
         sendJson(res, 415, { error: 'Not a HEIC/HEIF image.' });
         return;
       }

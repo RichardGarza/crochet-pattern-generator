@@ -14,7 +14,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodePng, encodePng } from '../../src/core/kernel/png.ts';
 import { fromFn, solid } from '../../src/test/rgba.ts';
-import { MAX_CONVERT_BYTES as CLIENT_MAX_CONVERT_BYTES, sniffHeifBrand } from '../../src/workers/decode.ts';
+import { MAX_CONVERT_BYTES as CLIENT_MAX_CONVERT_BYTES } from '../../src/workers/decode.ts';
 import {
   AGENT_VARIABLE,
   TEST_VARIABLES,
@@ -24,7 +24,6 @@ import {
   defaultProjectsDir,
   folderRoutes,
   gitBranch,
-  isHeif,
   isProtectedFolder,
   isolationReason,
   projectFolder,
@@ -497,29 +496,7 @@ describe('POST /__convert', () => {
     served = null;
   });
 
-  it('sniffs HEIF exactly like the client (decode.ts) and has the same size limit', () => {
-    const box = (major: string, compatible: string[], size?: number): Uint8Array => {
-      const b = Buffer.alloc(16 + compatible.length * 4);
-      b.writeUInt32BE(size ?? b.length, 0);
-      b.write('ftyp', 4, 'latin1');
-      b.write(major, 8, 'latin1');
-      compatible.forEach((c, i) => b.write(c, 16 + i * 4, 'latin1'));
-      return new Uint8Array(b);
-    };
-    const samples = [
-      box('heic', ['mif1', 'heic']),
-      box('mif1', ['heic']),
-      box('msf1', []),
-      box('avif', ['mif1']),
-      box('mif1', ['avif']),
-      box('isom', ['mp41']),
-      box('isom', ['heix']),
-      box('heic', [], 0),
-      box('heic', ['avis'], 12),
-      new Uint8Array(8),
-      new Uint8Array([0, 0, 0, 24, 102, 116, 121, 113, 104, 101, 105, 99]),
-    ];
-    for (const s of samples) expect(isHeif(s)).toBe(sniffHeifBrand(s) !== null);
+  it('has the same size limit as the client (the HEIF sniff is the shared core/kernel/heif.ts)', () => {
     expect(MAX_CONVERT_BYTES).toBe(CLIENT_MAX_CONVERT_BYTES);
   });
 

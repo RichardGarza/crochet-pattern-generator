@@ -26,11 +26,11 @@ import './library.css';
 
 const open = (id: string): void => navigate({ screen: 'project', projectId: id });
 
-/** Names shown on the cards: a short id after a name that two projects share. */
-function withDistinctNames(list: readonly ProjectSummary[]): ProjectSummary[] {
+/** The short id ("#abcd") of each project whose name another project shares: shown in the card's meta line. */
+function sharedNameTags(list: readonly ProjectSummary[]): Map<string, string> {
   const count = new Map<string, number>();
   for (const s of list) count.set(s.name, (count.get(s.name) ?? 0) + 1);
-  return list.map((s) => ((count.get(s.name) ?? 0) > 1 ? { ...s, name: `${s.name} · #${s.id.slice(0, 4)}` } : s));
+  return new Map(list.filter((s) => (count.get(s.name) ?? 0) > 1).map((s) => [s.id, `#${s.id.slice(0, 4)}`]));
 }
 
 /** `label`: the name as the card shows it (with " · #abcd" when two projects share it), for distinct accessible names. */
@@ -121,8 +121,11 @@ export function StartScreen() {
     for (const s of summaries) if (s.thumbnail) void session.loadThumbnail(s.thumbnail.key);
   }, [session, summaries]);
 
-  const shown = useMemo(() => (summaries ? withDistinctNames(summaries) : null), [summaries]);
-  const original = useMemo(() => new Map((summaries ?? []).map((s) => [s.id, s])), [summaries]);
+  const tags = useMemo(() => sharedNameTags(summaries ?? []), [summaries]);
+  const labelOf = (s: ProjectSummary): string => {
+    const tag = tags.get(s.id);
+    return tag ? `${s.name} · ${tag}` : s.name;
+  };
   const mirrorOn = folderMirror === true && mirrorState.status !== 'off';
   const openRestore = (source: RestoreSource) => setRestore({ open: true, source });
   const count = summaries?.length ?? 0;
@@ -147,10 +150,14 @@ export function StartScreen() {
           <FolderNotices onReview={openRestore} />
           <div className="lib-projects">
             <ProjectGrid
-              summaries={shown}
+              summaries={summaries}
               onOpen={open}
               thumbnailUrl={(s) => (s.thumbnail ? thumbs[s.thumbnail.key] : undefined)}
-              renderActions={session ? (s) => <CardActions summary={original.get(s.id) ?? s} label={s.name} onDelete={setDeleting} /> : undefined}
+              meta={(s) => {
+                const tag = tags.get(s.id);
+                return tag ? <span title="Another project has the same name">{tag}</span> : null;
+              }}
+              renderActions={session ? (s) => <CardActions summary={s} label={labelOf(s)} onDelete={setDeleting} /> : undefined}
               empty={
                 <EmptyState
                   icon="yarn"

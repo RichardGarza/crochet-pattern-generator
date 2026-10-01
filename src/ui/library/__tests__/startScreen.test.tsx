@@ -192,9 +192,12 @@ describe('StartScreen library', () => {
     await setup({ docs: [makeDoc('aaaa1111', 'picture', 'Bear'), makeDoc('bbbb2222', 'picture', 'Bear'), makeDoc('c', 'picture', 'Fox')] });
     render(<StartScreen />);
     await waitFor(() => expect(screen.getByText('3 projects')).toBeTruthy());
-    expect(screen.getByText('Bear · #aaaa')).toBeTruthy();
-    expect(screen.getByText('Bear · #bbbb')).toBeTruthy();
+    // The name stays the name; the short id goes in the card's meta line (ProjectGrid's `meta` slot).
+    expect(screen.getAllByText('Bear')).toHaveLength(2);
+    expect(screen.getByText('#aaaa')).toBeTruthy();
+    expect(screen.getByText('#bbbb')).toBeTruthy();
     expect(screen.getByText('Fox')).toBeTruthy();
+    expect(document.querySelectorAll('.shell-project__meta--extra')).toHaveLength(2);
     // The actions are told apart too (distinct accessible names).
     expect(screen.getByRole('button', { name: 'Delete Bear · #aaaa' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Duplicate Bear · #bbbb' })).toBeTruthy();
