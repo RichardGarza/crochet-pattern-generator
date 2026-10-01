@@ -92,7 +92,8 @@ test.describe('app shell', () => {
       if (card.route !== 'qa') {
         await expect(page.getByRole('tab', { selected: true })).toHaveText(card.tabs[0]);
       }
-      await expect(page.getByTestId('save-chip')).toContainText('Not saved yet');
+      // T8.1: projects autosave to IndexedDB, so a new project's chip settles on "Saved".
+      await expect(page.getByTestId('save-chip')).toContainText('Saved');
       // Every tab of the project opens its (stub) view inside the workspace.
       for (const name of card.tabs) {
         await page.getByRole('tab', { name }).click();
