@@ -8,8 +8,8 @@ import { e2ePort } from './scripts/ports.ts';
 // Step 0 config (docs/DESIGN.md §5.5.4, §6.1 rule 6, §6.2 item 2). Frozen after Step 0.
 //
 // e2e always starts its own dev server: on its own port (5181 in the main checkout, 5290 + N in a track
-// worktree, or CPG_E2E_PORT), on a fresh temp projects folder, with CPG_TEST=1. It never reuses a running
-// server, never uses port 5180 and never touches the user's projects folder.
+// worktree, 5300–5379 by name in any other worktree, or CPG_E2E_PORT), on a fresh temp projects folder, with
+// CPG_TEST=1. It never reuses a running server, never uses port 5180 and never touches the user's projects folder.
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const port = e2ePort(process.env, root);

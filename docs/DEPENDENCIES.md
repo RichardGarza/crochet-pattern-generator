@@ -77,11 +77,13 @@ browser bundle does not include them.
 ## Install scripts
 
 npm 11.21 blocks dependency install scripts unless `package.json` allows them (`allowScripts`); npm 10 runs
-them. This project allows none, and needs none. Four dependencies have one:
+them. This project allows none, and needs none: typecheck, lint, the unit tests and the build pass after a
+clean `npm ci` with either npm. Five dependencies have one:
 
 | Package | Script | Needed? |
 |---|---|---|
 | esbuild 0.28.2 | `node install.js` | No: the platform binary comes from the optional `@esbuild/*` package. |
+| fsevents 2.3.3 | native build | No: the package ships a prebuilt `fsevents.node` for macOS. |
 | onnxruntime-node 1.30.0 | `node ./script/install` | No: Node-side ONNX Runtime is not used. |
 | protobufjs 7.6.6 | `node scripts/postinstall` | No: it only prints a version notice. |
 | core-js 3.50.0 | a funding banner | No. |

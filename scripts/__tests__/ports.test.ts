@@ -2,7 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfigFromFile, resolveConfig } from 'vite';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AGENT_PORT, devPort, E2E_PORT, e2ePort, guardPort, isGuarded, isWorktreeRoot, portGuard, trackNumber, USER_PORT } from '../ports.ts';
+import { devPort, E2E_PORT, e2ePort, guardPort, isGuarded, isWorktreeRoot, portGuard, trackNumber, USER_PORT, worktreeName, worktreeSlot } from '../ports.ts';
 
 const MAIN = '/Users/someone/projects/crochet-pattern-generator/';
 const worktree = (name: string): string => `/Users/someone/projects/crochet-pattern-generator/.claude/worktrees/${name}/`;
@@ -57,9 +57,28 @@ describe('devPort (npm run dev / preview)', () => {
     }
   });
 
-  it('is 5199 in any other worktree', () => {
-    expect(devPort({}, worktree('throw-away'))).toBe(AGENT_PORT);
-    expect(devPort({}, worktree('s0b-shell'))).toBe(5199);
+  it('gives every other worktree its own port from its name, in 5200–5279', () => {
+    const names = ['throw-away', 's0b-shell', 's0b-geom', 's0b-gauge', 's0b-model', 's0b-pattern', 'x', 'hmr-check', 'review'];
+    for (const name of names) {
+      const port = devPort({}, worktree(name));
+      expect(port).toBe(5200 + worktreeSlot(name));
+      expect(port).toBeGreaterThanOrEqual(5200);
+      expect(port).toBeLessThanOrEqual(5279);
+      // stable: the same name always gives the same port, whatever the letter case and the env flags
+      expect(devPort({ CPG_TEST: '1', CLAUDE_CODE_CHILD_SESSION: '1' }, worktree(name))).toBe(port);
+      expect(devPort({}, worktree(name.toUpperCase()))).toBe(port);
+      expect(e2ePort({}, worktree(name))).toBe(port + 100);
+    }
+    expect(worktreeName(worktree('s0b-shell'))).toBe('s0b-shell');
+    expect(worktreeName(MAIN)).toBeUndefined();
+    // the five Step 0b worktrees named in the roadmap's order do not share a port
+    const five = ['s0b-geom', 's0b-gauge', 's0b-model', 's0b-pattern', 's0b-shell'].map((n) => devPort({}, worktree(n)));
+    expect(new Set(five).size).toBe(5);
+    // every slot is a valid, guarded port
+    for (let i = 0; i < 500; i++) {
+      const slot = worktreeSlot(`wt-${i}`);
+      expect(Number.isInteger(slot) && slot >= 0 && slot < 80).toBe(true);
+    }
   });
 
   it('never returns 5180 under CLAUDE_CODE_CHILD_SESSION — 5199 instead, even if CPG_PORT=5180 is passed', () => {
@@ -118,7 +137,8 @@ describe('e2ePort (Playwright)', () => {
     expect(e2ePort({}, MAIN)).toBe(5181);
     expect(e2ePort({}, worktree('t3-photos'))).toBe(5293);
     expect(e2ePort({}, worktree('t7-claude-design'))).toBe(5297);
-    expect(e2ePort({}, worktree('throw-away'))).toBe(5181);
+    expect(e2ePort({}, worktree('throw-away'))).toBe(5300 + worktreeSlot('throw-away'));
+    expect(e2ePort({}, worktree('throw-away'))).not.toBe(e2ePort({}, worktree('s0b-shell')));
   });
 
   it('honors CPG_E2E_PORT', () => {
@@ -188,6 +208,7 @@ describe('vite.config.ts', () => {
     }
     // In the main checkout the guarded port is 5199 (in a worktree it is that worktree's own port).
     if (!isWorktreeRoot(root)) expect(devPort({ CLAUDE_CODE_CHILD_SESSION: '1' }, root)).toBe(5199);
+    else expect(devPort({ CLAUDE_CODE_CHILD_SESSION: '1' }, root)).toBeGreaterThanOrEqual(5191);
   });
 
   it('command-line options cannot get around the rule: --port 5180 becomes 5199, strictPort stays on', async () => {

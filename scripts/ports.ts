@@ -17,14 +17,34 @@ export const TRACK_PORT_BASE = 5190;
 export const E2E_PORT = 5181;
 /** Playwright's dev server in `.claude/worktrees/t<N>-…` is E2E_TRACK_PORT_BASE + N. */
 export const E2E_TRACK_PORT_BASE = 5290;
+/**
+ * A worktree that is not a track worktree (Step 0b, a throw-away check) gets a port from its own name:
+ * OTHER_WORKTREE_PORT_BASE + slot for dev, OTHER_WORKTREE_E2E_PORT_BASE + slot for e2e, slot = 0..79. Several
+ * such worktrees can then serve at the same time without being told a port each.
+ */
+export const OTHER_WORKTREE_PORT_BASE = 5200;
+export const OTHER_WORKTREE_E2E_PORT_BASE = 5300;
+const OTHER_WORKTREE_SLOTS = 80;
 
 export type PortEnv = Readonly<Record<string, string | undefined>>;
 
 const posix = (p: string): string => p.replaceAll('\\', '/');
 
+/** The folder name of the worktree that `root` lies in (`.claude/worktrees/<name>/…`), else undefined. */
+export function worktreeName(root: string): string | undefined {
+  return /\/\.claude\/worktrees\/([^/]+)/i.exec(posix(root))?.[1];
+}
+
 /** True when `root` lies under a `.claude/worktrees/` folder (any name; the file system here ignores case). */
 export function isWorktreeRoot(root: string): boolean {
-  return /\/\.claude\/worktrees\/[^/]+/i.test(posix(root));
+  return worktreeName(root) !== undefined;
+}
+
+/** A stable number 0..79 from a worktree name (letter case ignored, as the file system does). */
+export function worktreeSlot(name: string): number {
+  let h = 0;
+  for (const ch of name.toLowerCase()) h = (Math.imul(h, 31) + (ch.codePointAt(0) ?? 0)) >>> 0;
+  return h % OTHER_WORKTREE_SLOTS;
 }
 
 /** N for a track worktree named `.claude/worktrees/t<N>-…` (or `t<N>`), else undefined. */
@@ -58,24 +78,28 @@ export function guardPort(port: number, env: PortEnv, root: string): number {
 /**
  * Port of `npm run dev` and `npm run preview` (both `strictPort`).
  *
- * `CPG_PORT` if given; else 5180 in the main checkout, 5190 + N in `.claude/worktrees/t<N>-…` and 5199 in any
- * other worktree. When guarded (see isGuarded) 5180 is never returned — 5199 is used instead, even if
- * `CPG_PORT=5180` was passed.
+ * `CPG_PORT` if given; else 5180 in the main checkout, 5190 + N in `.claude/worktrees/t<N>-…`, and 5200–5279
+ * (by name) in any other worktree. When guarded (see isGuarded) 5180 is never returned — 5199 is used instead,
+ * even if `CPG_PORT=5180` was passed; so an agent in the main checkout serves on 5199.
  */
 export function devPort(env: PortEnv, root: string): number {
   const n = trackNumber(root);
-  const fallback = n !== undefined ? TRACK_PORT_BASE + n : isWorktreeRoot(root) ? AGENT_PORT : USER_PORT;
+  const name = worktreeName(root);
+  const fallback = n !== undefined ? TRACK_PORT_BASE + n : name !== undefined ? OTHER_WORKTREE_PORT_BASE + worktreeSlot(name) : USER_PORT;
   return guardPort(parsePort(env.CPG_PORT, 'CPG_PORT') ?? fallback, env, root);
 }
 
 /**
- * Port Playwright starts its own dev server on: `CPG_E2E_PORT` if given, else 5290 + N in a track worktree,
- * else 5181. Derived from the directory name because an exported variable does not survive between agent
- * shell calls. Never 5180: e2e must not reuse, or even probe, the user's server.
+ * Port Playwright starts its own dev server on: `CPG_E2E_PORT` if given; else 5181 in the main checkout,
+ * 5290 + N in a track worktree, and 5300–5379 (by name) in any other worktree. Derived from the directory
+ * name because an exported variable does not survive between agent shell calls. Never 5180: e2e must not
+ * reuse, or even probe, the user's server.
  */
 export function e2ePort(env: PortEnv, root: string): number {
   const n = trackNumber(root);
-  const port = parsePort(env.CPG_E2E_PORT, 'CPG_E2E_PORT') ?? (n !== undefined ? E2E_TRACK_PORT_BASE + n : E2E_PORT);
+  const name = worktreeName(root);
+  const fallback = n !== undefined ? E2E_TRACK_PORT_BASE + n : name !== undefined ? OTHER_WORKTREE_E2E_PORT_BASE + worktreeSlot(name) : E2E_PORT;
+  const port = parsePort(env.CPG_E2E_PORT, 'CPG_E2E_PORT') ?? fallback;
   if (port === USER_PORT) {
     throw new Error(`CPG_E2E_PORT=${USER_PORT} is the user's own origin; e2e runs must use another port`);
   }
