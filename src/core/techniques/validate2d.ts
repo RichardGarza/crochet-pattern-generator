@@ -34,7 +34,7 @@ import { validateBorder } from './border';
 import { type Corner, cornerFromArrow, cornerOf } from './c2cCorners';
 import { validateC2C } from './c2c';
 import { lineRepeat } from './repeats';
-import { type RoundLean, roundLabels, roundLeanOf, roundReadsRightToLeft, roundShift, roundSide } from './scRound';
+import { LEAN_LIMIT, type RoundLean, roundLabels, roundLeanOf, roundReadsRightToLeft, roundShift, roundSide } from './scRound';
 import { type FlatStitch, directionIndependent, flatFoundation, flatRowOps, labelCode, TURN_CHAINS } from './scFlat';
 import { CARRY_MAX, ROW_STRANDS_WARN, type StrandPlan, planStrands, readsRightToLeft, rowCueTexts } from './strands';
 import { type TapestryPlan, planFlatTapestry, planTapestry, tapestryCueTexts } from './tapestry';
@@ -470,26 +470,38 @@ export function rotationsOf(base: ArrayLike<number>, got: readonly number[]): nu
   return out.sort((a, b) => a - b);
 }
 
-/** The largest lean (st per round) `inferRoundLean` looks for. */
-export const LEAN_LIMIT = 8;
-
 /**
  * The lean the rounds were written with, read from the rounds when not given: `turn` when a round turns or is
  * WS; otherwise `preskew` with the smallest rate whose shifts make every round its chart row, or `note`.
  */
 export function inferRoundLean(grid: ChartGrid, hand: Hand, lines: readonly Line[]): RoundLean {
-  const rounds = lines.filter((line) => line.kind === 'rnd' && Array.isArray(line.ops));
+  const rounds = (Array.isArray(lines) ? lines : []).filter((line) => readable(line) && line.kind === 'rnd');
   if (rounds.some((line) => line.start?.k === 'turn' || line.side === 'WS')) return { mode: 'turn', stPerRnd: 0.5 };
   const C = grid.cols;
   const codes = grid.palette.map((entry) => entry.code);
+  // The ops of every round the lines stand for: folded ranges and block-repeat notes expanded.
+  const opsOf = new Map<number, Line['ops']>();
+  for (const line of rounds) {
+    const end = line.nEnd !== undefined && line.nEnd > line.n ? line.nEnd : line.n;
+    for (let k = line.n; k <= Math.min(end, grid.rows); k++) if (!opsOf.has(k)) opsOf.set(k, line.ops);
+  }
+  for (const line of rounds) {
+    const rep = lineRepeat(line);
+    if (rep === null) continue;
+    const L = rep.source[1] - rep.source[0] + 1;
+    if (L < 1) continue;
+    for (let k = rep.from; k <= Math.min(rep.to, grid.rows); k++) {
+      const src = opsOf.get(rep.source[0] + ((k - rep.from) % L));
+      if (src !== undefined && !opsOf.has(k)) opsOf.set(k, src);
+    }
+  }
   // The rotations s with which each round equals its chart row (unskewed sequence rotated by s).
   const sets: { k: number; s: number[] }[] = [];
-  for (const line of rounds) {
-    if (line.nEnd !== undefined && line.nEnd > line.n) continue;
-    if (line.n < 2 || line.n > grid.rows || line.ops.length !== C) continue;
-    const got = line.ops.map((op) => codes.indexOf(op.color ?? ''));
-    const base = roundLabels(grid, line.n, hand, { mode: 'note', stPerRnd: 0 }, 0);
-    sets.push({ k: line.n, s: rotationsOf(base, got) });
+  for (const [k, ops] of [...opsOf].sort((a, b) => a[0] - b[0])) {
+    if (k < 2 || ops.length !== C) continue;
+    const got = ops.map((op) => codes.indexOf(op.color ?? ''));
+    const base = roundLabels(grid, k, hand, { mode: 'note', stPerRnd: 0 }, 0);
+    sets.push({ k, s: rotationsOf(base, got) });
   }
   if (sets.every((x) => x.s.length === 0 || x.s.includes(0))) return { mode: 'note', stPerRnd: 0.5 };
   // The rates p with roundHalfUp(p·(k − 1)) ≡ s (mod C) for an s of every round: an intersection of intervals,
@@ -608,7 +620,7 @@ function roundRules(i: Validate2DInput, grid: ChartGrid, lines: readonly Line[],
 
 /** The border setting with its color as the code the doc uses (a materials line with that yarn or hex; unset: A). */
 function borderSettingOf(doc: PatternDoc, border: ChartSettings['border'] | undefined): { widthIn: number; color?: string } | undefined {
-  if (border === undefined || typeof border !== 'object') return undefined;
+  if (border === undefined || border === null || typeof border !== 'object' || typeof border.widthIn !== 'number' || !Number.isFinite(border.widthIn)) return undefined;
   const ref = border.color;
   const materials = Array.isArray(doc.materials) ? doc.materials : [];
   let code: string | undefined;

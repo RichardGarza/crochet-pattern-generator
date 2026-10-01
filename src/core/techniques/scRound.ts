@@ -26,11 +26,15 @@ export type RoundLean = ChartSettings['roundLean'];
 /** §2.7.5 default: a note, 0.5 st per round. */
 export const DEFAULT_ROUND_LEAN: Readonly<RoundLean> = Object.freeze({ mode: 'note', stPerRnd: 0.5 });
 
-/** A lean read leniently: an unknown mode is `note`, a non-finite rate 0.5. */
+/** The largest lean (st per round) the writer uses and the validator infers; larger rates are clamped. */
+export const LEAN_LIMIT = 8;
+
+/** A lean read leniently: an unknown mode is `note`, a non-finite rate 0.5, a rate clamped to ±LEAN_LIMIT. */
 export function roundLeanOf(value: unknown): RoundLean {
   const v = typeof value === 'object' && value !== null ? (value as Partial<RoundLean>) : {};
   const mode = v.mode === 'preskew' || v.mode === 'turn' || v.mode === 'note' ? v.mode : 'note';
-  const stPerRnd = typeof v.stPerRnd === 'number' && Number.isFinite(v.stPerRnd) ? v.stPerRnd : 0.5;
+  const raw = typeof v.stPerRnd === 'number' && Number.isFinite(v.stPerRnd) ? v.stPerRnd : 0.5;
+  const stPerRnd = Math.max(-LEAN_LIMIT, Math.min(LEAN_LIMIT, raw));
   return { mode, stPerRnd };
 }
 

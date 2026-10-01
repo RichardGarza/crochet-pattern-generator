@@ -151,7 +151,8 @@ export function c2cRegions(grid: ChartGrid, hand: Hand, corner: Corner, rows: re
   // Bobbin numbers: a region takes the lowest number of its color not held by a region still in use (one that
   // started before it and ends at or after its first row). Regions come in order of their first row, so per color
   // a heap of (last row, bobbin) frees numbers and a heap of free numbers hands out the lowest.
-  const colors = Math.max(grid.palette.length, ...regions.map((x) => x.label + 1), 0);
+  let colors = grid.palette.length;
+  for (const region of regions) colors = Math.max(colors, region.label + 1);
   const regionsPerColor = new Array<number>(colors).fill(0);
   const bobbinsPerColor = new Array<number>(colors).fill(0);
   const active = new Map<number, MinHeap>();

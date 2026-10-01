@@ -141,7 +141,8 @@ function tapestryRound(ctx: NotesContext): string[] {
     const rounds = ctx.rounds;
     if (typeof rounds === 'number' && Number.isInteger(rounds) && rounds >= 2) {
       const shift = roundHalfUp(Math.abs(per) * (rounds - 1));
-      notes.push(`Stitches worked in rounds lean: expect the design to shift about ${shift} sts to the ${side} between Rnd 1 and Rnd ${rounds}. ${tail}`);
+      const amount = shift === 0 ? 'less than 1 st' : shift === 1 ? 'about 1 st' : `about ${shift} sts`;
+      notes.push(`Stitches worked in rounds lean: expect the design to shift ${amount} to the ${side} between Rnd 1 and Rnd ${rounds}. ${tail}`);
     } else {
       notes.push(`Stitches worked in rounds lean: expect the design to shift about ${num(Math.abs(per))} st per round to the ${side}. ${tail}`);
     }

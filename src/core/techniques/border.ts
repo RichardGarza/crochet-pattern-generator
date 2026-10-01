@@ -61,7 +61,7 @@ export function takesBorder(technique: Technique2D): boolean {
 /**
  * Per-side counts of Rnd 1 (§2.7.10), each between the corner center stitches: rows `S_top = W`,
  * `S_side = round(rows · h_cell / w_sc)`; C2C `S_top = round(W · tile / w_sc)`, `S_side = round(H · tile / w_sc)`.
- * Never less than 2 (the two corner-group stitches of the side); see the deviation in docs/tracks/t2.md.
+ * Never less than 2 (the two corner-group stitches of the side; deviation 12 in docs/tracks/t2.md).
  */
 export function borderSides(technique: Technique2D, cols: number, rows: number, gauge: Pick<ResolvedGauge, 'cell' | 'wSc'>): { sTop: number; sSide: number } {
   if (technique === 'c2c') {
@@ -116,7 +116,7 @@ export function planBorder(i: {
   color: string;
   lastColor?: string;
 }): BorderPlan | null {
-  if (!takesBorder(i.technique) || !(typeof i.widthIn === 'number' && i.widthIn > 0)) return null;
+  if (!takesBorder(i.technique) || !(typeof i.widthIn === 'number' && Number.isFinite(i.widthIn) && i.widthIn > 0)) return null;
   const rounds = borderRounds(i.widthIn, i.gauge.hSc);
   if (rounds < 1) return null;
   const hand: Hand = i.hand === 'left' ? 'left' : 'right';
@@ -391,7 +391,7 @@ export function validateBorder(i: ValidateBorderInput): Issue[] {
   const hand: Hand = i.hand === 'left' ? 'left' : 'right';
   const W = i.chart.cols;
   const R = i.chart.rows;
-  const want = i.border;
+  const want = i.border !== undefined && i.border !== null && typeof i.border.widthIn === 'number' && Number.isFinite(i.border.widthIn) ? i.border : undefined;
   if (want !== undefined) {
     const n = takesBorder(i.technique) && want.widthIn > 0 && i.gauge !== undefined ? borderRounds(want.widthIn, i.gauge.hSc) : takesBorder(i.technique) && want.widthIn > 0 ? -1 : 0;
     if (n === 0 && border.length > 0) issues.push(issue(`this piece has no border (${takesBorder(i.technique) ? 'width 0' : 'not for tapestry in the round'}), but ${border.length} border rounds are written`));

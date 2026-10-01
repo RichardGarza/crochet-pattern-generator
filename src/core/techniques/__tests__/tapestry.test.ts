@@ -183,7 +183,8 @@ describe('sc_tapestry_round writer (§2.7.5)', () => {
     expect(validate2D({ chart: grid, technique: 'sc_tapestry_round', hand: 'right', lines })).toEqual([]);
     const grid2 = chartOf(['BA', 'AB', 'AB', 'AA']);
     const bad: Line[] = [...lines.slice(0, 2), { ...lines[2] }];
-    expect(validate2D({ chart: grid2, technique: 'sc_tapestry_round', hand: 'right', lines: bad }).map((x) => x.message)).toContain('Rnds 3–4: Rnd 4 of the chart is not this round');
+    // (With the lean given: on a 2-st tube, BA is AB shifted by one, so an inferred pre-skew could explain it.)
+    expect(validate2D({ chart: grid2, technique: 'sc_tapestry_round', hand: 'right', lines: bad, roundLean: { mode: 'note', stPerRnd: 0.5 } }).map((x) => x.message)).toContain('Rnds 3–4: Rnd 4 of the chart is not this round');
   });
 
   it('E_FOUNDATION and E_RUN_SUM on crafted rounds', () => {

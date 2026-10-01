@@ -9,7 +9,7 @@ import type { BuildPattern2DFn, ChartGrid, ChartSettings, ColorRef, Hand, Issue,
 import { gaugeText2D, docHash, hookOf } from '../pattern/doc';
 import { notesWith } from '../pattern/notes';
 import { computeSkill } from '../pattern/skill';
-import { abbreviationsFor, specialStitchesFor } from '../pattern/terminology';
+import { abbreviationsFor, specialStitchesFor, toTerms } from '../pattern/terminology';
 import { emptyWork, type ColorWork, type Yardage2D, yardage2D } from '../yardage/twoD';
 import { type BorderPlan, borderStitches, planBorder, writeBorder } from './border';
 import { type C2CWriterResult, writeC2C } from './c2c';
@@ -135,6 +135,9 @@ export function buildPattern2DWith(i: BuildPattern2DInput, o: BuildPattern2DOpti
     border: null,
   });
   if (chartIssues.some((x) => x.code === 'E_SANITY')) return empty(chartIssues);
+  if (!['sc_graphgan', 'sc_tapestry', 'sc_tapestry_round', 'c2c', 'hdc_graphgan', 'mosaic_overlay'].includes(technique)) {
+    return empty([{ code: 'E_SANITY', severity: 'error', message: `unknown technique ${JSON.stringify(technique)}` }]);
+  }
   if (technique === 'mosaic_overlay') {
     return empty([{ code: 'E_SANITY', severity: 'error', message: 'overlay mosaic patterns are not written yet (they come with the mosaic writer)' }]);
   }
@@ -215,7 +218,7 @@ export function buildPattern2DWith(i: BuildPattern2DInput, o: BuildPattern2DOpti
   const borderSetting = settings?.border;
   const { entry: borderEntry, added } = borderEntryOf(grid, borderSetting?.color);
   const border =
-    borderSetting !== undefined && typeof borderSetting.widthIn === 'number' && borderSetting.widthIn > 0
+    borderSetting !== undefined && borderSetting !== null && typeof borderSetting.widthIn === 'number' && Number.isFinite(borderSetting.widthIn) && borderSetting.widthIn > 0
       ? planBorder({ technique, hand, cols: W, rows: R, gauge, widthIn: borderSetting.widthIn, color: borderEntry.code, lastColor: lastStitchColor(grid, technique, hand) })
       : null;
   const all = [...lines];
@@ -224,7 +227,11 @@ export function buildPattern2DWith(i: BuildPattern2DInput, o: BuildPattern2DOpti
     const w = work(works, borderEntry.code);
     w.borderSts += borderStitches(border);
     w.borderRounds += border.rounds;
+    if (w.bobbins === 0) w.bobbins = 1;
     notes.push(...notesWith('border', { terms: i.terms, hand }));
+    if (border.opening !== 'join' && [...works.values()].filter((x) => x.cells > 0).length > 1) {
+      notes.push(toTerms('The border continues from the last stitch: before Rnd 1, cut every other color at the end of the last row (leave 6 in tails).', i.terms));
+    }
   }
 
   // Materials and yardage (§2.8): palette order, then a border yarn that is not in the chart.
@@ -266,7 +273,7 @@ export function buildPattern2DWith(i: BuildPattern2DInput, o: BuildPattern2DOpti
     roundLean,
     startCorner: corner,
     gauge,
-    border: borderSetting === undefined ? undefined : { widthIn: borderSetting.widthIn, color: borderEntry.code },
+    border: borderSetting !== undefined && borderSetting !== null && Number.isFinite(borderSetting.widthIn) ? { widthIn: borderSetting.widthIn, color: borderEntry.code } : undefined,
     extraCodes: added ? [borderEntry.code] : [],
   });
 
