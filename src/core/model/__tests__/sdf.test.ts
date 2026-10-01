@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { budget, PERF } from '../../../test/timing';
 import type { Part, Vec3 } from '../../../types/model';
 import { mulberry32, randomRange, type Rng } from '../../kernel/prng';
 import { flatBevelSize } from '../builder';
@@ -453,12 +454,12 @@ describe('overlapVolume (§3.7.6: regular grid over the intersection of the worl
     expect(overlapVolume(a, part('box', { w: 2, h: 2, d: 2 }, { position: [2, 0, 0] }))).toBe(0);
   });
 
-  it('is deterministic and bounded: a large intersection is sampled with at most 2 million cells', { retry: 2 }, () => {
+  it('is deterministic and bounded: a large intersection is sampled with at most 2 million cells', { ...PERF, retry: 2 }, () => {
     const a = part('box', { w: 40, h: 40, d: 40 }, { id: 'a' });
     const b = part('box', { w: 40, h: 40, d: 40 }, { id: 'b', position: [10, 0, 0] });
     const t0 = performance.now();
     const v = overlapVolume(a, b);
-    expect(performance.now() - t0).toBeLessThan(2000);
+    expect(performance.now() - t0).toBeLessThan(budget(2000));
     expect(v).toBeCloseTo(30 * 40 * 40, 6);
     expect(overlapVolume(a, b)).toBe(v);
     expect(OVERLAP_MAX_SAMPLES).toBe(2_000_000);
@@ -466,7 +467,7 @@ describe('overlapVolume (§3.7.6: regular grid over the intersection of the worl
     const thin = part('box', { w: 40, h: 40, d: 40 }, { id: 'thin', position: [39.999999, 0, 0] });
     const t1 = performance.now();
     expect(overlapVolume(a, thin)).toBeCloseTo(1e-6 * 1600, 3);
-    expect(performance.now() - t1).toBeLessThan(2000);
+    expect(performance.now() - t1).toBeLessThan(budget(2000));
   });
 
   it('row skipping changes nothing: the count is the one of the full grid, for every pair of part types', () => {

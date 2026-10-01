@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { budget, PERF } from '../../../test/timing';
 import type { ColoredMesh } from '../../../types/geometry';
 import type { CrochetModelV1, Part, Vec3 } from '../../../types/model';
 import { anyPerpendicular } from '../../kernel/vec';
@@ -774,13 +775,13 @@ describe('applyProportions: both controls, and housekeeping', HEAVY, () => {
     expect(kernel.revision).toBe(teddy.revision); // revisions are the caller's (commitModelRevision)
   });
 
-  it('runs within the §5.8 budget: ≤ 200 ms on the teddy (bisection with re-anchoring)', { retry: 2 }, () => {
+  it('runs within the §5.8 budget: ≤ 200 ms on the teddy (bisection with re-anchoring)', { ...PERF, retry: 2 }, () => {
     applyProportions(teddy, { headBody: 1 }); // warm up
     applyProportions(teddy, { limbs: 'long' });
     for (const o of [{ headBody: 1 }, { headBody: 3 }, { limbs: 'long' as const }, { headBody: 1, limbs: 'long' as const }]) {
       const t0 = performance.now();
       applyProportions(teddy, o);
-      expect(performance.now() - t0, JSON.stringify(o)).toBeLessThan(200);
+      expect(performance.now() - t0, JSON.stringify(o)).toBeLessThan(budget(200));
     }
   });
 });

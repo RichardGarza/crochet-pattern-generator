@@ -14,7 +14,7 @@ describe('src/types against docs/DESIGN.md', () => {
       expect(r.stderr).toBe('');
       expect(r.status).toBe(0);
       const count = Number(/check-spec-types: (\d+) declarations/.exec(r.stdout)?.[1]);
-      expect(count).toBeGreaterThanOrEqual(134);
+      expect(count).toBeGreaterThanOrEqual(139); // design v1.5
     },
     120_000,
   );

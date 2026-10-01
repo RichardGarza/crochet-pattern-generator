@@ -37,6 +37,10 @@ export interface GeomApi extends Cancellable {
     image: Blob | RgbaImage,
     o?: { keepHoles?: boolean },
   ): Promise<{ mask: Uint8Array<ArrayBuffer>; w: number; h: number; raw?: Uint8Array<ArrayBuffer>; scale?: number; issues?: Issue[] }>;
+  /**
+   * A build that cannot make a model rejects with an Error named `ReconError` whose message starts with its issue code
+   * (`"E_VIEWS: …"`; comlink keeps only name and message); malformed requests throw `RangeError` (§2.9.3, v1.5).
+   */
   build(r: ReconRequest): Promise<ReconResult>;
   /** "Apply photo colors", §2.9.6. */
   projectColors(r: {
@@ -75,6 +79,13 @@ export interface MeshApi extends Cancellable {
     frame: Partial<PieceFrame>;
     gauge: ResolvedGauge;
     settings: AmiSettings;
+    /** Design v1.5 (§2.10.7 step 1), part-local inches: the part's `crochet.seed`. */
+    seed?: Vec3;
+    /**
+     * Design v1.5, part-local inches: points of the attachment boundary (where the part meets its parent), from which
+     * the default seed is the geodesically farthest tip. Absent for the root part (seed: the lowest patch).
+     */
+    attach?: Vec3[];
   }): Promise<RoundsResult | { needsSplit: { level: number; loops: number[] } }>;
   /**
    * §2.9.8, editor ⌘J; geometry + labels only — T6's recipe picks the kept id and attach. Mesh and sdf are in model

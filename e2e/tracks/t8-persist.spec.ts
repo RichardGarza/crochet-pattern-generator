@@ -122,7 +122,7 @@ test.describe('T8 persistence in a real browser', () => {
   });
 
   test('a hung tab: Take over after 5 s; the old tab’s unsaved edit becomes a copy when it wakes', async ({ context }, info) => {
-    test.setTimeout(90_000);
+    test.setTimeout(150_000);
     const a = await context.newPage();
     watchErrors(a, errors, 'A');
     const id = await newProject(a);
@@ -149,7 +149,7 @@ test.describe('T8 persistence in a real browser', () => {
     await b.getByRole('button', { name: 'Edit here instead' }).click();
     await expect(b.getByText('Asking the other tab to hand over…', { exact: true })).toBeVisible();
     await shot(b, info, 't8-asking');
-    await expect(b.getByRole('button', { name: 'Take over' })).toBeVisible({ timeout: 10_000 });
+    await expect(b.getByRole('button', { name: 'Take over' })).toBeVisible({ timeout: 20_000 });
     expect(Date.now() - asked).toBeGreaterThanOrEqual(4500);
     await expect(b.getByText('The other tab isn’t answering', { exact: true })).toBeVisible();
     await shot(b, info, 't8-take-over');
@@ -158,7 +158,7 @@ test.describe('T8 persistence in a real browser', () => {
     await expect(b.getByTestId('project-name')).toHaveValue('Teddy');
 
     await hung;
-    await expect(a.getByText(/Another tab saved a newer version of “Teddy, edited in the frozen tab”/)).toBeVisible({ timeout: 15_000 });
+    await expect(a.getByText(/Another tab saved a newer version of “Teddy, edited in the frozen tab”/)).toBeVisible({ timeout: 30_000 });
     // (The name field still has the focus from the rename, so it keeps its text; the document title shows the copy.)
     await expect(a).toHaveTitle(/^Teddy, edited in the frozen tab \(copy, \d\d:\d\d\) · Crochet Pattern Generator$/);
     await expect(a).not.toHaveURL(new RegExp(`#/p/${id}/`));

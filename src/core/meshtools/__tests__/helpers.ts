@@ -162,16 +162,8 @@ export function bruteSdf(m: MeshLike, p: Vec3): number {
   return windingNumber(m, p) > 0.5 ? d : -d;
 }
 
-/** Best of `runs` wall-clock timings of fn, in ms. */
-export function bestOf(runs: number, fn: () => void): number {
-  let best = Infinity;
-  for (let r = 0; r < runs; r++) {
-    const t0 = performance.now();
-    fn();
-    best = Math.min(best, performance.now() - t0);
-  }
-  return best;
-}
+/** Best of `runs` wall-clock timings of fn, in ms (the shared helper of src/test/timing.ts). */
+export { bestOf } from '../../../test/timing';
 
 /** Distance from p to the segment ab. */
 export function segmentDistance(p: Vec3, a: Vec3, b: Vec3): number {

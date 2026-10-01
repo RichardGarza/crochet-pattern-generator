@@ -7,6 +7,7 @@ import { mulberry32 } from '../../prng';
 import { marchingCubes } from '../marchingCubes';
 import { TAUBIN_LAMBDA, TAUBIN_MU, taubinSmooth, vertexAdjacency } from '../taubin';
 import { HEAVY, note } from './fields';
+import { budget, PERF } from '../../../../test/timing';
 
 function referenceTaubin(positions: ArrayLike<number>, indices: ArrayLike<number>, pairs: number, lambda: number, mu: number): Float64Array {
   const n = positions.length / 3;
@@ -139,7 +140,7 @@ describe('taubinSmooth against a brute-force Jacobi reference', () => {
     expect(Buffer.from(m.indices.buffer).equals(Buffer.from(indicesCopy.buffer))).toBe(true);
   });
 
-  it('vertexAdjacency: a hub with 200 000 neighbors is handled in well under a second', { ...HEAVY, retry: 2 }, () => {
+  it('vertexAdjacency: a hub with 200 000 neighbors is handled in well under a second', { ...HEAVY, ...PERF, retry: 2 }, () => {
     const rim = 200_000;
     const indices = new Uint32Array(3 * rim);
     for (let k = 0; k < rim; k++) {
@@ -155,7 +156,7 @@ describe('taubinSmooth against a brute-force Jacobi reference', () => {
     expect(neighbors[0]).toBe(1);
     expect(neighbors[rim - 1]).toBe(rim);
     note(`vertexAdjacency, hub with ${rim} neighbors: ${ms.toFixed(1)} ms`);
-    expect(ms).toBeLessThan(1000);
+    expect(ms).toBeLessThan(budget(1000));
   });
 
   it('a row of exactly 64 or 65 raw entries (the switch between the two sorts) is still sorted and unique', () => {

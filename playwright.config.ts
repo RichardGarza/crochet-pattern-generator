@@ -27,6 +27,10 @@ export default defineConfig({
   testDir: './e2e',
   outputDir: './test-results',
   forbidOnly: !!process.env.CI,
+  // Other agents may load the machine (load 25–40 on 12 cores seen; §6.1 rule 5): a test gets 90 s and a web-first
+  // assertion 15 s by default. Passing assertions return at once, so only failures wait longer.
+  timeout: 90_000,
+  expect: { timeout: 15_000 },
   // One worker: every spec shares the one dev server and the one projects folder, so specs run one at a time.
   workers: 1,
   fullyParallel: false,

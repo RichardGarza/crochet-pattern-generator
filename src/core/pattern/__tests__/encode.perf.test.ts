@@ -1,6 +1,7 @@
-// Encoder budgets (DESIGN.md §5.8, §2.6.1). Timing tests retry twice and use the spec's generous bounds
-// (§6.1 rule 5); the numbers measured on the development machine are in docs/tracks/s0b-pattern.md.
+// Encoder budgets (DESIGN.md §5.8, §2.6.1). Tagged `perf` (§6.1 rule 5): strict under `npm run perf`, a loose
+// sanity bound under `npm test`; the numbers measured on the development machine are in docs/tracks/s0b-pattern.md.
 import { describe, expect, it } from 'vitest';
+import { budget, PERF } from '../../../test/timing';
 import type { Op } from '../../../types';
 import { mulberry32 } from '../../kernel/prng';
 import { EXACT_MAX_TOKENS, encodeOps, expand, resetEncodeMemo } from '../encode';
@@ -47,20 +48,20 @@ function timeEach(n: number, rounds: number, exactMaxTokens: number): number[] {
   return elapsed.sort((a, b) => a - b);
 }
 
-describe('encoder budgets (§5.8)', () => {
+describe('encoder budgets (§5.8)', PERF, () => {
   it('exact search: ≤ 5 ms per line at the token limit (250 tokens)', { retry: 2, timeout: 60_000 }, () => {
     timeEach(EXACT_MAX_TOKENS, 5, EXACT_MAX_TOKENS); // warm-up
     const elapsed = timeEach(EXACT_MAX_TOKENS, 50, EXACT_MAX_TOKENS); // 400 lines, 50 of each shape
     // Every line is held to the budget except the slowest 1 % (4 lines), which a loaded machine may preempt
     // or a GC pause may hit: a regression that slows one shape (12.5 % of the lines) fails.
     const p99 = elapsed[Math.floor(elapsed.length * 0.99) - 1];
-    expect(p99).toBeLessThanOrEqual(5);
-    expect(elapsed[elapsed.length - 1]).toBeLessThanOrEqual(50); // no line is wildly off, even under load
+    expect(p99).toBeLessThanOrEqual(budget(5));
+    expect(elapsed[elapsed.length - 1]).toBeLessThanOrEqual(budget(50)); // no line is wildly off, even under load
   });
 
   it('the exact search stays quadratic: 1 000 tokens well under 250 ms per line', { retry: 2, timeout: 60_000 }, () => {
     const elapsed = timeEach(1000, 2, 1000);
-    expect(elapsed[elapsed.length - 1]).toBeLessThanOrEqual(250);
+    expect(elapsed[elapsed.length - 1]).toBeLessThanOrEqual(budget(250));
   });
 
   it('200 rows × 240 run tokens (fallback + memo): ≤ 2 s in total', { retry: 2, timeout: 60_000 }, () => {
@@ -85,7 +86,7 @@ describe('encoder budgets (§5.8)', () => {
     const start = performance.now();
     const encoded = rows.map((ops) => encodeOps(ops, { mode: 'runs' }));
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThanOrEqual(2000);
+    expect(elapsed).toBeLessThanOrEqual(budget(2000));
     // The rows really had 240 run tokens each, went through the fallback, and survive the round trip.
     for (let r = 0; r < rows.length; r += 37) {
       let runs = 0;

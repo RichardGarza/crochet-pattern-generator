@@ -4,6 +4,7 @@ import { signedVolume } from '../../kernel/geom/meshMeasures';
 import { remeshVolume } from '../remesh';
 import { voxelizeMesh, voxelizeMeshOnGrid } from '../voxelize';
 import { bestOf, bruteDistance, ellipsoidF, HEAVY, meshOf, sphereF, uvSphere, windingNumber, type Implicit } from './helpers';
+import { budget, PERF } from '../../../test/timing';
 import type { Vec3 } from '../../../types/geometry';
 
 // Diagnostics are kept as no-ops so the measured values stay visible in the test code.
@@ -267,7 +268,7 @@ describe('voxelize: N = 96 accuracy (subset) and timing', HEAVY, () => {
     expect(r.maxErr).toBeLessThanOrEqual(1);
   });
 
-  it('40k-triangle soup (unwelded) within 400 ms', { retry: 2 }, () => {
+  it('40k-triangle soup (unwelded) within 400 ms', { ...PERF, retry: 2 }, () => {
     const s = uvSphere(1, 200, 101);
     const pos = new Float32Array(s.indices.length * 3);
     const idx = new Uint32Array(s.indices.length);
@@ -282,6 +283,6 @@ describe('voxelize: N = 96 accuracy (subset) and timing', HEAVY, () => {
     for (let i = 0; i < ref.field.length; i++) if (ref.field[i] > 0 !== soup.field[i] > 0) diff++;
     log('soup 40k', { ms, diff, odd: soup.stats.oddColumns });
     expect(diff).toBe(0);
-    expect(ms).toBeLessThan(400);
+    expect(ms).toBeLessThan(budget(400));
   });
 });

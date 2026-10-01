@@ -32,6 +32,8 @@
     "typecheck": "tsc -b",
     "prelint": "node scripts/check-node.mjs",
     "lint": "oxlint",
+    "preperf": "node scripts/check-node.mjs",
+    "perf": "node scripts/perf.mjs",
     "pree2e": "node scripts/check-node.mjs",
     "e2e": "playwright test",
     "schema": "tsx scripts/gen-schema.ts",

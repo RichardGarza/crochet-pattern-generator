@@ -339,6 +339,13 @@ main:focus {
   font-size: var(--text-xs);
 }
 
+.shell-project__meta--extra {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .shell-project__badge {
   position: absolute;
   top: var(--space-2);

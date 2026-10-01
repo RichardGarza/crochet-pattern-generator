@@ -2,6 +2,7 @@
 // nesting, super-linear scans, palette floods, limits and units corner cases, archive details.
 import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
+import { budget, PERF } from '../../../test/timing';
 import type { ImportResult } from '../../../types/importer';
 import type { CrochetModelV1, Part } from '../../../types/model';
 import { readZipDirectory } from '../archive';
@@ -79,30 +80,30 @@ describe('bounded work on hostile text (review C4, M1)', HEAVY, () => {
   it.each<[string, () => string]>([
     ['600 open braces, 10 matches, 1 MB of text', () => `${'{'.repeat(600)}${'"schema":"crochet-model",'.repeat(10)}${'a'.repeat(1e6)}`],
     ['64 open braces then 100k broken specs', () => `${'{'.repeat(64)}${'{"schema":"crochet-model","x":}'.repeat(100_000)}`],
-  ])('pasted: %s', { retry: 2 }, async (_label, make) => {
+  ])('pasted: %s', { ...PERF, retry: 2 }, async (_label, make) => {
     const text = make();
     const { r, ms } = await timed(() => run(text));
     expect(r.ok).toBe(false);
-    expect(ms).toBeLessThan(5000);
+    expect(ms).toBeLessThan(budget(5000));
   });
 
-  it('an HTML script with 100k marker blocks', { retry: 2 }, async () => {
+  it('an HTML script with 100k marker blocks', { ...PERF, retry: 2 }, async () => {
     const page = `<html><script>${'/*CROCHET-MODEL-BEGIN*/{"schema":"crochet-model",/*CROCHET-MODEL-END*/'.repeat(100_000)}</script></html>`;
     const { r, ms } = await timed(() => importInputs([fileInput('p.html', page)]));
     expect(r.ok).toBe(false);
-    expect(ms).toBeLessThan(5000);
+    expect(ms).toBeLessThan(budget(5000));
   });
 
-  it('a palette of 20 000 colors with one name, and 5 000 used colors', { retry: 2 }, async () => {
+  it('a palette of 20 000 colors with one name, and 5 000 used colors', { ...PERF, retry: 2 }, async () => {
     const hexes = Array.from({ length: 20_000 }, (_, i) => `#${(i * 811).toString(16).padStart(6, '0').slice(-6)}`);
     const sameName = { ...JSON.parse(OBSERVED_JSON), palette: Object.fromEntries(hexes.map((h) => [h, 'yarn'])) };
     const a = await timed(() => run(sameName));
-    expect(a.ms).toBeLessThan(5000);
+    expect(a.ms).toBeLessThan(budget(5000));
     expect(a.r.ok).toBe(true);
     const spec = ball({ palette: hexes.slice(0, 5000).map((hex, i) => ({ id: `c${i}`, hex })) });
     (spec.parts as Record<string, unknown>[])[0].regions = Array.from({ length: 24 }, (_, i) => ({ kind: 'band', from: i / 24, to: (i + 1) / 24, color: `c${i}` }));
     const b = await timed(() => run(spec));
-    expect(b.ms).toBeLessThan(5000);
+    expect(b.ms).toBeLessThan(budget(5000));
     expect(b.r.ok).toBe(true);
     expect(b.r.model?.palette.length).toBe(16);
     expect(b.r.repairs.filter((x) => x.code === 'limits').length).toBeLessThanOrEqual(4);

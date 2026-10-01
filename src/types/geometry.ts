@@ -68,7 +68,7 @@ export interface ReconSettings {
   splitNeck: boolean;
   openingFrac: number;
   fitTolerance: number;
-  /** photoView 'top': the longest extent in the photo plane. */
+  /** The target height; for a single photo with photoView 'top': the longest extent in the photo plane. */
   targetHeightIn: Inches;
 }
 

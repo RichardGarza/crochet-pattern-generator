@@ -10,6 +10,7 @@ import { mergeParts } from '../merge';
 import { remeshVolume } from '../remesh';
 import { MeshToolError, type FieldVolume } from '../volume';
 import { HEAVY, sphereF, type Implicit } from './helpers';
+import { bestOfAsync, budget, PERF } from '../../../test/timing';
 import type { CrochetModelV1, Part } from '../../../types/model';
 import type { Vec3 } from '../../../types/geometry';
 
@@ -161,25 +162,15 @@ describe('merge', HEAVY, () => {
     for (const o of out as { ok: boolean }[]) expect(o.ok, JSON.stringify(o)).toBe(true);
   });
 
-  it('timing: two mesh parts (by buffer) and four primitives at N = 96 within 1 s', async () => {
+  it('timing: two mesh parts (by buffer) and four primitives at N = 96 within 1 s', { ...PERF }, async () => {
     const cb = convertPrimitive({ ...body, position: [0, 0, 0] });
     const ch = convertPrimitive({ ...head, position: [0, 0, 0] });
     const mb: Part = { id: 'body', type: 'mesh', dims: { meshRef: 'b', bboxIn: cb.bboxIn }, position: body.position, rotationDeg: [0, 0, 0], color: 'caramel_yarn' };
     const mh: Part = { id: 'head', type: 'mesh', dims: { meshRef: 'h', bboxIn: ch.bboxIn }, position: head.position, rotationDeg: [0, 0, 0], color: 'caramel_yarn' };
-    let best = Infinity;
-    for (let i = 0; i < 3; i++) {
-      const t0 = performance.now();
-      await mergeParts([{ part: mb, mesh: cb.mesh }, { part: mh, mesh: ch.mesh }]);
-      best = Math.min(best, performance.now() - t0);
-    }
-    let best4 = Infinity;
-    for (let i = 0; i < 2; i++) {
-      const t0 = performance.now();
-      await mergeParts([{ part: body }, { part: head }, { part: byId('ear_l') }, { part: byId('ear_r') }, { part: byId('muzzle') }, { part: byId('arm_l') }]);
-      best4 = Math.min(best4, performance.now() - t0);
-    }
+    const best = await bestOfAsync(3, () => mergeParts([{ part: mb, mesh: cb.mesh }, { part: mh, mesh: ch.mesh }]));
+    const best4 = await bestOfAsync(2, () => mergeParts([{ part: body }, { part: head }, { part: byId('ear_l') }, { part: byId('ear_r') }, { part: byId('muzzle') }, { part: byId('arm_l') }]));
     log('timing', { twoMeshParts: best, sixPrimitives: best4, tris: [cb.mesh.indices.length / 3, ch.mesh.indices.length / 3] });
-    expect(best).toBeLessThan(1000);
+    expect(best).toBeLessThan(budget(1000));
   });
 
   it('mergeParts does not mutate its inputs', async () => {
