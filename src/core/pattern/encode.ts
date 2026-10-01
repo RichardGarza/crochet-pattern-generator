@@ -30,7 +30,7 @@
 //
 // Above EXACT_MAX_TOKENS tokens the spec prescribes a linear fallback (`fallbackEncode`). Results are memoised
 // in an LRU keyed by fnv1a64(token ints ‖ mode), so the identical rows of a chart are encoded once.
-import type { Line, Op } from '../../types';
+import type { Op } from '../../types';
 import { canonicalJson, createFnv1a64 } from '../kernel/hash';
 import { type Item, expand, runText, tokenText } from './ops';
 
@@ -46,14 +46,21 @@ export const EXACT_MAX_TOKENS = 120;
 export const FALLBACK_MAX_PERIOD = 8;
 /** Entries kept by the memo (least recently used are dropped first). */
 export const MEMO_CAPACITY = 4096;
+/**
+ * The memo also holds at most this many token integers in total, so thousands of very long lines cannot pin
+ * tens of megabytes in a worker. A line longer than this is not memoised at all.
+ */
+export const MEMO_MAX_TOKENS = 1 << 20;
 
 export interface EncodeOptions {
   /** Default 'ops'. */
   mode?: EncodeMode;
   /**
    * `Line.segments`: the op index where each segment starts. Segments are encoded separately and joined, so no
-   * repeat crosses a boundary (oval ends vs sides, research 07 §6.9). Two runs of the same op that meet at a
-   * boundary are written as one run.
+   * repeat and no run crosses a boundary (oval ends vs sides, research 07 §6.9): `sc, inc, sc | 7 sc` stays
+   * `sc, inc, sc, 7 sc`. The one exception is the short-circuit of §2.6.1: a line that is one op throughout is
+   * one run, whatever its segments. Each segment is searched on its own, so the 120-token limit applies to a
+   * segment. Indexes outside the line, repeated or out of order are ignored.
    */
   segments?: readonly { readonly at: number }[];
   /** Overrides EXACT_MAX_TOKENS (which is normative): for tests and for tuning by integration. */
@@ -72,7 +79,9 @@ interface Vocabulary {
   readonly counted: boolean[];
 }
 
-const VOCABULARY_LIMIT = 1 << 20;
+// Far more distinct ops than any session produces (kinds × loops × palette colors); past it the vocabulary and
+// the memo start afresh, which callers cannot observe.
+const VOCABULARY_LIMIT = 1 << 16;
 
 function newVocabulary(): Vocabulary {
   return { ids: new Map(), ops: [], text: [], counted: [] };
@@ -111,10 +120,41 @@ function loopCode(loop: unknown): string | undefined {
 }
 
 /**
+ * True for data that JSON writes and reads back unchanged: null, booleans, strings, finite numbers other than
+ * −0, and arrays and plain objects of those (a field set to `undefined` counts as absent).
+ */
+function isPlainData(value: unknown, depth: number): boolean {
+  if (value === null) return true;
+  switch (typeof value) {
+    case 'string':
+    case 'boolean':
+      return true;
+    case 'number':
+      return Number.isFinite(value) && !Object.is(value, -0);
+    case 'object':
+      break;
+    default:
+      return false;
+  }
+  if (depth > 16) return false; // deeper than any op; also ends a cycle
+  if (Object.getOwnPropertySymbols(value).length > 0) return false;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) if (!(i in value) || !isPlainData(value[i], depth + 1)) return false;
+    return true;
+  }
+  const proto: unknown = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return false;
+  const fields = value as Record<string, unknown>;
+  for (const key of Object.keys(fields)) if (fields[key] !== undefined && !isPlainData(fields[key], depth + 1)) return false;
+  return true;
+}
+
+/**
  * The identity of an op as a string. Two ops get the same key exactly when they are deep-equal (a field set
  * to `undefined` counts as absent; `loop: 'both'` and no `loop` are different ops, so `expand` returns each as
  * it was given). Ops of the frozen `Op` type take the short form; anything else — a field this file does not
  * know, a value outside the type — is keyed by its canonical JSON, so a future field can never be dropped.
+ * That only works for plain JSON data, so anything else (NaN, a Date, a function, a cycle) is refused.
  */
 function tokenKey(op: Op): string {
   if (typeof op !== 'object' || op === null) throw new TypeError(`encodeOps: an op must be an object, got ${String(op)}`);
@@ -154,6 +194,7 @@ function tokenKey(op: Op): string {
         break;
     }
   }
+  if (!isPlainData(op, 0)) throw new TypeError('encodeOps: an op may hold only plain JSON data (strings, finite numbers, booleans, null, arrays, plain objects)');
   return `?${canonicalJson(op)}`;
 }
 
@@ -209,20 +250,40 @@ interface MemoEntry {
 }
 
 const memo = new Map<string, MemoEntry>();
+let memoTokens = 0;
 let memoHits = 0;
 let memoMisses = 0;
 
 /** Empties the memo and the token vocabulary (tests; also called when the vocabulary grows past its limit). */
 export function resetEncodeMemo(): void {
   memo.clear();
+  memoTokens = 0;
   vocabulary = newVocabulary();
   memoHits = 0;
   memoMisses = 0;
 }
 
-/** Counters of the memo, for tests and profiling. */
-export function encodeMemoStats(): { size: number; hits: number; misses: number; vocabulary: number } {
-  return { size: memo.size, hits: memoHits, misses: memoMisses, vocabulary: vocabulary.ops.length };
+/** Counters of the memo, for tests and profiling: entries, token integers held, hits, misses, distinct ops seen. */
+export function encodeMemoStats(): { size: number; tokens: number; hits: number; misses: number; vocabulary: number } {
+  return { size: memo.size, tokens: memoTokens, hits: memoHits, misses: memoMisses, vocabulary: vocabulary.ops.length };
+}
+
+/** Puts an entry in as the most recently used one, then drops the oldest entries until both limits hold. */
+function memoStore(key: string, entry: MemoEntry): void {
+  const replaced = memo.get(key);
+  if (replaced !== undefined) {
+    memoTokens -= replaced.tokens.length;
+    memo.delete(key);
+  }
+  if (entry.tokens.length > MEMO_MAX_TOKENS) return;
+  memo.set(key, entry);
+  memoTokens += entry.tokens.length;
+  while (memo.size > MEMO_CAPACITY || memoTokens > MEMO_MAX_TOKENS) {
+    const oldest = memo.entries().next();
+    if (oldest.done === true) break;
+    memoTokens -= oldest.value[1].tokens.length;
+    memo.delete(oldest.value[0]);
+  }
 }
 
 function sameTokens(a: Uint32Array, b: Uint32Array): boolean {
@@ -551,23 +612,23 @@ function encodeSpan(ops: readonly Op[], from: number, to: number, mode: EncodeMo
     items = fallbackEncode(runOp, runCount);
   }
   const frozen = freezeItems(items);
-  memo.delete(key);
-  memo.set(key, { tag, tokens, items: frozen });
-  if (memo.size > MEMO_CAPACITY) {
-    const oldest = memo.keys().next();
-    if (oldest.done !== true) memo.delete(oldest.value);
-  }
+  memoStore(key, { tag, tokens, items: frozen });
   return frozen;
 }
 
+/** The op indexes inside the line where a new segment starts, ascending and without repeats. */
 function segmentCuts(segments: EncodeOptions['segments'], length: number): number[] {
-  if (segments === undefined || segments.length === 0) return [];
-  const cuts: number[] = [];
-  for (const segment of segments) {
-    const at = segment.at;
-    if (Number.isInteger(at) && at > 0 && at < length && !cuts.includes(at)) cuts.push(at);
+  if (!Array.isArray(segments) || segments.length === 0) return [];
+  const inside: number[] = [];
+  for (const segment of segments as readonly unknown[]) {
+    if (typeof segment !== 'object' || segment === null) continue;
+    const at: unknown = (segment as { at?: unknown }).at;
+    if (typeof at === 'number' && Number.isInteger(at) && at > 0 && at < length) inside.push(at);
   }
-  return cuts.sort((a, b) => a - b);
+  inside.sort((a, b) => a - b);
+  const cuts: number[] = [];
+  for (const at of inside) if (cuts.length === 0 || cuts[cuts.length - 1] !== at) cuts.push(at);
+  return cuts;
 }
 
 // ---- Public API
@@ -575,7 +636,8 @@ function segmentCuts(segments: EncodeOptions['segments'], length: number): numbe
 /**
  * Encodes a list of ops as runs and one-level repeats (§2.6.1). The result is frozen and may be shared with
  * other calls: read it, never change it. `expand(encodeOps(ops, o))` deep-equals `ops` for every `o`.
- * Throws a TypeError when an element of `ops` is not an object.
+ * Throws a TypeError when an element of `ops` is not an object, or holds something that is not plain JSON data
+ * (only possible in a field outside the frozen `Op` type).
  */
 export function encodeOps(ops: readonly Op[], o: EncodeOptions = {}): readonly Item[] {
   if (vocabulary.ops.length > VOCABULARY_LIMIT) resetEncodeMemo();
@@ -589,28 +651,17 @@ export function encodeOps(ops: readonly Op[], o: EncodeOptions = {}): readonly I
   let from = 0;
   for (let s = 0; s <= cuts.length; s++) {
     const to = s < cuts.length ? cuts[s] : ops.length;
-    for (const item of encodeSpan(ops, from, to, mode, exactMax)) {
-      const last = out.length > 0 ? out[out.length - 1] : undefined;
-      // Interned ops are singletons, so `===` means "the same op".
-      if (last !== undefined && last.kind === 'run' && item.kind === 'run' && last.op === item.op) {
-        out[out.length - 1] = Object.freeze({ kind: 'run', op: last.op, n: last.n + item.n });
-      } else {
-        out.push(item);
-      }
-    }
+    for (const item of encodeSpan(ops, from, to, mode, exactMax)) out.push(item);
     from = to;
   }
+  // §2.6.1 short-circuit: a uniform line is one run. Interned ops are singletons, so `===` means "the same op".
+  const first = out[0];
+  if (first.kind === 'run' && out.every((item) => item.kind === 'run' && item.op === first.op)) {
+    let n = 0;
+    for (const item of out) if (item.kind === 'run') n += item.n;
+    return freezeItems([{ kind: 'run', op: first.op, n }]);
+  }
   return Object.freeze(out);
-}
-
-/** The token mode a line is printed with by default: per op for rounds, per run for rows, C2C rows and borders. */
-export function defaultEncodeMode(kind: Line['kind']): EncodeMode {
-  return kind === 'rnd' ? 'ops' : 'runs';
-}
-
-/** `encodeOps` for a `Line`: its ops, its segments, and the token mode of its kind unless one is given. */
-export function encodeLine(line: Pick<Line, 'kind' | 'ops' | 'segments'>, o: Omit<EncodeOptions, 'segments'> = {}): readonly Item[] {
-  return encodeOps(line.ops, { ...o, mode: o.mode ?? defaultEncodeMode(line.kind), segments: line.segments });
 }
 
 /** The cost the encoder minimises: 1 per run, inner cost + 1 per repeat. */

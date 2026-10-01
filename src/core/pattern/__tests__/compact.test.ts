@@ -7,10 +7,12 @@ import {
   compactFoundation,
   compactItems,
   compactLabel,
+  lineItems,
   renderCompactLine,
 } from '../compact';
-import { encodeOps, resetEncodeMemo } from '../encode';
-import { colored, dc, dec, foldPlain, hdc, inc, inc3, inLoop, parseBody, placeRound, rnd, row, sc, slst, spiralLines, times } from './helpers';
+import { canonicalCompact, encodeOps, expand, resetEncodeMemo } from '../encode';
+import type { CompactNames } from '../ops';
+import { colored, dc, dec, foldPlain, hdc, inc, inc3, inLoop, parseBody, placeRound, plain, rnd, row, sc, slst, spiralLines, tile, times } from './helpers';
 
 beforeEach(() => {
   resetEncodeMemo();
@@ -99,6 +101,10 @@ describe('amigurumi rounds (§2.10.8, §2.10.11)', () => {
     expect(renderCompactLine(rnd(9, times(36, colored(sc, 'B')), 36, { colorHeader: 'B' }))).toBe('Rnd 9 (B): sc in each st around (36)');
     expect(renderCompactLine(rnd(9, times(6, colored(sc, 'B'), colored(inc, 'B')), 12, { colorHeader: 'B' }))).toBe('Rnd 9 (B): (sc, inc) x 6 (18)');
     expect(renderCompactLine(rnd(10, times(36, sc), 36, { colorHeader: 'B', nEnd: 12 }))).toBe('Rnds 10–12 (B, 3 rnds): sc in each st around (36)');
+    // Ops tagged with the header color and untagged ops print alike, so they are one run, not "18 sc, 18 sc".
+    expect(renderCompactLine(rnd(9, [...times(18, colored(sc, 'B')), ...times(18, sc)], 36, { colorHeader: 'B' }))).toBe('Rnd 9 (B): sc in each st around (36)');
+    // Another color inside a headed round keeps its tag.
+    expect(renderCompactLine(rnd(9, [...times(30, colored(sc, 'B')), ...times(6, colored(sc, 'A'))], 36, { colorHeader: 'B' }))).toBe('Rnd 9 (B): 30 sc, 6 sc A (36)');
   });
 
   it('DESIGN §2.10.11 / §2.11.2: multicolor rounds tag runs — (4 sc A, 2 sc B) x 6 (36), (3 sc A, 2 sc B) x 6 (30)', () => {
@@ -150,6 +156,48 @@ describe('amigurumi rounds (§2.10.8, §2.10.11)', () => {
     expect(compactBody(rnd(5, times(24, { k: 'st', st: 'sc', loop: 'both' }), 24))).toBe('sc in each st around');
     expect(renderCompactLine(rnd(5, inLoop(times(24, sc), 'BLO'), 24, { colorHeader: 'B' }))).toBe('Rnd 5 (B): BLO sc in each st around (24)');
   });
+
+  it('loop "both" prints as no loop, so it never splits a run ("18 sc, 18 sc") or a repeat', () => {
+    const both: Op = { k: 'st', st: 'sc', loop: 'both' };
+    expect(compactBody(rnd(5, [...times(18, sc), ...times(18, both)], 36))).toBe('sc in each st around');
+    expect(compactBody(rnd(5, [...times(3, sc, inc), ...times(3, both, { k: 'inc', n: 2, loop: 'both' })], 12))).toBe('(sc, inc) x 6');
+  });
+});
+
+describe('lineItems: the encoded form every renderer prints (§2.6.1)', () => {
+  const ops = parseBody('sc A, 2 sc B, 2 sc A, 2 sc B, sc A');
+
+  it('rounds of an amigurumi pattern per op; rows, C2C rows and borders of a chart pattern per run', () => {
+    expect(canonicalCompact(lineItems(rnd(2, ops, 8)))).toBe('(sc A, 2 sc B, sc A) x 2');
+    expect(canonicalCompact(lineItems(row(2, ops, 8)))).toBe('sc A, 2 sc B, 2 sc A, 2 sc B, sc A');
+    expect(canonicalCompact(lineItems({ kind: 'border', ops }))).toBe('sc A, 2 sc B, 2 sc A, 2 sc B, sc A');
+    expect(canonicalCompact(lineItems({ kind: 'c2c', ops: parseBody('1 A, 2 B, 2 A, 2 B, 1 A') }))).toBe('1 A, 2 B, 2 A, 2 B, 1 A');
+    // docKind overrides the default: a tapestry round is per run, a flat appliqué row in a 3D pattern per op.
+    expect(canonicalCompact(lineItems(rnd(2, ops, 8), { docKind: '2d' }))).toBe('sc A, 2 sc B, 2 sc A, 2 sc B, sc A');
+    expect(canonicalCompact(lineItems(row(2, ops, 8), { docKind: '3d' }))).toBe('(sc A, 2 sc B, sc A) x 2');
+  });
+
+  it('encodes the ops as printed (no loop "both", no header color) and passes Line.segments', () => {
+    const headed = rnd(9, [...times(3, colored(sc, 'B'), { k: 'inc', n: 2, color: 'B', loop: 'both' })], 6, { colorHeader: 'B' });
+    expect(plain(lineItems(headed))).toEqual([{ kind: 'rep', times: 3, inner: [{ kind: 'run', op: sc, n: 1 }, { kind: 'run', op: inc, n: 1 }] }]);
+    const rnd3 = parseBody('sc, inc, 7 sc, (sc, inc) x 3, 7 sc, (sc, inc) x 2');
+    const segments: Line['segments'] = [
+      { at: 0, kind: 'end' },
+      { at: 2, kind: 'side' },
+      { at: 9, kind: 'end' },
+      { at: 15, kind: 'side' },
+      { at: 22, kind: 'end' },
+    ];
+    expect(canonicalCompact(lineItems(rnd(3, rnd3, 26, { segments })))).toBe('sc, inc, 7 sc, (sc, inc) x 3, 7 sc, (sc, inc) x 2');
+    expect(expand(lineItems(rnd(3, rnd3, 26, { segments })))).toStrictEqual(rnd3);
+  });
+
+  it('is what compactBody prints, and the same frozen result on every call (memo)', () => {
+    const line = rnd(4, parseBody('sc, inc, (2 sc, inc) x 5, sc'), 18);
+    expect(compactBody(line)).toBe(compactItems(lineItems(line)));
+    expect(lineItems(line)).toBe(lineItems(line));
+    expect(compactItems(lineItems({ kind: 'c2c', ops: [tile('A'), tile('B')] }))).toBe('1 A, 1 B');
+  });
 });
 
 describe('ovals worked around a chain (§2.10.6, research 07 §6.9)', () => {
@@ -200,6 +248,20 @@ describe('ovals worked around a chain (§2.10.6, research 07 §6.9)', () => {
       { at: 18, kind: 'end' },
     ];
     expect(renderCompactLine(rnd(2, ops, 20, { segments }))).toBe('Rnd 2: inc, 7 sc, 3 inc, 7 sc, 2 inc (26)');
+  });
+
+  it('segments stay visible: runs that meet at a boundary are not merged (§2.6.1 "encoded separately and joined")', () => {
+    // Started at center back, in the middle of a side (§2.10.2): side | end | side | end | side, 28 → 32.
+    const ops = parseBody('4 sc, 3 sc, inc, 2 sc, inc, 7 sc, 3 sc, inc, 2 sc, inc, 3 sc');
+    const segments: Line['segments'] = [
+      { at: 0, kind: 'side' },
+      { at: 4, kind: 'end' },
+      { at: 11, kind: 'side' },
+      { at: 18, kind: 'end' },
+      { at: 25, kind: 'side' },
+    ];
+    expect(renderCompactLine(rnd(5, ops, 28, { segments }))).toBe('Rnd 5: 4 sc, sc, (2 sc, inc) x 2, 7 sc, sc, (2 sc, inc) x 2, 3 sc (32)');
+    expect(renderCompactLine(rnd(5, ops, 28))).toBe('Rnd 5: (7 sc, inc, 2 sc, inc, 3 sc) x 2 (32)');
   });
 
   it('a plain oval round with segments is still "sc in each st around"', () => {
@@ -440,6 +502,11 @@ describe('borders and options', () => {
     expect(renderCompactLine(oval, { names })).toBe(
       'Rnd 1: dc in 2nd ch from hook, dc in next 7 ch, 3 dc in last ch; working along the other side of the chain, dc in next 7 ch, 2 dc in last ch (20)',
     );
+  });
+
+  it('names: a word left out, or not a string, keeps the US word', () => {
+    const holes = { sc: undefined, slst: 'ss', dec: 7 } as unknown as Partial<CompactNames>;
+    expect(renderCompactLine(rnd(7, times(18, sc, dec), 54, { join: {} }), { names: holes })).toBe('Rnd 7: (sc, dec) x 18; join with ss in first sc. (36)');
   });
 
   it('a round joined into another stitch names it; inc and dec are made of sc', () => {

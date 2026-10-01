@@ -8,19 +8,22 @@
 //   ↗ Row 4 (WS) [inc beg · dec end]: 1 A, 1 B, 1 A (3 tiles)
 //
 // A line is `label: body count`, and every part is exported so the verbose and UK renderers (T2) can reuse
-// what they share. The text is built from the `Line` alone: its ops go through `encodeOps`, its count is
-// `Line.stated`. Two things depend on the kind of pattern rather than on the line (`CompactOptions.docKind`):
-// a chart pattern ('2d') prints `(40 sts)`, cuts its lines into run tokens and writes joined rounds as
-// `Ch 1, {runs}; join …`; an amigurumi pattern ('3d') prints `(18)`, uses one token per op and writes joined
-// rounds with the template of §2.11.3. By default rounds are '3d' and rows, C2C rows and borders '2d'.
+// what they share. The text is built from the `Line` alone: its ops go through `lineItems` (the encoder), its
+// count is `Line.stated`. Two things depend on the kind of pattern rather than on the line
+// (`CompactOptions.docKind`): a chart pattern ('2d') prints `(40 sts)`, cuts its lines into run tokens and
+// writes joined rounds as `Ch 1, {runs}; join …`; an amigurumi pattern ('3d') prints `(18)`, uses one token per
+// op and writes joined rounds with the template of §2.11.3. By default rounds are '3d' and rows, C2C rows and
+// borders '2d'.
+//
+// The renderer expects a line that `validateLine` accepts; it does not check one.
 import type { Line, Op, PatternDoc } from '../../types';
 import { type EncodeMode, encodeOps } from './encode';
-import { type CompactNames, type Item, type TokenTextOptions, US_COMPACT_NAMES, runText, tokenText } from './ops';
+import { type CompactNames, type Item, type TokenTextOptions, US_COMPACT_NAMES, displayOps, runText, tokenText } from './ops';
 
 export interface CompactOptions {
   /** See the file header. Default: '3d' for `kind: 'rnd'`, '2d' for rows, C2C rows and borders. */
   docKind?: PatternDoc['kind'];
-  /** Stitch names that replace the US compact ones (the UK table of T2). */
+  /** Stitch names that replace the US compact ones (the UK table of T2). A name left out keeps the US word. */
   names?: Partial<CompactNames>;
 }
 
@@ -29,12 +32,27 @@ function docKindOf(line: Pick<Line, 'kind'>, o: CompactOptions): PatternDoc['kin
 }
 
 function namesOf(o: CompactOptions): Readonly<CompactNames> {
-  return o.names === undefined ? US_COMPACT_NAMES : { ...US_COMPACT_NAMES, ...o.names };
+  if (o.names === undefined) return US_COMPACT_NAMES;
+  const names: CompactNames = { ...US_COMPACT_NAMES };
+  for (const key of Object.keys(US_COMPACT_NAMES) as (keyof CompactNames)[]) {
+    const word = o.names[key];
+    if (typeof word === 'string') names[key] = word;
+  }
+  return names;
 }
 
-/** The token mode the compact renderer encodes a line with: per run in a '2d' pattern, per op in a '3d' one. */
+/** The token mode a line is encoded with: per run in a '2d' pattern, per op in a '3d' one (§2.6.1). */
 export function compactEncodeMode(line: Pick<Line, 'kind'>, o: CompactOptions = {}): EncodeMode {
   return docKindOf(line, o) === '3d' ? 'ops' : 'runs';
+}
+
+/**
+ * The encoded form of a line, as every renderer prints it: its ops as displayed (`displayOps`: the default loop
+ * and the header's color are left out, so ops that print alike fold together), its segments, and the token mode
+ * of its pattern kind. The verbose renderers start from the same items, so all dialects show the same repeats.
+ */
+export function lineItems(line: Pick<Line, 'kind' | 'ops' | 'segments' | 'colorHeader'>, o: CompactOptions = {}): readonly Item[] {
+  return encodeOps(displayOps(line), { mode: compactEncodeMode(line, o), segments: line.segments });
 }
 
 /**
@@ -96,14 +114,18 @@ function ordinal(n: number): string {
   }
 }
 
+function loopOf(op: Op): 'BLO' | 'FLO' | undefined {
+  return op.k !== 'tile' && (op.loop === 'BLO' || op.loop === 'FLO') ? op.loop : undefined;
+}
+
 /** The loop every op of the line is worked in, when they all share BLO or FLO: the line then prints it once. */
 function sharedLoop(ops: readonly Op[]): 'BLO' | 'FLO' | undefined {
   let shared: 'BLO' | 'FLO' | undefined;
   for (const op of ops) {
-    if (op.k === 'tile' || (op.loop !== 'BLO' && op.loop !== 'FLO')) return undefined;
-    if (op.k === 'st' && op.into !== undefined) return undefined;
-    if (shared !== undefined && shared !== op.loop) return undefined;
-    shared = op.loop;
+    const loop = loopOf(op);
+    if (loop === undefined || (op.k === 'st' && op.into !== undefined)) return undefined;
+    if (shared !== undefined && shared !== loop) return undefined;
+    shared = loop;
   }
   return shared;
 }
@@ -111,7 +133,8 @@ function sharedLoop(ops: readonly Op[]): 'BLO' | 'FLO' | undefined {
 /** The stitch a round is joined into: the first op's (`inc` and `dec` are made of sc). */
 function firstStitchName(ops: readonly Op[], names: Readonly<CompactNames>): string {
   const first = ops.length > 0 ? ops[0] : undefined;
-  return first !== undefined && first.k === 'st' && first.st !== 'slst' ? names[first.st] : names.sc;
+  if (first === undefined || first.k !== 'st') return names.sc;
+  return first.st === 'hdc' ? names.hdc : first.st === 'dc' ? names.dc : names.sc;
 }
 
 /**
@@ -121,7 +144,7 @@ function firstStitchName(ops: readonly Op[], names: Readonly<CompactNames>): str
 function opsText(items: readonly Item[], text: TokenTextOptions, phrase: { where: 'around' | 'across'; into: 'st' | 'ch' } | null): string {
   if (phrase !== null && items.length === 1) {
     const only = items[0];
-    if (only.kind === 'run' && only.op.k !== 'tile' && (only.op.color === undefined || only.op.color === text.hideColor)) {
+    if (only.kind === 'run' && only.op.k !== 'tile' && only.op.color === undefined) {
       const token = tokenText(only.op, text);
       return only.op.k === 'dec' ? `${token} ${phrase.where}` : `${token} in each ${phrase.into} ${phrase.where}`;
     }
@@ -130,30 +153,21 @@ function opsText(items: readonly Item[], text: TokenTextOptions, phrase: { where
 }
 
 /**
- * The canonical first round of a chain oval (§2.10.6): `(S + 1) sc, inc3, S sc, inc` in one color. Returns S,
- * the stitches along each side, or null when the ops are anything else.
+ * The canonical first round of a chain oval (§2.10.6): `(S + 1) sc, inc3, S sc, inc`, through both loops and
+ * with no color tag to print. Returns S, the stitches along each side, or null when the ops are anything else.
  */
-function ovalSide(ops: readonly Op[], hideColor: string | undefined): number | null {
-  const plain = (op: Op): boolean =>
-    op.k === 'st' && op.st === 'sc' && op.loop !== 'BLO' && op.loop !== 'FLO' && op.into === undefined && visibleColor(op, hideColor) === undefined;
+function ovalSide(shown: readonly Op[]): number | null {
+  const bare = (op: Op): boolean => loopOf(op) === undefined && op.color === undefined;
+  const plain = (op: Op): boolean => op.k === 'st' && op.st === 'sc' && op.into === undefined && bare(op);
   let i = 0;
-  while (i < ops.length && plain(ops[i])) i++;
+  while (i < shown.length && plain(shown[i])) i++;
   const side = i - 1;
-  if (side < 0 || i >= ops.length) return null;
-  const turn = ops[i];
-  if (turn.k !== 'inc' || turn.n !== 3 || visibleColor(turn, hideColor) !== undefined) return null;
-  for (let x = 0; x < side; x++) {
-    const at = i + 1 + x;
-    if (at >= ops.length || !plain(ops[at])) return null;
-  }
-  const end = i + 1 + side;
-  if (end !== ops.length - 1) return null;
-  const last = ops[end];
-  return last.k === 'inc' && last.n === 2 && visibleColor(last, hideColor) === undefined ? side : null;
-}
-
-function visibleColor(op: Op, hideColor: string | undefined): string | undefined {
-  return op.color === hideColor ? undefined : op.color;
+  if (side < 0 || shown.length !== 2 * side + 3) return null;
+  const turn = shown[i];
+  const last = shown[shown.length - 1];
+  if (turn.k !== 'inc' || turn.n !== 3 || !bare(turn) || last.k !== 'inc' || last.n !== 2 || !bare(last)) return null;
+  for (let x = i + 1; x < shown.length - 1; x++) if (!plain(shown[x])) return null;
+  return side;
 }
 
 /**
@@ -176,17 +190,17 @@ function visibleColor(op: Op, hideColor: string | undefined): string | undefined
 export function compactBody(line: Line, o: CompactOptions = {}): string {
   const docKind = docKindOf(line, o);
   const names = namesOf(o);
-  const ops = line.ops;
-  const loop = sharedLoop(ops);
-  const text: TokenTextOptions = { names, hideLoop: loop !== undefined, hideColor: line.colorHeader };
+  const shown = displayOps(line);
+  const loop = sharedLoop(shown);
+  const text: TokenTextOptions = { names, hideLoop: loop !== undefined };
   const loopPrefix = loop === undefined ? '' : `${loop} `;
   const mode = compactEncodeMode(line, o);
   const where = line.kind === 'row' ? 'across' : 'around';
   const start = line.start;
+  /** The items of the shown ops from index `from` on, with the line's segments moved along. */
   const encode = (from: number): readonly Item[] => {
-    if (from === 0) return encodeOps(ops, { mode, segments: line.segments });
-    const segments = line.segments?.map((segment) => ({ at: segment.at - from }));
-    return encodeOps(ops.slice(from), { mode, segments });
+    if (from === 0) return encodeOps(shown, { mode, segments: line.segments });
+    return encodeOps(shown.slice(from), { mode, segments: line.segments?.map((segment) => ({ at: segment.at - from })) });
   };
 
   let head = '';
@@ -201,14 +215,14 @@ export function compactBody(line: Line, o: CompactOptions = {}): string {
     }
     case 'foundation':
       head = `Starting in ${ordinal(start.firstInto)} ch from hook, `;
-      body = loopPrefix + opsText(encode(0), text, line.kind === 'c2c' ? null : { where, into: 'ch' });
+      body = loopPrefix + opsText(encode(0), text, { where, into: 'ch' });
       break;
     case 'turn':
       head = start.chains === 1 ? 'Ch 1, turn. ' : `Ch ${start.chains} (does not count as a st), turn. `;
       body = loopPrefix + opsText(encode(0), text, { where, into: 'st' });
       break;
     case 'chainOval': {
-      const side = ovalSide(ops, line.colorHeader);
+      const side = ovalSide(shown);
       if (side === null) {
         body = loopPrefix + opsText(encode(0), text, { where, into: 'ch' });
       } else {
@@ -225,14 +239,14 @@ export function compactBody(line: Line, o: CompactOptions = {}): string {
       body = loopPrefix + opsText(encode(0), text, { where, into: 'ch' });
       break;
     case 'join':
-      if (docKind === '2d' || ops.length === 0) {
+      if (docKind === '2d' || shown.length === 0) {
         head = 'Ch 1, ';
         body = loopPrefix + opsText(encode(0), text, { where, into: 'st' });
       } else {
         // §2.11.3: the first stitch of a joined round goes in the same stitch as the join.
         head = 'Ch 1 (does not count), ';
-        body = `${loopPrefix}${tokenText(ops[0], text)} in same st as join`;
-        if (ops.length > 1) body += `, ${compactItems(encode(1), text)}`;
+        body = `${loopPrefix}${tokenText(shown[0], text)} in same st as join`;
+        if (shown.length > 1) body += `, ${compactItems(encode(1), text)}`;
       }
       break;
     default:
@@ -242,7 +256,7 @@ export function compactBody(line: Line, o: CompactOptions = {}): string {
   let tail = '';
   if (line.join !== undefined) {
     const change = line.join.changeTo === undefined ? '' : `, changing to ${line.join.changeTo}`;
-    tail = `; join with ${names.slst} in first ${firstStitchName(ops, names)}${change}.`;
+    tail = `; join with ${names.slst} in first ${firstStitchName(shown, names)}${change}.`;
   } else if (start !== undefined && start.k === 'join' && docKind === '3d') {
     tail = '; do not join — continue in a spiral.';
   }

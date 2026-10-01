@@ -55,12 +55,28 @@ describe('E_ROUNDTRIP (§2.13 R10)', () => {
     expect(validateLine(striped).map((issue) => issue.code)).toEqual(['E_ROUNDTRIP']);
   });
 
-  it('fires when a loop or an unknown field is lost', () => {
+  it('fires when a loop is lost', () => {
     const blo = rnd(5, times(6, { k: 'st', st: 'sc', loop: 'BLO' }), 6);
     encodeOps.mockReturnValue([{ kind: 'run', op: sc, n: 6 }]);
     expect(validateLine(blo).map((issue) => issue.code)).toEqual(['E_ROUNDTRIP']);
-    const both = rnd(5, times(6, { k: 'st', st: 'sc', loop: 'both' }), 6);
-    expect(validateLine(both).map((issue) => issue.code)).toEqual(['E_ROUNDTRIP']);
+  });
+
+  it('checks the ops as printed: loop "both" and the header color print as nothing, so they are not lost', () => {
+    encodeOps.mockReturnValue([{ kind: 'run', op: sc, n: 6 }]);
+    expect(validateLine(rnd(5, times(6, { k: 'st', st: 'sc', loop: 'both' }), 6))).toEqual([]);
+    expect(validateLine(rnd(5, times(6, colored(sc, 'B')), 6, { colorHeader: 'B' }))).toEqual([]);
+    // Without the header the color must be printed, so dropping it is a loss.
+    expect(validateLine(rnd(5, times(6, colored(sc, 'B')), 6)).map((issue) => issue.code)).toEqual(['E_ROUNDTRIP']);
+    expect(encodeOps).toHaveBeenLastCalledWith(times(6, colored(sc, 'B')), { mode: 'ops', segments: undefined });
+  });
+
+  it('fires, and does not throw, when the encoder throws', () => {
+    encodeOps.mockImplementation(() => {
+      throw new TypeError('broken encoder');
+    });
+    const issues = validateLine(line);
+    expect(issues.map((issue) => issue.code)).toEqual(['E_ROUNDTRIP']);
+    expect(issues[0].message).toBe('Rnd 3: its ops could not be encoded: broken encoder');
   });
 
   it('fires when the printed count is not what the ops make', () => {

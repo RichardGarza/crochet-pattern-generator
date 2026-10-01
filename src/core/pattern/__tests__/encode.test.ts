@@ -7,10 +7,9 @@ import {
   FALLBACK_MAX_PERIOD,
   type Item,
   MEMO_CAPACITY,
+  MEMO_MAX_TOKENS,
   canonicalCompact,
-  defaultEncodeMode,
   encodeCost,
-  encodeLine,
   encodeMemoStats,
   encodeOps,
   expand,
@@ -173,6 +172,22 @@ describe('encodeOps — short-circuits and structure', () => {
   it('throws on an element that is not an object', () => {
     expect(() => encodeOps([sc, null as unknown as Op])).toThrow(TypeError);
     expect(() => encodeOps(['sc' as unknown as Op])).toThrow(TypeError);
+  });
+
+  it('refuses a field outside the frozen type that JSON cannot carry, rather than return another op', () => {
+    // An unknown field is keyed by its canonical JSON, which would turn NaN into null, a Date into a string, -0
+    // into 0 and a typed array into a plain one: expand would then not give the op back.
+    const withField = (value: unknown): Op => ({ k: 'st', st: 'sc', extra: value }) as unknown as Op;
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    const holes = new Array<number>(2);
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, -0, new Date(0), () => 1, Symbol('s'), 1n, new Uint8Array(2), new Map(), cycle, holes, [1, undefined]]) {
+      expect(() => encodeOps([sc, withField(value)])).toThrow(TypeError);
+    }
+    for (const value of [null, true, 0, 'x', [1, 'a', null], { a: [{ b: 2 }] }]) {
+      const ops = [sc, withField(value), withField(value)];
+      expect(expand(encodeOps(ops))).toStrictEqual(ops);
+    }
   });
 
   it('encodeCost: 1 per run, inner + 1 per repeat (research 07 §7.4)', () => {
@@ -368,15 +383,12 @@ describe("encodeOps — mode 'runs' (2D rows: one token per run)", () => {
     expect(text(times(5, tile('A'), tile('B')), { mode: 'runs' })).toBe('(1 A, 1 B) x 5');
   });
 
-  it('defaultEncodeMode / encodeLine: rounds per op; rows, C2C rows and borders per run', () => {
-    expect(defaultEncodeMode('rnd')).toBe('ops');
-    expect(defaultEncodeMode('row')).toBe('runs');
-    expect(defaultEncodeMode('c2c')).toBe('runs');
-    expect(defaultEncodeMode('border')).toBe('runs');
+  it("is the mode only when asked: anything but 'runs' means 'ops' (the line-level choice is compact.ts lineItems)", () => {
     const ops = parseBody('sc A, 2 sc B, 2 sc A, 2 sc B, sc A');
-    expect(canonicalCompact(encodeLine({ kind: 'row', ops }))).toBe('sc A, 2 sc B, 2 sc A, 2 sc B, sc A');
-    expect(canonicalCompact(encodeLine({ kind: 'rnd', ops }))).toBe('(sc A, 2 sc B, sc A) x 2');
-    expect(canonicalCompact(encodeLine({ kind: 'row', ops }, { mode: 'ops' }))).toBe('(sc A, 2 sc B, sc A) x 2');
+    expect(text(ops)).toBe('(sc A, 2 sc B, sc A) x 2');
+    expect(text(ops, { mode: 'ops' })).toBe('(sc A, 2 sc B, sc A) x 2');
+    expect(text(ops, { mode: 'runs' })).toBe('sc A, 2 sc B, 2 sc A, 2 sc B, sc A');
+    expect(text(ops, { mode: 'other' as unknown as EncodeOptions['mode'] })).toBe('(sc A, 2 sc B, sc A) x 2');
   });
 });
 
@@ -404,10 +416,18 @@ describe('encodeOps — segments (research 07 §6.9, §7.6 vector 14)', () => {
     expect(text(ops, { segments: [{ at: 3 }] })).toBe('sc, inc, sc, (inc, sc) x 4, inc');
   });
 
-  it('two runs of one op that meet at a boundary are one run, so a plain oval round is one run', () => {
+  it('a line of one op is one run whatever its segments (§2.6.1 short-circuit): a plain oval round is one run', () => {
     expect(plain(encodeOps(times(32, sc), { segments }))).toEqual([{ kind: 'run', op: sc, n: 32 }]);
-    expect(text(parseBody('2 sc, inc, 3 sc, inc, 4 sc'), { segments: [{ at: 4 }] })).toBe('2 sc, inc, 3 sc, inc, 4 sc');
-    expect(text(parseBody('5 sc A, 3 sc B'), { mode: 'runs', segments: [{ at: 2 }, { at: 6 }] })).toBe('5 sc A, 3 sc B');
+    expect(plain(encodeOps(times(500, sc), { segments: [{ at: 7 }, { at: 300 }] }))).toEqual([{ kind: 'run', op: sc, n: 500 }]);
+    expect(plain(encodeOps(times(9, colored(sc, 'A')), { mode: 'runs', segments: [{ at: 4 }] }))).toEqual([{ kind: 'run', op: colored(sc, 'A'), n: 9 }]);
+  });
+
+  it('otherwise segments are encoded separately and joined: no run crosses a boundary either (§2.6.1, research 07 §6.9)', () => {
+    // An oval side of 7 sc, then an end segment that starts with sc: the side still reads "7 sc".
+    expect(text(parseBody('7 sc, 3 sc, inc, 2 sc, inc'), { segments: [{ at: 0 }, { at: 7 }] })).toBe('7 sc, sc, (2 sc, inc) x 2');
+    expect(text(parseBody('7 sc, 3 sc, inc, 2 sc, inc'))).toBe('8 sc, (2 sc, inc) x 2');
+    expect(text(parseBody('2 sc, inc, 3 sc, inc, 4 sc'), { segments: [{ at: 4 }] })).toBe('2 sc, inc, sc, 2 sc, inc, 4 sc');
+    expect(text(parseBody('5 sc A, 3 sc B'), { mode: 'runs', segments: [{ at: 2 }, { at: 6 }] })).toBe('2 sc A, 3 sc A, sc B, 2 sc B');
   });
 
   it('ignores cuts that are outside the line, repeated or out of order', () => {
@@ -416,10 +436,19 @@ describe('encodeOps — segments (research 07 §6.9, §7.6 vector 14)', () => {
     expect(text(ops, { segments: [{ at: 8 }, { at: 4 }, { at: 4 }] })).toBe('(sc, inc) x 2, (sc, inc) x 2, (sc, inc) x 2');
   });
 
-  it('encodeLine passes Line.segments', () => {
-    expect(canonicalCompact(encodeLine({ kind: 'rnd', ops: rnd3, segments: segments.map((s, i) => ({ at: s.at, kind: i % 2 === 0 ? 'end' : 'side' })) }))).toBe(
-      'sc, inc, 7 sc, (sc, inc) x 3, 7 sc, (sc, inc) x 2',
-    );
+  it('ignores malformed segment entries (validateLine reports them as E_SANITY)', () => {
+    const ops = times(6, sc, inc);
+    const junk = [null, 'x', { at: '4' }, { at: Number.NaN }, { at: 4 }] as unknown as EncodeOptions['segments'];
+    expect(text(ops, { segments: junk })).toBe('(sc, inc) x 2, (sc, inc) x 4');
+    expect(text(ops, { segments: 'x' as unknown as EncodeOptions['segments'] })).toBe('(sc, inc) x 6');
+  });
+
+  it('the 120-token limit applies per segment', () => {
+    const half = times(50, sc, inc, sc); // 150 tokens: the fallback when alone
+    expect(text(half)).toBe('sc, (inc, 2 sc) x 49, inc, sc');
+    expect(text([...half, ...half], { segments: [{ at: 150 }] })).toBe('sc, (inc, 2 sc) x 49, inc, sc, sc, (inc, 2 sc) x 49, inc, sc');
+    const short = times(30, sc, inc, sc); // 90 tokens: exact
+    expect(text([...short, ...short], { segments: [{ at: 90 }] })).toBe('(sc, inc, sc) x 30, (sc, inc, sc) x 30');
   });
 });
 
@@ -567,10 +596,40 @@ describe('encodeOps — memo (§2.6.1: LRU of 4 096 entries)', () => {
   it('resetEncodeMemo empties the memo and the vocabulary', () => {
     encodeOps(line(1));
     encodeOps(line(2));
-    expect(encodeMemoStats().size).toBe(2);
-    expect(encodeMemoStats().vocabulary).toBe(3);
+    expect(encodeMemoStats()).toEqual({ size: 2, tokens: 22, hits: 0, misses: 2, vocabulary: 3 });
     resetEncodeMemo();
-    expect(encodeMemoStats()).toEqual({ size: 0, hits: 0, misses: 0, vocabulary: 0 });
+    expect(encodeMemoStats()).toEqual({ size: 0, tokens: 0, hits: 0, misses: 0, vocabulary: 0 });
+  });
+
+  it('also holds at most MEMO_MAX_TOKENS token integers, dropping the least recently used entries', { timeout: 60_000 }, () => {
+    expect(MEMO_MAX_TOKENS).toBe(1 << 20);
+    // Five distinct periodic lines of 250 000 op tokens each (the fallback folds each into one repeat).
+    const long = (g: number): Op[] => {
+      const ops: Op[] = [];
+      while (ops.length < 250_000) ops.push(...times(g, sc), { ...inc });
+      return ops.slice(0, 250_000);
+    };
+    const lines = [2, 3, 4, 5, 6].map(long);
+    for (const ops of lines.slice(0, 4)) encodeOps(ops);
+    expect(encodeMemoStats()).toMatchObject({ size: 4, tokens: 1_000_000 });
+    encodeOps(lines[0]); // the first line becomes the most recently used
+    expect(encodeMemoStats()).toMatchObject({ size: 4, hits: 1 });
+    encodeOps(lines[4]); // 1 250 000 tokens would be too many: the oldest entry (the second line) goes
+    expect(encodeMemoStats()).toMatchObject({ size: 4, tokens: 1_000_000, hits: 1 });
+    encodeOps(lines[0]);
+    expect(encodeMemoStats().hits).toBe(2);
+    encodeOps(lines[1]);
+    expect(encodeMemoStats()).toMatchObject({ hits: 2, misses: 6 });
+  });
+
+  it('does not keep a line longer than MEMO_MAX_TOKENS at all', { timeout: 60_000 }, () => {
+    // Run tokens are (op, count) pairs: 524 289 runs are 1 048 578 token integers.
+    const ops: Op[] = [];
+    for (let r = 0; ops.length < 524_289; r++) ops.push(r % 3 === 2 ? { ...dec } : r % 3 === 1 ? { ...inc } : { ...sc });
+    const items = encodeOps(ops, { mode: 'runs' });
+    expect(encodeMemoStats()).toMatchObject({ size: 0, tokens: 0, misses: 1 });
+    expect(encodeOps(ops, { mode: 'runs' })).toEqual(items);
+    expect(encodeMemoStats()).toMatchObject({ size: 0, hits: 0, misses: 2 });
   });
 });
 

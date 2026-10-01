@@ -7,8 +7,10 @@ import {
   OP_NAMES,
   PROD,
   START_EXEMPT,
+  START_LINE_KINDS,
   US_COMPACT_NAMES,
   consumed,
+  displayOps,
   expand,
   isConsumeExempt,
   isOp,
@@ -74,10 +76,12 @@ describe('CONS / PROD (research 03 §6.0, 07 §7.2)', () => {
     for (const op of [sc, hdc, dc, slst, inc, inc3, dec, dec3, tile('A')]) expect(isOp(op)).toBe(true);
     expect(isOp({ k: 'st', st: 'sc', loop: 'both', color: 'A', into: 'flo2below' })).toBe(true);
     expect(isOp({ k: 'st', st: 'sc', loop: undefined, color: undefined })).toBe(true);
+    expect(isOp({ k: 'dec', n: 2, loop: 'BLO', color: 'B' })).toBe(true);
     for (const bad of [
       null,
       undefined,
       'sc',
+      [],
       {},
       { k: 'st' },
       { k: 'st', st: 'tr' },
@@ -92,6 +96,14 @@ describe('CONS / PROD (research 03 §6.0, 07 §7.2)', () => {
     ]) {
       expect(isOp(bad)).toBe(false);
     }
+  });
+
+  it('isOp refuses a field the frozen type does not have: the kernel could not print it', () => {
+    expect(isOp({ k: 'st', st: 'sc', post: 'front' })).toBe(false);
+    expect(isOp({ k: 'inc', n: 2, into: 'flo2below' })).toBe(false);
+    expect(isOp({ k: 'dec', n: 2, method: 'invdec' })).toBe(false);
+    expect(isOp({ k: 'tile', color: 'A', loop: 'BLO' })).toBe(false);
+    expect(isOp({ k: 'tile', color: 'A', extra: undefined })).toBe(true); // undefined counts as absent
   });
 });
 
@@ -173,6 +185,15 @@ describe('expand', () => {
     expect(expand([{ kind: 'run', op: sc, n: 0 }])).toEqual([]);
   });
 
+  it('copies nested data of an op outside the frozen type, so the caller owns every expanded op', () => {
+    const tagged = Object.freeze({ k: 'st', st: 'sc', meta: Object.freeze({ tags: Object.freeze(['a']) }) }) as unknown as Op;
+    const out = expand([{ kind: 'run', op: tagged, n: 2 }]) as unknown as { meta: { tags: string[] } }[];
+    expect(out).toEqual([tagged, tagged]);
+    expect(out[0].meta).not.toBe(out[1].meta);
+    out[0].meta.tags.push('b');
+    expect(out[1].meta.tags).toEqual(['a']);
+  });
+
   it('itemsConsumed / itemsProduced / itemsOpCount equal the counts of the expanded ops', () => {
     const ops = expand(items);
     expect(itemsConsumed(items)).toBe(consumed(ops));
@@ -201,6 +222,22 @@ describe('line starts (§2.13: MR, foundation, chain-oval, chain-ring and border
     expect(isConsumeExempt(line({ k: 'c2c', start: 'first', end: 'first' }))).toBe(true);
     expect(isConsumeExempt(line({ k: 'c2c', start: 'inc', end: 'inc' }))).toBe(false);
     expect(isConsumeExempt(line({ k: 'c2c', start: 'dec', end: 'dec' }))).toBe(false);
+  });
+
+  it('START_LINE_KINDS: which kinds of line each start can stand on (§2.7.3, §2.7.5, §2.7.6, §2.7.10, §2.10.6, §2.11.3)', () => {
+    expect(START_LINE_KINDS).toEqual({
+      mr: ['rnd'],
+      chainOval: ['rnd'],
+      chainRing: ['rnd'],
+      foundation: ['row'],
+      turn: ['row', 'rnd'],
+      join: ['rnd', 'border'],
+      edge: ['border'],
+      c2c: ['c2c'],
+    });
+    expect(Object.keys(START_LINE_KINDS).sort()).toEqual(Object.keys(START_EXEMPT).sort());
+    expect(Object.isFrozen(START_LINE_KINDS)).toBe(true);
+    for (const kinds of Object.values(START_LINE_KINDS)) expect(Object.isFrozen(kinds)).toBe(true);
   });
 
   it('startCapacity: what a first line works into', () => {
@@ -299,15 +336,15 @@ describe('compact names (§2.10.11, research 07 §7.5)', () => {
     expect(runText({ k: 'st', st: 'dc', loop: 'FLO', into: 'flo2below' }, 3, { hideLoop: true })).toBe('3 dc FLO 2 rows below');
   });
 
-  it('hides the loop or one color on request, and takes other names', () => {
+  it('hides the loop on request and takes other names; a color always prints (displayOps drops the header color)', () => {
     const op: Op = { k: 'st', st: 'sc', loop: 'BLO', color: 'B' };
     expect(tokenText(op, { hideLoop: true })).toBe('sc B');
-    expect(tokenText(op, { hideColor: 'B' })).toBe('sc BLO');
-    expect(tokenText(op, { hideColor: 'A' })).toBe('sc BLO B');
+    expect(tokenText(op)).toBe('sc BLO B');
     const uk = { ...US_COMPACT_NAMES, sc: 'dc', slst: 'ss', sc2tog: 'dc2tog' };
     expect(tokenText(sc, { names: uk })).toBe('dc');
     expect(tokenText(slst, { names: uk })).toBe('ss');
     expect(tokenText({ k: 'dec', n: 2, loop: 'BLO' }, { names: uk })).toBe('dc2tog BLO');
+    expect(tokenText({ k: 'st', st: 'tr' } as unknown as Op)).toBe('?'); // never a crash on a malformed op
   });
 
   it('runText: "N op" = op in each of the next N sts; one op prints bare; tiles always print a count (§2.7.6)', () => {
@@ -319,5 +356,38 @@ describe('compact names (§2.10.11, research 07 §7.5)', () => {
     expect(runText(slst, 1)).toBe('sl st');
     expect(runText(tile('A'), 1)).toBe('1 A');
     expect(runText(tile('B'), 2)).toBe('2 B');
+  });
+});
+
+describe('displayOps: the ops as they are printed (§2.10.11 color header; loop "both" is the default loop)', () => {
+  it('leaves out loop "both" and the color the header names, and nothing else', () => {
+    const both: Op = { k: 'st', st: 'sc', loop: 'both' };
+    expect(displayOps({ ops: [both, colored(sc, 'B'), { k: 'dec', n: 2, loop: 'both', color: 'B' }, colored(sc, 'A')], colorHeader: 'B' })).toStrictEqual([
+      sc,
+      sc,
+      dec,
+      colored(sc, 'A'),
+    ]);
+    // Without a header every color stays; BLO / FLO and `into` always stay.
+    const kept: Op[] = [colored(sc, 'B'), { k: 'st', st: 'sc', loop: 'BLO' }, { k: 'st', st: 'dc', loop: 'FLO', into: 'flo2below' }];
+    expect(displayOps({ ops: kept })).toStrictEqual(kept);
+  });
+
+  it('never changes a count, and never touches a C2C tile (its color is the tile)', () => {
+    const ops = parseBody('(2 sc B, inc B, sc) x 3, dec B');
+    const shown = displayOps({ ops, colorHeader: 'B' });
+    expect([consumed(shown), produced(shown)]).toEqual([consumed(ops), produced(ops)]);
+    expect(displayOps({ ops: [tile('B'), tile('A')], colorHeader: 'B' })).toStrictEqual([tile('B'), tile('A')]);
+  });
+
+  it("returns the line's own array when nothing has to go, and never changes the line", () => {
+    const ops = parseBody('(sc, inc) x 6');
+    expect(displayOps({ ops })).toBe(ops);
+    const otherColor = [colored(sc, 'A'), { k: 'st', st: 'sc', loop: 'BLO' } as Op];
+    expect(displayOps({ ops: otherColor, colorHeader: 'B' })).toBe(otherColor);
+    const mine: Op[] = [{ k: 'st', st: 'sc', loop: 'both', color: 'B' }];
+    const before = JSON.stringify(mine);
+    expect(displayOps({ ops: mine, colorHeader: 'B' })).toStrictEqual([sc]);
+    expect(JSON.stringify(mine)).toBe(before);
   });
 });

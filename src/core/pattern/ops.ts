@@ -51,32 +51,40 @@ export const PROD: Readonly<Record<OpName, number>> = Object.freeze({
   tile: 1,
 });
 
-const STITCHES: ReadonlySet<string> = new Set(['sc', 'hdc', 'dc', 'slst']);
-const LOOPS: ReadonlySet<string> = new Set(['both', 'BLO', 'FLO']);
-
-function isOptionalString(value: unknown): boolean {
-  return value === undefined || typeof value === 'string';
+function isStitch(st: unknown): st is 'sc' | 'hdc' | 'dc' | 'slst' {
+  return st === 'sc' || st === 'hdc' || st === 'dc' || st === 'slst';
 }
 
-/** True when `value` is a well-formed `Op` of the frozen type (every field present and in range). */
+/**
+ * True when `value` is exactly an `Op` of the frozen type: every field it needs, each in range, and no other
+ * field (a field set to `undefined` counts as absent). An op with a field the kernel does not know cannot be
+ * printed faithfully, so it is not an op.
+ */
 export function isOp(value: unknown): value is Op {
-  if (typeof value !== 'object' || value === null) return false;
-  const op = value as { k?: unknown; st?: unknown; n?: unknown; loop?: unknown; color?: unknown; into?: unknown };
-  const loopOk = op.loop === undefined || (typeof op.loop === 'string' && LOOPS.has(op.loop));
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const op = value as Record<string, unknown>;
+  let defined = 0;
+  for (const key in op) if (op[key] !== undefined) defined++;
+  const loop = op.loop;
+  const loopOk = loop === undefined || loop === 'both' || loop === 'BLO' || loop === 'FLO';
+  const color = op.color;
+  const optional = (field: unknown): number => (field === undefined ? 0 : 1);
   switch (op.k) {
     case 'st':
       return (
-        typeof op.st === 'string' &&
-        STITCHES.has(op.st) &&
+        isStitch(op.st) &&
         loopOk &&
-        isOptionalString(op.color) &&
-        (op.into === undefined || op.into === 'flo2below')
+        (color === undefined || typeof color === 'string') &&
+        (op.into === undefined || op.into === 'flo2below') &&
+        defined === 2 + optional(loop) + optional(color) + optional(op.into)
       );
     case 'inc':
     case 'dec':
-      return (op.n === 2 || op.n === 3) && loopOk && isOptionalString(op.color);
+      return (
+        (op.n === 2 || op.n === 3) && loopOk && (color === undefined || typeof color === 'string') && defined === 2 + optional(loop) + optional(color)
+      );
     case 'tile':
-      return typeof op.color === 'string';
+      return typeof color === 'string' && defined === 2;
     default:
       return false;
   }
@@ -86,7 +94,7 @@ export function isOp(value: unknown): value is Op {
 export function opName(op: Op): OpName {
   switch (op.k) {
     case 'st':
-      if (STITCHES.has(op.st)) return op.st;
+      if (isStitch(op.st)) return op.st;
       break;
     case 'inc':
       if (op.n === 2) return 'inc';
@@ -140,11 +148,26 @@ function checkCount(value: number, what: string): void {
   if (!Number.isInteger(value) || value < 0) throw new RangeError(`${what} must be a non-negative integer, got ${value}`);
 }
 
+function cloneData<T>(value: T): T {
+  if (typeof value !== 'object' || value === null) return value;
+  if (Array.isArray(value)) return value.map((item: unknown) => cloneData(item)) as unknown as T;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value)) out[key] = cloneData((value as Record<string, unknown>)[key]);
+  return out as T;
+}
+
+function hasNestedData(op: Op): boolean {
+  for (const value of Object.values(op)) if (typeof value === 'object' && value !== null) return true;
+  return false;
+}
+
 function pushExpanded(items: readonly Item[], out: Op[]): void {
   for (const item of items) {
     if (item.kind === 'run') {
       checkCount(item.n, 'expand: run count');
-      for (let i = 0; i < item.n; i++) out.push({ ...item.op });
+      // Every field of the frozen Op type is a string or a number, so a spread is a full copy.
+      const nested = hasNestedData(item.op);
+      for (let i = 0; i < item.n; i++) out.push(nested ? cloneData(item.op) : { ...item.op });
     } else {
       checkCount(item.times, 'expand: repeat count');
       for (let t = 0; t < item.times; t++) pushExpanded(item.inner, out);
@@ -192,7 +215,7 @@ export type StartKind = LineStart['k'];
 
 /**
  * True for the starts whose line is the first of its piece: there is no previous count, so E_CONSUME does not
- * apply. (A C2C row tagged `first` is exempt too: see `isConsumeExempt`.)
+ * apply. (The first tile of a C2C piece is exempt too: see `isConsumeExempt`.)
  */
 export const START_EXEMPT: Readonly<Record<StartKind, boolean>> = Object.freeze({
   mr: true,
@@ -205,7 +228,27 @@ export const START_EXEMPT: Readonly<Record<StartKind, boolean>> = Object.freeze(
   c2c: false,
 });
 
-/** True when E_CONSUME does not apply to the line: it starts a piece (magic ring, chains, panel edge, first tile). */
+/**
+ * The kinds of line each start can stand on: a magic ring, a chain oval and a chain ring begin rounds; a
+ * foundation chain begins rows; rows and turned rounds (§2.7.5) turn; rounds and border rounds are joined; only
+ * a border is worked into a panel's edge; only C2C rows carry the C2C tag. Any other combination is a malformed
+ * line (E_SANITY).
+ */
+export const START_LINE_KINDS: Readonly<Record<StartKind, readonly Line['kind'][]>> = Object.freeze({
+  mr: Object.freeze(['rnd'] as const),
+  chainOval: Object.freeze(['rnd'] as const),
+  chainRing: Object.freeze(['rnd'] as const),
+  foundation: Object.freeze(['row'] as const),
+  turn: Object.freeze(['row', 'rnd'] as const),
+  join: Object.freeze(['rnd', 'border'] as const),
+  edge: Object.freeze(['border'] as const),
+  c2c: Object.freeze(['c2c'] as const),
+});
+
+/**
+ * True when E_CONSUME does not apply to the line: it starts a piece (magic ring, chains, panel edge, first tile).
+ * It reads the start alone; a start on a kind of line it cannot stand on (START_LINE_KINDS) is E_SANITY.
+ */
 export function isConsumeExempt(line: Pick<Line, 'start'>): boolean {
   const start = line.start;
   if (start === undefined) return false;
@@ -214,12 +257,12 @@ export function isConsumeExempt(line: Pick<Line, 'start'>): boolean {
 }
 
 /**
- * How many places a first-line start offers its ops, i.e. what Σ consumed(ops) should be on that line:
+ * How many places a first-line start offers its ops, i.e. what Σ consumed(ops) is on that line:
  * magic ring `n` (its n stitches); foundation `chains − firstInto + 1` (sc on `ch W+1` from the 2nd ch: W);
  * chain oval `2·chains − 3` loops (research 07 §6.9: ch 10 → 17 loops → 20 sts); chain ring `chains`.
  * `null` when the start has no such number: the panel edge of a border, and the starts of lines that follow
- * another line (turn, join, C2C). The kernel does not enforce it (the lines are E_CONSUME-exempt); T2's
- * E_FOUNDATION and T4's E_START use it.
+ * another line (turn, join, C2C). `validateLine` reports a first line that does not fit its start as E_START
+ * (rounds) or E_FOUNDATION (rows).
  */
 export function startCapacity(start: LineStart | undefined): number | null {
   if (start === undefined) return null;
@@ -258,6 +301,31 @@ export function lineProduced(line: Pick<Line, 'ops'>): number {
   return produced(line.ops);
 }
 
+/**
+ * The ops of a line as they are printed: `loop: 'both'` is the default loop, and a color that the line's
+ * header already names (`Rnd 9 (B)`) is not repeated on its stitches, so both are left out. Ops that print the
+ * same text then are the same token for the encoder: 18 `sc` followed by 18 `sc` with `loop: 'both'` is one run
+ * of 36. Counts never change. Returns the line's own array when nothing had to be left out.
+ */
+export function displayOps(line: Pick<Line, 'ops' | 'colorHeader'>): readonly Op[] {
+  const ops = line.ops;
+  const header = line.colorHeader;
+  let out: Op[] | null = null;
+  for (let i = 0; i < ops.length; i++) {
+    const op = ops[i];
+    if (op.k !== 'tile' && (op.loop === 'both' || (header !== undefined && op.color === header))) {
+      out ??= ops.slice(0, i);
+      const copy = { ...op };
+      if (copy.loop === 'both') delete copy.loop;
+      if (header !== undefined && copy.color === header) delete copy.color;
+      out.push(copy);
+    } else if (out !== null) {
+      out.push(op);
+    }
+  }
+  return out ?? ops;
+}
+
 // ---- Compact names of the ops (§2.10.11, research 07 §7.5). The encoder measures candidate encodings with
 //      these, and the compact renderer prints them.
 
@@ -293,13 +361,26 @@ export interface TokenTextOptions {
   names?: Readonly<CompactNames>;
   /** Leave out ` BLO` / ` FLO`: the whole line carries the loop as a prefix (`BLO (2 sc, sc2tog) x 6`). */
   hideLoop?: boolean;
-  /** Leave out the color tag of ops in this color: the line carries it in its header (`Rnd 9 (B): …`). */
-  hideColor?: string;
 }
 
 function loopOf(op: Op): 'BLO' | 'FLO' | undefined {
   if (op.k === 'tile') return undefined;
   return op.loop === 'BLO' || op.loop === 'FLO' ? op.loop : undefined;
+}
+
+function stitchWord(st: unknown, names: Readonly<CompactNames>): string {
+  switch (st) {
+    case 'sc':
+      return names.sc;
+    case 'hdc':
+      return names.hdc;
+    case 'dc':
+      return names.dc;
+    case 'slst':
+      return names.slst;
+    default:
+      return '?';
+  }
 }
 
 /**
@@ -313,7 +394,7 @@ export function tokenText(op: Op, o: TokenTextOptions = {}): string {
   let text: string;
   switch (op.k) {
     case 'st':
-      text = names[op.st] ?? '?';
+      text = stitchWord(op.st, names);
       break;
     case 'inc':
       text = op.n === 3 ? names.inc3 : names.inc;
@@ -328,7 +409,7 @@ export function tokenText(op: Op, o: TokenTextOptions = {}): string {
   }
   if (op.k === 'st' && op.into === 'flo2below') text += ' FLO 2 rows below';
   else if (loop !== undefined && o.hideLoop !== true) text += ` ${loop}`;
-  if (op.color !== undefined && op.color !== o.hideColor) text += ` ${op.color}`;
+  if (op.color !== undefined) text += ` ${op.color}`;
   return text;
 }
 

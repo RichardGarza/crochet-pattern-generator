@@ -197,23 +197,30 @@ describe('validateLine stays silent on every golden line', () => {
 
   it('DESIGN §2.11.3: joined rounds inside a spiral piece — the sl st and ch 1 are not counted', () => {
     const lines: Line[] = [
-      rnd(6, times(36, sc), 36, { colorHeader: 'A' }),
+      ...spiralLines([6, 12, 18, 24, 30, 36]),
       rnd(7, times(36, sc), 36, { colorHeader: 'A', join: { changeTo: 'B' } }),
       rnd(8, times(36, sc), 36, { colorHeader: 'B', start: { k: 'join' }, join: { changeTo: 'A', drop: 'carry' } }),
       rnd(9, placeRound(36, 42, 0), 36, { start: { k: 'join' } }),
     ];
-    expect(lines[3].ops[0]).toEqual(sc); // a shaped joined round starts with a plain sc (§2.10.8)
+    expect(lines[8].ops[0]).toEqual(sc); // a shaped joined round starts with a plain sc (§2.10.8)
     expect(validateLines(lines, { palette: ['A', 'B'] })).toEqual([]);
+    // An excerpt of a piece is checked line by line, each against the one before.
+    for (let i = 7; i < lines.length; i++) expect(validateLine(lines[i], { prev: lines[i - 1], palette: ['A', 'B'] })).toEqual([]);
   });
 
-  it('DESIGN §2.7.10: border rounds — Rnd 1 on the panel edge, later rounds joined, +8 each', () => {
-    // G22: W = 5, S_side = 3 → c1 = 20; Rnd 2 = 28 with an inc3 in each corner center stitch.
+  it('DESIGN §2.7.10 (G22 piece): the G9 rows, then border Rnd 1 on the panel edge and Rnd 2 joined, +8', () => {
+    // W = 5, S_side = 3 → c1 = 20; Rnd 2 = 28 with an inc3 in each corner center stitch.
+    const turn: LineStart = { k: 'turn', chains: 1 };
+    const rows: Line[] = [
+      row(1, parseBody('2 sc A, sc B, 2 sc A'), null, { side: 'RS', arrow: '←', start: { k: 'foundation', chains: 6, firstInto: 2 } }),
+      row(2, parseBody('sc A, 3 sc B, sc A'), 5, { side: 'WS', arrow: '→', start: turn }),
+      row(3, parseBody('4 sc A, sc B'), 5, { side: 'RS', arrow: '←', start: turn }),
+    ];
     const rnd1: Line = { kind: 'border', n: 1, start: { k: 'edge' }, ops: [inc3, sc, inc3, ...times(3, sc), inc3, sc, inc3, ...times(3, sc)], prevCount: null, stated: 20, join: {} };
     const corner = [sc, inc3, sc];
     const rnd2: Line = { kind: 'border', n: 2, start: { k: 'join' }, ops: [...corner, sc, ...corner, ...times(3, sc), ...corner, sc, ...corner, ...times(3, sc)], prevCount: 20, stated: 28, join: {} };
     expect([consumed(rnd2.ops), produced(rnd2.ops)]).toEqual([20, 28]);
-    const lastRow = row(3, parseBody('4 sc A, sc B'), 5, { start: { k: 'turn', chains: 1 } });
-    expect(validateLines([lastRow, rnd1, rnd2])).toEqual([]);
+    expect(validateLines([...rows, rnd1, rnd2], { palette: ['A', 'B'] })).toEqual([]);
   });
 
   it('a flat appliqué (§2.10.9) and an hdc graph (§2.7.7)', () => {
@@ -337,6 +344,88 @@ describe('E_CONSUME exemptions (§2.13: MR, foundation, chain-oval, chain-ring a
   });
 });
 
+describe('E_START / E_FOUNDATION, the single-line part: a first line must fit what it starts from', () => {
+  it('a magic ring of n takes n stitches, and only stitches (§2.10.6 "6 sc in MR")', () => {
+    expect(validateLine(rnd(1, times(6, hdc), null, { start: { k: 'mr', n: 6 } }))).toEqual([]);
+    const issues = validateLine(rnd(1, times(7, sc), null, { start: { k: 'mr', n: 6 } }));
+    expect(codes(issues)).toEqual(['E_START']);
+    expect(issues[0].message).toBe('Rnd 1: a magic ring of 6 takes 6 stitches, not 7 (7 ≠ 6)');
+    const ringOfIncs = validateLine(rnd(1, times(3, inc), null, { start: { k: 'mr', n: 3 } }));
+    expect(codes(ringOfIncs)).toEqual(['E_START']);
+    expect(ringOfIncs[0].message).toBe('Rnd 1: only plain stitches can be worked into a magic ring');
+  });
+
+  it('ch N of an oval offers 2N − 3 loops (research 07 §6.9, vector 13: ch 10 → 17 loops → 20 sts)', () => {
+    const oval = (chains: number, ops: Op[]): Line => rnd(1, ops, null, { start: { k: 'chainOval', chains } });
+    expect(validateLine(oval(10, [...times(8, sc), inc3, ...times(7, sc), inc]))).toEqual([]);
+    expect(validateLine(oval(10, [...times(8, hdc), inc3, ...times(7, hdc), inc]))).toEqual([]); // printed as a list
+    const issues = validateLine(oval(10, [...times(7, sc), inc3, ...times(6, sc), inc]));
+    expect(codes(issues)).toEqual(['E_START']);
+    expect(issues[0].message).toBe('Rnd 1: an oval on ch 10 offers 17 loops, but the round works into 15 (15 ≠ 17)');
+  });
+
+  it('a chain ring of N is worked into its N chains (§2.7.5, §2.10.4 torus)', () => {
+    const ring = (ops: Op[]): Line => rnd(1, ops, null, { start: { k: 'chainRing', chains: 24 }, join: {} });
+    expect(validateLine(ring(times(24, sc)))).toEqual([]);
+    expect(validateLine(ring([...times(20, sc), ...times(4, inc)]))).toEqual([]); // a torus grows in Rnd 1
+    const issues = validateLine(ring(times(26, sc)));
+    expect(codes(issues)).toEqual(['E_START']);
+    expect(issues[0].message).toBe('Rnd 1: a ring of ch 24 offers 24 chains, but the round works into 26 (26 ≠ 24)');
+  });
+
+  it('row 1 works into every chain from the first one it starts in (sc: ch W + 1 from the 2nd; hdc: ch W + 2 from the 3rd)', () => {
+    const first = (chains: number, firstInto: number, ops: Op[]): Line => row(1, ops, null, { start: { k: 'foundation', chains, firstInto } });
+    expect(validateLine(first(6, 2, times(5, sc)))).toEqual([]);
+    expect(validateLine(first(7, 3, times(5, hdc)))).toEqual([]);
+    const issues = validateLine(first(7, 2, times(5, sc)));
+    expect(codes(issues)).toEqual(['E_FOUNDATION']);
+    expect(issues[0].message).toBe('Row 1: ch 7 worked from the 2nd ch offers 6 chains, but the row works into 5 (5 ≠ 6)');
+    expect(codes(validateLine(first(6, 3, times(5, sc))))).toEqual(['E_FOUNDATION']);
+  });
+
+  it('the starts with no number of their own are not checked here (border edge: E_BORDER, T2)', () => {
+    const edge: Line = { kind: 'border', n: 1, start: { k: 'edge' }, ops: times(4, inc3, ...times(9, sc)), prevCount: null, stated: 48, join: {} };
+    expect(validateLine(edge)).toEqual([]);
+  });
+});
+
+describe('validateLines: the shape of a whole piece', () => {
+  it('the first line must start from something (E_START)', () => {
+    const lines = spiralLines([6, 12, 18]).slice(1); // Rnd 1 lost
+    const issues = validateLines(lines, { piece: 'head' });
+    expect(codes(issues)).toEqual(['E_START']);
+    expect(issues[0]).toEqual({
+      code: 'E_START',
+      severity: 'error',
+      message: 'Rnd 2: is the first line of its piece and needs something to start from (a magic ring, a chain, a panel edge or a first C2C tile)',
+      where: { piece: 'head', line: 2 },
+    });
+    // With no previous count either, E_CONSUME says so too.
+    expect(codes(validateLines([rnd(1, times(6, sc), null)]))).toEqual(['E_CONSUME', 'E_START']);
+  });
+
+  it('no line in the middle starts a new piece, except a border worked around the panel', () => {
+    const sphere = spiralLines([6, 12, 18]);
+    const twoPieces = [...sphere, ...spiralLines([6, 12]).map((line) => ({ ...line, n: line.n + 3 }))];
+    const issues = validateLines(twoPieces);
+    expect(codes(issues)).toEqual(['E_START']);
+    expect(issues[0].message).toBe('Rnd 4: starts a new piece in the middle of this one');
+    const c2cAgain: Line = { kind: 'c2c', n: 2, start: { k: 'c2c', start: 'first', end: 'first' }, ops: [tile('A')], prevCount: null, stated: 1 };
+    const first: Line = { ...c2cAgain, n: 1 };
+    expect(codes(validateLines([first, c2cAgain]))).toEqual(['E_START']);
+  });
+
+  it('an E_SANITY line is reported alone; the lines after it are still checked', () => {
+    const lines = spiralLines([6, 12, 18, 24]);
+    lines[2] = { ...lines[2], stated: 0 };
+    lines[3] = { ...lines[3], stated: 25 };
+    // Rnd 4 is not compared with a malformed Rnd 3, only with its own prevCount.
+    expect(codes(validateLines(lines))).toEqual(['E_SANITY', 'E_PRODUCE']);
+    // A malformed first line gets no E_START on top.
+    expect(codes(validateLines([{ ...lines[0], start: { k: 'mr', n: 0 } }, lines[1]]))).toEqual(['E_SANITY']);
+  });
+});
+
 describe('E_PRODUCE', () => {
   it('fires when the stated count is not what the ops make', () => {
     const issues = validateLine(rnd(3, parseBody('(sc, inc) x 6'), 12, { stated: 19 }));
@@ -408,33 +497,43 @@ describe('E_SANITY', () => {
   const good = rnd(3, parseBody('(sc, inc) x 6'), 12);
   const broken = (change: Partial<Record<keyof Line, unknown>>): Issue[] => validateLine({ ...good, ...change } as Line);
 
-  it('numbers must be whole and ≥ 1', () => {
+  it('numbers must be whole and ≥ 1; a count below 20 000 (R15: < 20,000 sts per piece)', () => {
     for (const change of [
       { n: 0 },
       { n: 1.5 },
       { n: Number.NaN },
-      { nEnd: 3 },
       { nEnd: 2 },
       { nEnd: 4.5 },
+      { nEnd: 0 },
       { stated: 0 },
       { stated: -18 },
       { stated: 18.5 },
       { stated: Number.NaN },
       { stated: '18' },
+      { stated: 20000 },
       { prevCount: 0 },
       { prevCount: 11.5 },
       { prevCount: Number.POSITIVE_INFINITY },
+      { prevCount: 20000 },
+      { prevCount: undefined },
     ]) {
       const issues = broken(change);
       expect([change, codes(issues)]).toEqual([change, ['E_SANITY']]);
     }
+    expect(codes(broken({ stated: 19999 }))).toEqual(['E_PRODUCE', 'E_INC_INFEASIBLE']);
   });
 
-  it('ops must be stitches of the frozen Op type', () => {
+  it('a range that ends where it begins is one line (the renderer prints "Rnd 3"); one that ends before is not', () => {
+    expect(broken({ nEnd: 3 })).toEqual([]);
+    expect(broken({ nEnd: 2 })[0].message).toBe('Rnd 3: a folded range cannot end before it begins, got 3–2');
+  });
+
+  it('ops must be stitches of the frozen Op type, with no field it does not have', () => {
     expect(codes(broken({ ops: [sc, { k: 'skip', n: 2 }] }))).toEqual(['E_SANITY']);
     expect(codes(broken({ ops: [sc, { k: 'inc', n: 4 }] }))).toEqual(['E_SANITY']);
     expect(codes(broken({ ops: [null] }))).toEqual(['E_SANITY']);
     expect(codes(broken({ ops: 'sc, inc' }))).toEqual(['E_SANITY']);
+    expect(codes(broken({ ops: [sc, { k: 'st', st: 'sc', post: 'front' }] }))).toEqual(['E_SANITY']);
     expect(broken({ ops: [sc, { k: 'mr', n: 6 }] })[0].message).toBe('Rnd 3: op 2 is not a stitch of the pattern language: {"k":"mr","n":6}');
     expect(codes(broken({ kind: 'round' }))).toEqual(['E_SANITY']);
   });
@@ -443,35 +542,118 @@ describe('E_SANITY', () => {
     const starts: unknown[] = [
       { k: 'mr', n: 0 },
       { k: 'mr', n: 5.5 },
-      { k: 'foundation', chains: 6, firstInto: 0 },
-      { k: 'foundation', chains: 6, firstInto: 7 },
-      { k: 'foundation', chains: 0, firstInto: 1 },
       { k: 'turn', chains: 0 },
       { k: 'chainRing', chains: -4 },
       { k: 'chainOval', chains: 2 },
-      { k: 'c2c', start: 'inc', end: 'up' },
       { k: 'ring' },
+      null,
+      'mr',
     ];
     for (const start of starts) expect([start, codes(broken({ start }))]).toEqual([start, ['E_SANITY']]);
-    expect(broken({ start: { k: 'foundation', chains: 6, firstInto: 2 }, prevCount: null })).toEqual([]);
+    const firstRow = row(1, times(5, sc), null);
+    for (const start of [
+      { k: 'foundation', chains: 6, firstInto: 0 },
+      { k: 'foundation', chains: 6, firstInto: 7 },
+      { k: 'foundation', chains: 0, firstInto: 1 },
+    ]) {
+      expect([start, codes(validateLine({ ...firstRow, start } as Line))]).toEqual([start, ['E_SANITY']]);
+    }
+    expect(validateLine({ ...firstRow, start: { k: 'foundation', chains: 6, firstInto: 2 } })).toEqual([]);
   });
 
-  it('segments must be increasing op indexes inside the line', () => {
+  it('a start stands only on the kinds of line it can begin (START_LINE_KINDS)', () => {
+    const wrong: [Line['kind'], LineStart][] = [
+      ['row', { k: 'mr', n: 6 }],
+      ['rnd', { k: 'foundation', chains: 13, firstInto: 2 }],
+      ['row', { k: 'chainOval', chains: 10 }],
+      ['border', { k: 'chainRing', chains: 12 }],
+      ['rnd', { k: 'edge' }],
+      ['row', { k: 'join' }],
+      ['border', { k: 'turn', chains: 1 }],
+      ['rnd', { k: 'c2c', start: 'inc', end: 'inc' }],
+    ];
+    for (const [kind, start] of wrong) {
+      const issues = broken({ kind, start });
+      expect([kind, start.k, codes(issues)]).toEqual([kind, start.k, ['E_SANITY']]);
+      expect(issues[0].message).toContain(`a "${start.k}" start cannot stand on a line of kind "${kind}"`);
+    }
+    expect(broken({ start: { k: 'turn', chains: 1 } })).toEqual([]); // turned rounds (§2.7.5)
+    expect(broken({ start: { k: 'join' } })).toEqual([]);
+  });
+
+  it('C2C rows: tiles only, in C2C rows only, with a start tag; "first" marks the first tile at both ends', () => {
+    const first: Line = { kind: 'c2c', n: 1, start: { k: 'c2c', start: 'first', end: 'first' }, ops: [tile('A')], prevCount: null, stated: 1 };
+    expect(validateLine(first)).toEqual([]);
+    expect(codes(validateLine({ ...first, start: { k: 'c2c', start: 'first', end: 'inc' } }))).toEqual(['E_SANITY']);
+    expect(codes(validateLine({ ...first, start: { k: 'c2c', start: 'dec', end: 'first' }, prevCount: 1 }))).toEqual(['E_SANITY']);
+    expect(codes(validateLine({ ...first, start: undefined }))).toEqual(['E_SANITY']);
+    expect(codes(validateLine({ ...first, ops: [tile('A'), sc], stated: 2 }))).toEqual(['E_SANITY']);
+    expect(codes(broken({ ops: [...parseBody('(sc, inc) x 5, sc'), tile('A')] }))).toEqual(['E_SANITY']);
+  });
+
+  it('the line that starts a piece cannot be folded with the lines after it', () => {
+    const ring = rnd(1, times(6, sc), null, { start: { k: 'mr', n: 6 }, nEnd: 2 });
+    expect(codes(validateLine(ring))).toEqual(['E_SANITY']);
+    expect(validateLine({ ...ring, nEnd: 1 })).toEqual([]);
+  });
+
+  it('segments are op indexes in order, inside the line or at its end (an empty segment is allowed)', () => {
     expect(broken({ segments: [{ at: 0, kind: 'end' }, { at: 4, kind: 'side' }, { at: 11, kind: 'end' }] })).toEqual([]);
+    expect(broken({ segments: [{ at: 0, kind: 'end' }, { at: 12, kind: 'side' }] })).toEqual([]);
+    expect(broken({ segments: [{ at: 4, kind: 'end' }, { at: 4, kind: 'side' }] })).toEqual([]);
+    expect(broken({ segments: [] })).toEqual([]);
     for (const segments of [
-      [{ at: 0, kind: 'end' }, { at: 12, kind: 'side' }],
-      [{ at: 4, kind: 'end' }, { at: 4, kind: 'side' }],
+      [{ at: 0, kind: 'end' }, { at: 13, kind: 'side' }],
       [{ at: 6, kind: 'end' }, { at: 2, kind: 'side' }],
       [{ at: -1, kind: 'end' }],
       [{ at: 2.5, kind: 'end' }],
+      [{ at: 2, kind: 'middle' }],
+      [{ at: '2', kind: 'end' }],
+      [null],
+      'end',
     ]) {
-      expect(codes(broken({ segments }))).toEqual(['E_SANITY']);
+      expect([segments, codes(broken({ segments }))]).toEqual([segments, ['E_SANITY']]);
     }
+  });
+
+  it('the other fields must have their frozen types', () => {
+    for (const change of [
+      { side: 'front' },
+      { arrow: '^' },
+      { colorHeader: 2 },
+      { join: 'yes' },
+      { join: { changeTo: 4 } },
+      { join: { drop: 'keep' } },
+      { cues: [{ kind: 'eyes' }] },
+      { cues: [{ kind: 'sound', text: 'x' }] },
+      { cues: 'carry B' },
+      { notes: ['ok', 3] },
+    ]) {
+      expect([change, codes(broken(change))]).toEqual([change, ['E_SANITY']]);
+    }
+    expect(broken({ side: 'WS', arrow: '↗', colorHeader: 'B', join: { changeTo: 'A', drop: 'cut' }, cues: [{ kind: 'note', text: 'x' }], notes: ['y'] })).toEqual([]);
   });
 
   it('reports every problem, and nothing but E_SANITY', () => {
     const issues = broken({ n: 0, stated: 0, ops: [{ k: 'x' }] });
     expect(codes(issues)).toEqual(['E_SANITY', 'E_SANITY', 'E_SANITY']);
+  });
+
+  it('never throws: anything that is not a sound line is reported', () => {
+    const cycle: Record<string, unknown> = { kind: 'rnd' };
+    cycle.self = cycle;
+    for (const value of [null, undefined, 7, 'Rnd 3: (sc, inc) x 6 (18)', [], {}, cycle, { ...good, ops: [{ k: 'st', st: 'sc', extra: 1n }] }]) {
+      let issues: Issue[] = [];
+      expect(() => {
+        issues = validateLine(value as unknown as Line);
+      }).not.toThrow();
+      expect(issues.length).toBeGreaterThan(0);
+      expect(issues.every((issue) => issue.code === 'E_SANITY' && Object.isFrozen(issue))).toBe(true);
+    }
+    expect(codes(validateLine(null as unknown as Line))).toEqual(['E_SANITY']);
+    expect(validateLine(good, null)).toEqual([]);
+    expect(codes(validateLines('lines' as unknown as Line[]))).toEqual(['E_SANITY']);
+    expect(validateLines([], null)).toEqual([]);
   });
 });
 
