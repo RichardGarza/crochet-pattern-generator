@@ -2,7 +2,7 @@
 // Its `<script type="__bundler/template">` body is a JSON string literal holding the whole page (every `</` written
 // `<\/` or `</`), and `<script type="__bundler/manifest">` maps uuids to base64 assets, gzipped when
 // `compressed`. No DOM, no DecompressionStream: `JSON.parse` and fflate.
-import { gunzipSync } from 'fflate';
+import { inflateCapped } from './archive';
 import { IMPORT_LIMITS, isPlainObject } from './common';
 import { FORBIDDEN_KEYS } from './text';
 
@@ -69,7 +69,12 @@ export function decodeBundlerAssets(body: string): { assets: BundlerAsset[]; err
           errors.push(`bundled asset ${uuid} (${mime}) is too large to unpack (${size} bytes): skipped`);
           continue;
         }
-        bytes = gunzipSync(bytes, { out: new Uint8Array(size) });
+        const r = inflateCapped(bytes, size, 'gzip');
+        if (r.overflow) {
+          errors.push(`bundled asset ${uuid} (${mime}) unpacks to more than it says: skipped`);
+          continue;
+        }
+        bytes = r.bytes;
       }
       if (bytes.length > MAX_ASSET_BYTES || total + bytes.length > IMPORT_LIMITS.maxUncompressedBytes) {
         errors.push(`bundled asset ${uuid} (${mime}) is too large: skipped`);

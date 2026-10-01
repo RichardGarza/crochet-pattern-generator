@@ -50,22 +50,26 @@ describe('other inputs', HEAVY, () => {
     expect(stringifyModel(r.model as CrochetModelV1)).toBe(CANONICAL_TEDDY);
   });
 
-  it('the captured GLB (no spec inside), OBJ, MTL, STL, PLY, PDF and .tar.gz: a clear "not available yet"', async () => {
-    const inputs: ImportInput[] = [
-      fixtureInput('amigurumi-teddy-bear.glb'),
-      fixtureInput('amigurumi-teddy-bear.mtl'),
-      fileInput('bear.obj', 'o head\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n'),
-      fileInput('bear.stl', 'solid bear\nfacet normal 0 0 1\nendfacet\nendsolid'),
-      fileInput('bear.ply', 'ply\nformat ascii 1.0\n'),
-      fileInput('bear.pdf', '%PDF-1.7\n'),
-      fixtureInput('amigurumi-teddy-bear.obj.gz'),
+  it('geometry files without a spec go to the geometry path (T7.2); broken or lone ones say what to drop', async () => {
+    const cases: [ImportInput, boolean, string][] = [
+      [fixtureInput('amigurumi-teddy-bear.glb'), true, 'glb'],
+      [fixtureInput('amigurumi-teddy-bear.obj.gz'), true, 'obj'],
+      [fileInput('bear.obj', 'o head\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n'), true, 'obj'],
+      [fixtureInput('amigurumi-teddy-bear.mtl'), false, 'E_IMPORT_NO_MODEL'],
+      [fileInput('bear.stl', 'solid bear\nfacet normal 0 0 1\nendfacet\nendsolid'), false, 'E_IMPORT_PARSE'],
+      [fileInput('bear.pdf', '%PDF-1.7\n'), false, 'E_IMPORT_UNSUPPORTED'],
     ];
-    for (const input of inputs) {
+    for (const [input, ok, what] of cases) {
+      const name = input.kind === 'file' ? input.name : '';
       const r = await importInputs([input]);
-      expect(r.ok, input.kind === 'file' ? input.name : '').toBe(false);
-      expect(r.warnings[0].code).toBe('E_IMPORT_UNSUPPORTED');
+      expect(r.ok, name).toBe(ok);
+      if (ok) expect(r.carrier, name).toBe(what);
+      else {
+        expect(r.warnings[0].code, name).toBe(what);
+        expect(r.dialect, name).toBe('none');
+      }
     }
-  });
+  }, 60_000);
 
   it('a .json that holds a chat reply, and a .md chat export, still work', async () => {
     const chat = `Here you go\n\n\`\`\`json\n${OBSERVED_JSON}\n\`\`\``;

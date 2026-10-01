@@ -335,7 +335,7 @@ describe('unknown keys and ids (§3.7.6)', HEAVY, () => {
     expect(r.ok).toBe(true);
     const armR = byId(r.model).arm_r;
     expect(armR).toMatchObject({ mirrorOf: 'arm_l', label: 'Right Arm', position: [-2, 3.578905, 0.55], rotationDeg: [-28, 0, -22] });
-    expect(r.repairs.find((x) => x.part === 'arm_r')?.data).toEqual({ mirrorOf: 'arm_l', synthesized: true });
+    expect(r.repairs.find((x) => x.part === 'arm_r' && x.code === 'part-added')?.data).toEqual({ mirrorOf: 'arm_l' });
   });
 });
 
@@ -376,6 +376,12 @@ describe('dims, features and mirrors (§3.7.6)', HEAVY, () => {
     expect(r.ok).toBe(true);
     expect(byId(r.model).eye_r.mirrorOf).toBe('eye_l');
     expect(byId(r.model).tail.mirrorOf).toBeUndefined();
+    // both broken links get a `mirror-removed` chip; eye_r's real twin is then found again (`mirror-inferred`)
+    expect(r.repairs.filter((x) => x.code === 'mirror-removed').map((x) => [x.part, x.data])).toEqual([
+      ['eye_r', { mirrorOf: 'muzzle' }],
+      ['tail', { mirrorOf: 'ghost' }],
+    ]);
+    expect(r.repairs.some((x) => x.code === 'mirror-inferred' && x.part === 'eye_r')).toBe(true);
   });
 
   it('limits: more than 60 parts keeps 60; long text is cut', async () => {
@@ -429,6 +435,7 @@ describe('aliases and odd shapes (§3.5.2)', HEAVY, () => {
     const r = await run(one({ type: 'blob', dims: { w: 1, h: 0.8, d: 0.6 } }));
     expect(byId(r.model).thing).toMatchObject({ type: 'ellipsoid', dims: { rx: 0.5, ry: 0.4, rz: 0.3 } });
     expect(r.warnings.find((w) => w.code === 'W_IMPORT_TYPE')?.message).toMatch(/blob/);
+    expect(r.repairs.find((x) => x.code === 'type-aliased')).toMatchObject({ part: 'thing', data: { from: 'blob', to: 'ellipsoid' } });
   });
 
   it('a Z-up spec is turned upright; a flat-based model lying on its back is only offered the turn', async () => {

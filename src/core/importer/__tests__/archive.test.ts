@@ -114,13 +114,13 @@ describe('archive security and limits (§3.7.6)', HEAVY, () => {
     expect(r.warnings.some((w) => w.code === 'W_ARCHIVE_ENTRY' && /100×/.test(w.message))).toBe(true);
   });
 
-  it('an entry that lies about its size cannot grow past the declared size', () => {
+  it('an entry that lies about its size is refused once it passes the declared size (never inflated further)', () => {
     const z = makeZip({ 'a.html': ARCHIVE_PAGE });
     const dv = new DataView(z.buffer);
     const cd = dv.getUint32(z.length - 22 + 16, true);
     dv.setUint32(cd + 24, 100, true);
     const [e] = readZipDirectory(z);
-    expect(zipEntryBytes(z, e).length).toBe(100);
+    expect(() => zipEntryBytes(z, e)).toThrow(/more than its declared size/);
   });
 
   it('input over 100 MB: refused', async () => {
@@ -140,7 +140,9 @@ describe('archive security and limits (§3.7.6)', HEAVY, () => {
     const r = await importInputs([fileInput('a.zip', makeZip({ 'crochet-model.json': hostile, 'page.html': ARCHIVE_PAGE }))]);
     expect(r.ok).toBe(true);
     expect(stringifyModel(r.model as CrochetModelV1)).toBe(CANONICAL_TEDDY);
-    expect(r.warnings.some((w) => w.code === 'E_IMPORT_UNSAFE')).toBe(true);
+    // the import succeeded, so the dropped side file is a warning (one code, one severity: §2.13)
+    expect(r.warnings.find((w) => w.code === 'W_IMPORT_CANDIDATE')?.message).toMatch(/crochet-model.json holds the key/);
+    expect(r.warnings.some((w) => w.severity === 'error')).toBe(false);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 

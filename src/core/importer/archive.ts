@@ -1,8 +1,9 @@
 // Track T7 — archives (DESIGN.md §3.7.2, limits of §3.7.6): a small ZIP central-directory reader with the
 // security limits, entry extraction with fflate (each entry inflated into a buffer of its declared size, as fflate's
-// own `unzipSync` does, so a lying header cannot grow memory), path hygiene, and the choice among spec candidates
-// with the "versions" chip.
-import { inflateSync } from 'fflate';
+// own `unzipSync` does, so a lying header cannot grow memory), a ustar reader for `.tar.gz` handoff bundles (the
+// gzip inflated into a buffer of the size its trailer declares), path hygiene, and the choice among spec
+// candidates with the "versions" chip.
+import { Gunzip, Inflate } from 'fflate';
 import type { CrochetModelV1 } from '../../types/model';
 import type { Repair, SpecCandidate } from '../../types/importer';
 import { IMPORT_CODES, IMPORT_LIMITS, ImportFailure, issue } from './common';
@@ -122,8 +123,178 @@ export function zipEntryBytes(bytes: Uint8Array, entry: ZipEntry): Uint8Array {
     fail(`the archive entry "${entry.name}" would unpack to more than ${IMPORT_LIMITS.maxEntryRatio}× its packed size`, IMPORT_CODES.tooLarge);
   }
   if (entry.method === 0) return data.slice(0, entry.size);
-  if (entry.method === 8) return inflateSync(data, { out: new Uint8Array(entry.size) });
+  if (entry.method === 8) {
+    let r: { bytes: Uint8Array; overflow: boolean };
+    try {
+      r = inflateCapped(data, entry.size, 'deflate');
+    } catch (error) {
+      return fail(`the archive entry "${entry.name}" is damaged (${(error as Error).message})`);
+    }
+    if (r.overflow) fail(`the archive entry "${entry.name}" unpacks to more than its declared size (damaged or hostile)`, IMPORT_CODES.tooLarge);
+    return r.bytes;
+  }
   return fail(`the archive entry "${entry.name}" uses a compression this app does not read (method ${entry.method})`, IMPORT_CODES.unsupported);
+}
+
+// ---- gzip and tar (§3.7.2: `1F 8B`, then `ustar` at offset 257)
+
+/** The size a gzip stream declares in its trailer (ISIZE, mod 2³²). */
+export function gzipDeclaredSize(bytes: Uint8Array): number {
+  const n = bytes.length;
+  return n < 18 ? 0 : u32(bytes, n - 4);
+}
+
+/**
+ * A gzip stream inflated into a buffer of the size its trailer declares, stopping as soon as the stream gives
+ * more (a lying trailer is refused without inflating the rest). Throws an `ImportFailure` above the 300 MB limit or above 100:1 (with a 16 MB
+ * floor: a small tar of text and zero padding compresses far better than 100:1).
+ */
+export function gunzipLimited(bytes: Uint8Array): Uint8Array {
+  const size = gzipDeclaredSize(bytes);
+  if (size > IMPORT_LIMITS.maxUncompressedBytes) fail(`the compressed file unpacks to more than ${IMPORT_LIMITS.maxUncompressedBytes / 2 ** 20} MB`, IMPORT_CODES.tooLarge);
+  if (size > Math.max(16 * 2 ** 20, IMPORT_LIMITS.maxEntryRatio * bytes.length)) {
+    fail(`the compressed file would unpack to more than ${IMPORT_LIMITS.maxEntryRatio}× its size`, IMPORT_CODES.tooLarge);
+  }
+  let r: { bytes: Uint8Array; overflow: boolean };
+  try {
+    r = inflateCapped(bytes, size, 'gzip');
+  } catch (error) {
+    return fail(`the compressed file is damaged (${(error as Error).message})`);
+  }
+  // a trailer that claims less than the stream holds: never inflate past it
+  if (r.overflow) fail('the compressed file holds more than its trailer says (damaged or hostile)', IMPORT_CODES.tooLarge);
+  return r.bytes;
+}
+
+/** True when the bytes are a ustar archive (`ustar` at offset 257 of the first header). */
+export function isTar(bytes: Uint8Array): boolean {
+  return bytes.length >= 512 && bytes[257] === 0x75 && bytes[258] === 0x73 && bytes[259] === 0x74 && bytes[260] === 0x61 && bytes[261] === 0x72;
+}
+
+export interface TarEntry {
+  name: string;
+  size: number;
+  /** ms since 1970 (the header's mtime). */
+  time: number;
+  /** Byte offset of the data in the tar. */
+  offset: number;
+  isDirectory: boolean;
+}
+
+function tarString(bytes: Uint8Array, at: number, length: number): string {
+  let end = at;
+  while (end < at + length && bytes[end] !== 0) end++;
+  return new TextDecoder().decode(bytes.subarray(at, end));
+}
+
+function tarOctal(bytes: Uint8Array, at: number, length: number): number {
+  // GNU base-256 for big values: the high bit of the first byte
+  if (bytes[at] & 0x80) {
+    let v = 0;
+    for (let i = at + 1; i < at + length; i++) v = v * 256 + bytes[i];
+    return v;
+  }
+  const text = tarString(bytes, at, length).trim();
+  return text === '' ? 0 : Number.parseInt(text, 8);
+}
+
+/**
+ * The entries of a ustar archive (512-byte headers: name at 0, size in octal at 124, mtime at 136, type at 156,
+ * `ustar` at 257, prefix at 345), with GNU long names (`L`) and pax `path` records (`x`). Throws an
+ * `ImportFailure` over the entry-count or total-size limit, or for a damaged header.
+ */
+export function readTarEntries(bytes: Uint8Array): TarEntry[] {
+  const entries: TarEntry[] = [];
+  let at = 0;
+  let total = 0;
+  let longName: string | undefined;
+  let paxPath: string | undefined;
+  while (at + 512 <= bytes.length) {
+    // two zero blocks end the archive; one is enough to stop
+    let empty = true;
+    for (let i = at; i < at + 512; i++) {
+      if (bytes[i] !== 0) {
+        empty = false;
+        break;
+      }
+    }
+    if (empty) break;
+    // header checksum: the sum of the header bytes with the checksum field read as spaces
+    let sum = 0;
+    for (let i = at; i < at + 512; i++) sum += i >= at + 148 && i < at + 156 ? 32 : bytes[i];
+    const stored = tarOctal(bytes, at + 148, 8);
+    if (stored !== sum) fail('the tar archive is damaged (a header checksum does not match)');
+    const size = tarOctal(bytes, at + 124, 12);
+    if (!Number.isFinite(size) || size < 0) fail('the tar archive is damaged (an entry size cannot be read)');
+    const type = String.fromCharCode(bytes[at + 156] || 48);
+    const dataAt = at + 512;
+    const next = dataAt + Math.ceil(size / 512) * 512;
+    if (type === 'L') {
+      longName = tarString(bytes, dataAt, Math.min(size, 4096));
+    } else if (type === 'x') {
+      const record = new TextDecoder().decode(bytes.subarray(dataAt, Math.min(bytes.length, dataAt + Math.min(size, 65536))));
+      const m = /(?:^|\n)\d+ path=([^\n]*)\n/.exec(record);
+      if (m) paxPath = m[1];
+    } else if (type !== 'g') {
+      const ustar = tarString(bytes, at + 257, 6) === 'ustar';
+      const prefix = ustar ? tarString(bytes, at + 345, 155) : '';
+      const base = tarString(bytes, at, 100);
+      const name = paxPath ?? longName ?? (prefix ? `${prefix}/${base}` : base);
+      longName = undefined;
+      paxPath = undefined;
+      const isDirectory = type === '5' || name.endsWith('/');
+      if (type === '0' || type === '\0' || type === '7' || isDirectory) {
+        if (entries.length >= IMPORT_LIMITS.maxArchiveEntries) {
+          fail(`the archive holds more than ${IMPORT_LIMITS.maxArchiveEntries} entries`, IMPORT_CODES.tooLarge);
+        }
+        total += isDirectory ? 0 : size;
+        if (total > IMPORT_LIMITS.maxUncompressedBytes) fail(`the archive unpacks to more than ${IMPORT_LIMITS.maxUncompressedBytes / 2 ** 20} MB`, IMPORT_CODES.tooLarge);
+        entries.push({ name: isDirectory && !name.endsWith('/') ? `${name}/` : name, size: isDirectory ? 0 : size, time: (Number.isFinite(tarOctal(bytes, at + 136, 12)) ? tarOctal(bytes, at + 136, 12) : 0) * 1000, offset: dataAt, isDirectory });
+      }
+    }
+    at = next;
+  }
+  return entries;
+}
+
+/** One tar entry's bytes (a truncated archive gives what is there). */
+export function tarEntryBytes(bytes: Uint8Array, entry: TarEntry): Uint8Array {
+  return bytes.subarray(entry.offset, Math.min(bytes.length, entry.offset + entry.size));
+}
+
+// ---- capped inflation
+
+/** Input pushed to the inflater at a time: deflate expands at most ~1032:1, so one push yields ≤ ~17 MB. */
+const INFLATE_CHUNK = 16 * 1024;
+
+/**
+ * Inflates a deflate (zip entry) or gzip stream, stopping as soon as the output passes `cap` bytes: a header or
+ * trailer that lies about the size can neither grow memory nor keep the CPU busy inflating gigabytes (§3.7.6).
+ * `overflow` = the stream holds more than `cap` bytes; `bytes` is then cut at `cap`.
+ */
+export function inflateCapped(data: Uint8Array, cap: number, format: 'deflate' | 'gzip'): { bytes: Uint8Array; overflow: boolean } {
+  const out = new Uint8Array(cap);
+  let length = 0;
+  let overflow = false;
+  const take = (chunk: Uint8Array): void => {
+    if (overflow) return;
+    const room = cap - length;
+    if (chunk.length > room) {
+      out.set(chunk.subarray(0, room), length);
+      length = cap;
+      overflow = true;
+    } else {
+      out.set(chunk, length);
+      length += chunk.length;
+    }
+  };
+  const stream = format === 'gzip' ? new Gunzip(take) : new Inflate(take);
+  for (let i = 0; i < data.length && !overflow; i += INFLATE_CHUNK) {
+    const end = Math.min(data.length, i + INFLATE_CHUNK);
+    stream.push(data.subarray(i, end), end >= data.length);
+  }
+  if (data.length === 0) stream.push(new Uint8Array(0), true);
+  return { bytes: length === cap ? out : out.slice(0, length), overflow };
 }
 
 export type PathVerdict = { ok: true; path: string } | { ok: false; skip: 'quiet' | 'warn'; reason: string };

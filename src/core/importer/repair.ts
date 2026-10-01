@@ -1,7 +1,9 @@
-// Track T7 — the repairs of DESIGN.md §3.7.6, run for every spec carrier after dialect normalization, in this
-// order: security and limits → ids → unknown keys → units → radians → ground and axes → colors → dims and attach
-// validity → rounding → inferAttach → inferMirrorPairs → strict schema validation. Each repair is logged as one
-// "auto-corrected" chip; findings that are not corrections are `Issue` warnings.
+// Track T7 — the repairs of DESIGN.md §3.7.6, run for every carrier after dialect normalization, in this order:
+// security and limits → ids → unknown keys → units → radians → ground and axes → colors → dims and attach validity
+// → rounding → inferAttach → (nameParts for the generic ids of geometry-only carriers, §3.7.5) → inferMirrorPairs →
+// strict schema validation. Each repair is logged as one "auto-corrected" chip; findings that are not corrections
+// are `Issue` warnings.
+import type { ColoredMesh } from '../../types/geometry';
 import type { Repair } from '../../types/importer';
 import type { Issue } from '../../types/issues';
 import type { CrochetModelV1, Feature, PaletteColor, Part, Region } from '../../types/model';
@@ -9,6 +11,7 @@ import { deltaE00Hex } from '../kernel/color';
 import { GAP_WARN_IN, inferAttach, inferMirrorPairs } from '../model/attach';
 import { COLOR_ID_PATTERN, PART_ID_PATTERN, validateModel } from '../model/schema';
 import { MODEL_LIMITS } from '../model/limits';
+import { nameParts } from '../model/naming';
 import { scaleModel } from '../model/scale';
 import { surfaceGap } from '../model/sdf';
 import { boundsSize, groundModel, localBounds, modelBounds, modelHeight, roundCoord, roundModel } from '../model/transforms';
@@ -19,8 +22,34 @@ export interface Repaired {
   ok: boolean;
   /** The validated model (only when `ok`). */
   model?: CrochetModelV1;
+  /** The buffers of mesh parts by `meshRef` (geometry carriers), scaled with the model when it was. */
+  meshes?: Record<string, ColoredMesh>;
   repairs: Repair[];
   warnings: Issue[];
+}
+
+/** What a geometry-only carrier (§3.7.5) changes in the repairs. */
+export interface GeometryRepairOptions {
+  /**
+   * Run `nameParts` between `inferAttach` and `inferMirrorPairs` (the ids are generic: `part_1`, `Mesh_0`, …).
+   * Ids in `keepIds` keep their names.
+   */
+  name: boolean;
+  keepIds?: ReadonlySet<string>;
+  /** `inferMirrorPairs` tolerance: fitted or measured twins are never exact (§2.9.7 step 5 uses 10%). */
+  mirrorTolerance?: number;
+}
+
+export interface RepairOptions {
+  /**
+   * A geometry-only carrier: its units were decided before fitting (§3.7.5, with their own `units` chip), so the
+   * units step only records the measured height.
+   */
+  geometry?: GeometryRepairOptions;
+  /** The units were decided by the carrier with their own chip (GLB ladder step 3): only record the height. */
+  unitsDecided?: boolean;
+  /** Mesh parts' buffers by `meshRef` (scaled together with the model by the height limit). */
+  meshes?: Record<string, ColoredMesh>;
 }
 
 const L = MODEL_LIMITS;
@@ -216,7 +245,7 @@ function fixIds(m: Draft, log: RepairLog): void {
     });
   }
 
-  // `*_l` that says it is one of a pair, with no `*_r`: synthesize the mirror (§3.7.6)
+  // `*_l` that says it is one of a pair, with no `*_r`: synthesize the mirror (§3.7.6, a `part-added` chip)
   for (const p of [...m.parts]) {
     const twin = rightTwinId(p.id);
     if (!twin || taken.has(twin)) continue;
@@ -238,7 +267,7 @@ function fixIds(m: Draft, log: RepairLog): void {
     delete copy.paint;
     m.parts.splice(m.parts.indexOf(p) + 1, 0, copy);
     taken.add(twin);
-    log.add('mirror', { code: 'mirror-inferred', message: `${twin} added as the mirror image of ${p.id}`, part: twin, data: { mirrorOf: p.id, synthesized: true } });
+    log.add('id', { code: 'part-added', message: `${twin} added as the mirror image of ${p.id}`, part: twin, data: { mirrorOf: p.id } });
   }
 }
 
@@ -315,9 +344,15 @@ function rescale(m: Draft, factor: number): Draft {
   return scaled;
 }
 
-function fixUnits(m0: Draft, n: Normalized, log: RepairLog): Draft {
+function fixUnits(m0: Draft, n: Normalized, log: RepairLog, geometry: boolean): Draft {
   let m = m0;
   if (m.parts.length === 0) return m;
+  if (geometry) {
+    // §3.7.6: geometry carriers are already in inches (their units chip says how they were read)
+    const h = modelHeight(m as unknown as CrochetModelV1);
+    if (h > 0 && Number.isFinite(h)) m.finishedSize = { ...m.finishedSize, height: h };
+    return m;
+  }
   let stated = n.noStatedHeight ? undefined : m.finishedSize.height;
   const declared = n.declaredUnit;
   if (declared) {
@@ -385,10 +420,11 @@ function fixUnits(m0: Draft, n: Normalized, log: RepairLog): Draft {
 }
 
 /** §3.5.2: a model taller than 60 in is scaled down to 60 in (after the units step, so never a unit mix-up). */
-function capHeight(m0: Draft, log: RepairLog): Draft {
+function capHeight(m0: Draft, log: RepairLog, meshes: { value?: Record<string, ColoredMesh> }): Draft {
   const h = modelHeight(m0 as unknown as CrochetModelV1);
   if (!(h > L.maxHeightIn)) return m0;
   const m = rescale(m0, L.maxHeightIn / h);
+  if (meshes.value) meshes.value = scaleModel(m0 as unknown as CrochetModelV1, L.maxHeightIn / h, meshes.value).meshes;
   m.finishedSize = { ...m.finishedSize, height: modelHeight(m) };
   log.add('limits', { code: 'limits', message: `the model is ${roundCoord(h, 1)} in tall: scaled down to the ${L.maxHeightIn} in limit`, data: { heightIn: roundCoord(h, 4) } });
   return m;
@@ -464,7 +500,7 @@ function fixColors(m: Draft, dialect: Normalized['dialect'], log: RepairLog): vo
     if (hex) {
       const hit = byHex(hex);
       if (hit) {
-        if (dialect !== 'cd-observed-2026-09') chip(`${where}: color ${hex} is palette color ${hit.id}`, part, { from: hex, to: hit.id });
+        if (dialect === 'canonical-1') chip(`${where}: color ${hex} is palette color ${hit.id}`, part, { from: hex, to: hit.id });
         return hit.id;
       }
       const id = add(hex);
@@ -672,6 +708,7 @@ function fixDims(m: Draft, log: RepairLog, warnings: Issue[]): boolean {
           asEllipsoid.type = 'ellipsoid';
           asEllipsoid.dims = { rx: rMax, ry: Math.max(lo, h / 2, rMax), rz: rMax };
           warnings.push(issue(IMPORT_CODES.unknownType, 'warn', `${p.id}: its lathe profile has fewer than 3 points: replaced by an ellipsoid`, { part: p.id }));
+          log.add('dims', { code: 'type-aliased', message: `${p.id}: its lathe profile has fewer than 3 points: replaced by its bounding ellipsoid`, part: p.id, data: { from: 'lathe', to: 'ellipsoid' } });
           changedGeometry = true;
           continue;
         }
@@ -740,7 +777,7 @@ function fixDims(m: Draft, log: RepairLog, warnings: Issue[]): boolean {
     const twin = byId.get(p.mirrorOf);
     const why = !twin ? 'does not exist' : twin === p ? 'is itself' : twin.type !== p.type ? `is a ${twin.type}` : twin.mirrorOf !== undefined ? 'is itself a mirror' : '';
     if (why) {
-      log.add('dims', { code: 'mirror-inferred', message: `${p.id}: mirrorOf ${p.mirrorOf} removed (it ${why})`, part: p.id, data: { removedMirrorOf: p.mirrorOf } });
+      log.add('dims', { code: 'mirror-removed', message: `${p.id}: mirrorOf ${p.mirrorOf} removed (it ${why})`, part: p.id, data: { mirrorOf: p.mirrorOf } });
       delete p.mirrorOf;
     }
   }
@@ -820,8 +857,9 @@ function gapWarnings(m: CrochetModelV1, warnings: Issue[]): void {
 }
 
 /** §3.7.6 on a normalized spec: the repairs in their order, then strict validation. */
-export function repairModel(n: Normalized): Repaired {
+export function repairModel(n: Normalized, o: RepairOptions = {}): Repaired {
   const log = n.repairs;
+  const meshes: { value?: Record<string, ColoredMesh> } = { value: o.meshes };
   const warnings = [...n.warnings];
   let m = structuredClone(n.model) as unknown as Draft;
   if (!Array.isArray(m.parts) || m.parts.length === 0) {
@@ -831,7 +869,7 @@ export function repairModel(n: Normalized): Repaired {
   applyLimits(m, log);
   fixIds(m, log);
   cleanRegionsAndFeatures(m, log);
-  m = fixUnits(m, n, log);
+  m = fixUnits(m, n, log, o.geometry !== undefined || o.unitsDecided === true);
   // radians: decided by the dialect step on the rotations as written (before parents were composed)
   m = ground(m, log);
   offerAxes(m, log);
@@ -842,11 +880,29 @@ export function repairModel(n: Normalized): Repaired {
     const h = modelHeight(m as unknown as CrochetModelV1);
     if (h > 0 && Number.isFinite(h)) m.finishedSize = { ...m.finishedSize, height: h };
   }
-  m = capHeight(m, log);
+  m = capHeight(m, log, meshes);
   let model = roundModel(m as unknown as CrochetModelV1);
   const attached = inferAttach(model);
   log.addAll('attach', attached.repairs);
-  const mirrored = inferMirrorPairs(attached.model);
+  model = attached.model;
+  if (o.geometry?.name) {
+    // §3.7.5: no names to go by — template ids by geometry (§2.9.7 step 6), before the pairs (they pair ids)
+    const named = nameParts(model, o.geometry.keepIds ? { keepIds: o.geometry.keepIds } : undefined);
+    const renames = Object.entries(named.renames);
+    // the chip names what was recognized; renumbered `part_N` ids are in `data` only
+    const shown = renames.filter(([, b]) => !/^part_\d+$/.test(b));
+    if (renames.length > 0) {
+      log.add('id', {
+        code: 'id',
+        message: shown.length > 0
+          ? `parts named by their shape and place: ${shown.slice(0, 8).map(([a, b]) => `${a} → ${b}`).join(', ')}${shown.length > 8 ? ', …' : ''}`
+          : 'parts numbered by size (no shape was recognized)',
+        data: { renames: named.renames },
+      });
+    }
+    model = named.model;
+  }
+  const mirrored = inferMirrorPairs(model, o.geometry?.mirrorTolerance !== undefined ? { tolerance: o.geometry.mirrorTolerance } : undefined);
   log.addAll('mirror', mirrored.repairs);
   model = mirrored.model;
   gapWarnings(model, warnings);
@@ -857,6 +913,6 @@ export function repairModel(n: Normalized): Repaired {
     if (checked.issues.length > 20) warnings.push(issue(IMPORT_CODES.invalid, 'error', `… and ${checked.issues.length - 20} more problems`));
     return { ok: false, repairs: log.all(), warnings };
   }
-  return { ok: true, model: checked.model, repairs: log.all(), warnings };
+  return { ok: true, model: checked.model, ...(meshes.value ? { meshes: meshes.value } : {}), repairs: log.all(), warnings };
 }
 

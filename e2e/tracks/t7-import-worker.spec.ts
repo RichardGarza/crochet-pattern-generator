@@ -73,3 +73,77 @@ test.describe('T7.1 import.worker (G12 carriers)', () => {
     expect(errors).toEqual([]);
   });
 });
+
+test.describe('T7.2 import.worker (geometry carriers)', () => {
+  test('the captured GLB, the teddy OBJ + MTL (under 3 s), a builder-v1 GLB and a handoff bundle, in the real worker', async ({ page }) => {
+    test.setTimeout(180_000);
+    const errors = watchErrors(page);
+    await page.goto('/');
+    await expect(page.getByRole('heading', { level: 1, name: 'What would you like to make?' })).toBeVisible();
+    const out = await page.evaluate(async () => {
+      const load = new Function('url', 'return import(url)') as (url: string) => Promise<any>;
+      const { workers } = await load('/src/workers/client.ts');
+      const canonical = JSON.parse(await (await fetch('/fixtures/models/teddy.canonical.json')).text());
+      const bytes = async (url: string): Promise<ArrayBuffer> => (await fetch(url)).arrayBuffer();
+      // the dev server may already have decoded the .gz (Content-Encoding): gunzip only what still is gzip
+      const gunzip = async (buf: ArrayBuffer): Promise<ArrayBuffer> => {
+        const b = new Uint8Array(buf);
+        if (!(b[0] === 0x1f && b[1] === 0x8b)) return buf;
+        return new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+      };
+      const T = '/fixtures/claude-design/teddy-bear/';
+      const D = '/fixtures/claude-design/teddy-derived/';
+      // geometry-only parts are fitted or mesh parts: only their ids, attach tree and mirror pairs are the teddy's
+      const sameParts = (m: any, geometry: boolean): boolean =>
+        canonical.parts.every((p: any) => {
+          const q = m.parts.find((x: any) => x.id === p.id);
+          if (!q) return false;
+          const shape = geometry || (q.type === p.type && p.position.every((v: number, i: number) => Math.abs(v - q.position[i]) <= 1e-4));
+          return q && shape && q.attach?.to === p.attach?.to && q.mirrorOf === p.mirrorOf;
+        }) && m.parts.length === canonical.parts.length;
+      const summary = (name: string, r: any, ms: number) => ({
+        name,
+        ok: r.ok,
+        carrier: r.carrier,
+        dialect: r.dialect,
+        units: r.units ? `${r.units.chosen}/${r.units.reason}` : '',
+        parts: r.model?.parts.length ?? 0,
+        same: r.ok ? sameParts(r.model, r.dialect === 'geometry-only') : false,
+        meshes: Object.keys(r.meshes ?? {}).length,
+        ms,
+        worker: workers.isRunning('import'),
+        errors: r.warnings.filter((w: any) => w.severity === 'error').map((w: any) => w.message),
+      });
+      const results: ReturnType<typeof summary>[] = [];
+      const run = async (name: string, inputs: unknown[], ctx?: unknown) => {
+        const t = performance.now();
+        const r = await workers.importer.importInputs(inputs, ctx);
+        results.push(summary(name, r, performance.now() - t));
+      };
+      await run('captured GLB', [{ kind: 'file', name: 'amigurumi-teddy-bear.glb', bytes: await bytes(`${T}amigurumi-teddy-bear.glb`) }]);
+      const obj = await gunzip(await bytes(`${T}amigurumi-teddy-bear.obj.gz`));
+      const mtl = await bytes(`${T}amigurumi-teddy-bear.mtl`);
+      // warm the worker up once (module load), then time the OBJ import itself
+      await run('OBJ warm-up', [{ kind: 'file', name: 'amigurumi-teddy-bear.obj', bytes: obj.slice(0) }, { kind: 'file', name: 'amigurumi-teddy-bear.mtl', bytes: mtl.slice(0) }]);
+      await run('teddy OBJ + MTL', [{ kind: 'file', name: 'amigurumi-teddy-bear.obj', bytes: obj }, { kind: 'file', name: 'amigurumi-teddy-bear.mtl', bytes: mtl }]);
+      await run('builder-v1 GLB, per-node extras', [{ kind: 'file', name: 'teddy-builder-v1.noroot.glb', bytes: await bytes(`${D}teddy-builder-v1.noroot.glb`) }]);
+      await run('handoff tar.gz', [{ kind: 'file', name: 'teddy-handoff.tar.gz', bytes: await bytes(`${D}teddy-handoff.tar.gz`) }]);
+      workers.terminate();
+      return results;
+    });
+    const by = Object.fromEntries(out.map((r) => [r.name, r]));
+    for (const r of out) {
+      expect(r.errors, r.name).toEqual([]);
+      expect(r.ok, r.name).toBe(true);
+      expect(r.worker, `${r.name} ran in import.worker`).toBe(true);
+      expect(r.same, `${r.name}: the canonical parts and tree`).toBe(true);
+    }
+    expect(by['captured GLB']).toMatchObject({ carrier: 'glb', dialect: 'cd-observed-2026-09', units: 'in/gltf-extras-ratio' });
+    expect(by['teddy OBJ + MTL']).toMatchObject({ carrier: 'obj', dialect: 'geometry-only', units: 'in/spec', parts: 17 });
+    expect(by['teddy OBJ + MTL'].ms, 'the 9.5 MB OBJ in the worker').toBeLessThan(3000);
+    expect(by['builder-v1 GLB, per-node extras']).toMatchObject({ carrier: 'glb', dialect: 'canonical-1' });
+    expect(by['handoff tar.gz']).toMatchObject({ carrier: 'tar' });
+    console.log(out.map((r) => `${r.name}: ${r.ms.toFixed(0)} ms`).join('; '));
+    expect(errors).toEqual([]);
+  });
+});
