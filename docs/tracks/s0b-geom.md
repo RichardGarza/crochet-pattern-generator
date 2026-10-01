@@ -5,8 +5,8 @@ item 5): the indexed marching cubes, Taubin smoothing, the Felzenszwalb–Hutten
 manifold-3d loader, plus the mesh measures and the `SdfVolume` helpers that those four need. Shared by T3
 (photos → 3D) and T5 (mesh tools); nothing here depends on the DOM, React or any other track.
 
-All numbers below were measured on this machine (Apple M3 Pro, Node 22.23.3, single thread), the machine the
-design budgets were measured on.
+All numbers below were measured on this machine (Apple M3 Pro, 12 cores, Node 22.23.3, single thread) — the same
+kind of machine as the design budgets (research 04 §11).
 
 ## What was delivered
 
@@ -15,12 +15,16 @@ design budgets were measured on.
 | `marchingCubes.ts` | `marchingCubes` (any numeric field, positive inside → indexed mesh), `marchingCubesSdf` (a stored `SdfVolume` → mesh in inches) |
 | `taubin.ts` | `taubinSmooth` (λ\|μ pairs, in place), `vertexAdjacency` (unique edge neighbors, compressed rows) |
 | `edt.ts` | generalized squared transforms `edtSquared1d/2d/3d` (seeded, optional nearest-seed output), mask transforms `edt1d/2d/3d`, signed mask transforms `signedEdt1d/2d/3d`, `extendSignedDistance3d` (narrow band → whole grid) |
-| `manifold.ts` | `getManifold` (the §5.4 loader), `manifoldReport` (status / parts / genus / volume of a mesh) |
+| `manifold.ts` | `getManifold` (the §5.4 loader), `manifoldFromMesh` (a mesh → a manifold-3d solid or its error status), `manifoldReport` (status / parts / genus / volume) |
 | `meshMeasures.ts` | signed volume, area, edge census, Euler characteristic, components, pinched vertices, degenerate triangles, bounds |
 | `sdfVolume.ts` | the layout and placement of `SdfVolume`, `encodeSdfVolume`, `decodeSdfVolume`, `sampleSdfVolume` |
-| `__tests__/` | 8 test files, 122 tests; `fields.ts` holds the analytic test solids (sphere, nine-ellipsoid teddy, torus, two spheres) |
+| `__tests__/` | 21 test files: 8 written with the kernels, 13 kept from the independent review (see "Review"); `fields.ts` holds the analytic test solids (sphere, nine-ellipsoid teddy, torus, two spheres) |
 
-The last two files are not named in §5.1 (see "Deviations").
+`meshMeasures.ts` and `sdfVolume.ts` are not named in §5.1 (see "Deviations").
+
+Two switches for the test suite: `GEOM_VERBOSE=1 npm test -- src/core/kernel/geom` prints the measurements the
+reference tests take; `GEOM_FULL=1` also runs the three exhaustive enumerations (all 3 × 2¹⁸ four-cell patterns,
+closed, open, and through manifold-3d; a few minutes), which are skipped otherwise.
 
 ## Conventions every caller relies on
 
@@ -34,12 +38,15 @@ The last two files are not named in §5.1 (see "Deviations").
   inside-out mesh as `NoError`, so "volume > 0" stays a separate check (§2.9.5 step 5).
 - **Connectivity of the mesher:** inside samples that are diagonal neighbors on a cell face (voxels sharing an
   edge) are joined; inside samples on a body diagonal are not; outside samples are connected through lattice edges
-  only. `cleanVolume` (§2.9.5 item 1) should therefore flood the outside 6-connected.
+  only. The number of pieces of a mesh is (18-connected inside components) + (6-connected outside components) − 1.
+  `cleanVolume` (§2.9.5 item 1) should therefore flood the outside 6-connected.
 - **Non-finite values:** marching cubes reads +Infinity as deep inside, −Infinity and NaN as outside. The squared
   transforms read +Infinity and NaN as "no seed" and reject −Infinity. `encodeSdfVolume` and
   `extendSignedDistance3d` reject NaN.
 - **Units:** every function takes the sample spacing (`voxel`, `spacing`) and returns world units; nothing assumes
   inches except `SdfVolume`.
+- **Malformed input throws `RangeError`** (wrong buffer length, dimensions, spacing, an index that is not a vertex)
+  before anything is written.
 
 ## Public API
 
@@ -75,6 +82,8 @@ function marchingCubesSdf(volume: SdfVolume, options?: Pick<MarchingCubesOptions
 - **Guarantee (closed border):** for every input the result is an oriented 2-manifold — each edge in exactly two
   triangles that agree on the outside, one fan per vertex, no zero-area triangle, every vertex used, positive
   volume. See "Verification".
+- **Float32 limit.** A lattice whose largest |coordinate| / voxel reaches 131 072 is refused (`RangeError`):
+  float32 positions could no longer hold the 0.01-voxel clamp.
 
 ### `taubin.ts`
 
@@ -98,9 +107,9 @@ function vertexAdjacency(indices: ArrayLike<number>, vertexCount: number): Verte
 type EdtArray = Float32Array | Float64Array;
 type Spacing2 = number | readonly [number, number];
 type Spacing3 = number | readonly [number, number, number];
-interface EdtOptions<S = number> { spacing?: S }                            // default 1
+interface EdtOptions<S = number> { spacing?: S }                            // default 1; 1e-100 … 1e100
 interface EdtSquaredOptions<S = number> extends EdtOptions<S> { nearest?: Int32Array }
-interface SignedEdtOptions extends EdtOptions<number> { measureTo?: 'boundary' | 'samples' }   // default 'boundary'
+interface SignedEdtOptions extends EdtOptions<number> { measureTo?: 'samples' | 'boundary' }   // default 'samples'
 
 function edtSquared1d<T extends EdtArray>(values: T, options?: EdtSquaredOptions<number>): T;
 function edtSquared2d<T extends EdtArray>(values: T, width: number, height: number, options?: EdtSquaredOptions<Spacing2>): T;
@@ -119,47 +128,60 @@ function extendSignedDistance3d<T extends EdtArray>(sdf: T, dims: readonly [numb
 
 - `edtSquared*` — the seeded form, in place: `values[p] ← min over q of ‖(p − q)·spacing‖² + values[q]`. Entries are
   squared-distance costs: 0 = plain seed, +Infinity (or NaN) = no seed, any finite number otherwise. `nearest`
-  receives the index of a winning seed per sample (−1 where there is none).
+  receives the index of a winning seed per sample — the lowest index on an exact tie — or −1 where there is none.
 - `edt*` — distance (not squared) from every sample to the nearest non-zero mask sample; +Infinity everywhere for
   an empty mask, 0 everywhere for a full one. For the distance to the nearest ZERO sample, pass the inverted mask.
-- `signedEdt*` — positive inside (inside = non-zero). `'boundary'` (default): ±(distance to the nearest sample of
-  the other kind − spacing/2), so the zero level lies on the faces between inside and outside cells.
-  `'samples'`: the textbook `dIn − dOut`. All inside → +Infinity everywhere; empty → −Infinity; only the samples
-  of the grid exist (the image frame is not a boundary).
+- `signedEdt*` — positive inside (inside = non-zero). `'samples'` (default) is the exact signed transform of
+  §2.9.3: +(distance to the nearest outside sample), −(distance to the nearest inside sample); `Math.max(sd, 0)` is
+  the "inside EDT". `'boundary'` is the same moved half a spacing toward 0, so that the zero level lies on the
+  faces between inside and outside cells (see "Ambiguities"). All inside → +Infinity everywhere; empty → −Infinity;
+  only the samples of the grid exist (the image frame is not a boundary).
 - `extendSignedDistance3d` — in place, §2.9.8 step 3: finite entries are exact and kept; +Infinity / −Infinity mark
-  unknown inside / outside samples, which get `±(‖p − q‖ + |sdf[q]|)` for the known sample q of their own side
-  that wins the seeded squared transform.
+  unknown inside / outside samples. Each gets, with its sign, the smaller of two upper bounds on its distance to
+  the surface: the distance to the nearest crossing (the zero between two neighboring known samples on different
+  sides), and `‖p − q‖ + |sdf[q]|` for the known sample q that wins the seeded squared transform.
 
 ### `manifold.ts`
 
 ```ts
 const getManifold: GetManifoldFn;            // () => Promise<ManifoldToplevel>
-interface ManifoldReport { status: string; parts: number; genus: number; volume: number }
+type ManifoldFromMesh = { status: 'NoError'; solid: Manifold } | { status: Exclude<ErrorStatus, 'NoError'>; solid?: undefined };
+interface ManifoldReport { status: ErrorStatus; parts: number; genus: number; volume: number }
+function manifoldFromMesh(mesh: MeshLike): Promise<ManifoldFromMesh>;
 function manifoldReport(mesh: MeshLike): Promise<ManifoldReport>;
 ```
 
-- `getManifold` — one initialization per thread, `setup()` already called; every call returns the same promise.
-- `manifoldReport` — builds a Manifold from an indexed mesh and reports `status` (`'NoError'`, `'NotManifold'`,
-  `'NonFiniteVertex'`, `'VertexOutOfBounds'`, …; a rejected mesh is a status, not an exception), `parts`
-  (`decompose().length`), `genus` of the largest part by |volume|, and the signed `volume`. Frees every WASM object.
+- `getManifold` — one initialization per thread, `setup()` already called; every call returns the same promise. A
+  failed initialization is not kept: the next call starts again.
+- `manifoldFromMesh` — builds a manifold-3d solid from an indexed mesh; the caller owns `solid` and must
+  `delete()` it. A mesh that manifold-3d rejects is a status (`'NotManifold'`, `'NonFiniteVertex'`,
+  `'VertexOutOfBounds'`, …), not an exception, and leaves nothing in the WASM heap. **Use this instead of
+  `new Manifold(mesh)`**: manifold-3d 3.5.4's own constructor wrapper throws on a bad status without freeing the
+  object it has just built (about half a kilobyte per rejected mesh, never returned).
+- `manifoldReport` — `status`, `parts` (`decompose().length`), `genus` of the largest part by |volume|, and the
+  signed `volume`; frees every WASM object.
 
 ### `meshMeasures.ts`
 
 ```ts
 interface MeshLike { positions: ArrayLike<number>; indices: ArrayLike<number> }   // ColoredMesh and IndexedMesh fit
-interface EdgeStats { edges: number; boundaryEdges: number; nonManifoldEdges: number; misorientedEdges: number }
+interface EdgeStats { edges: number; degenerateTriangles: number; boundaryEdges: number; nonManifoldEdges: number; misorientedEdges: number }
 function signedVolume(mesh: MeshLike): number;                      // > 0 for outward winding
 function surfaceArea(mesh: MeshLike): number;
 function countZeroAreaTriangles(mesh: MeshLike, maxArea?: number): number;   // area ≤ maxArea (default 0)
 function minTriangleArea(mesh: MeshLike): number;
 function edgeStats(indices: ArrayLike<number>): EdgeStats;
-function isWatertight(indices: ArrayLike<number>): boolean;         // no boundary, non-manifold or misoriented edge
+function isWatertight(indices: ArrayLike<number>): boolean;         // no boundary, non-manifold or misoriented edge, no degenerate triangle
 function countUsedVertices(indices: ArrayLike<number>): number;
-function eulerCharacteristic(indices: ArrayLike<number>): number;   // V_used − E + F
+function eulerCharacteristic(indices: ArrayLike<number>): number;   // V − E + F of the surface
 function countComponents(indices: ArrayLike<number>): number;
 function countNonManifoldVertices(indices: ArrayLike<number>): number;   // vertices with more than one fan
 function meshBounds(positions: ArrayLike<number>): { min: Vec3; max: Vec3 };
 ```
+
+A triangle that names a vertex twice is counted in `degenerateTriangles` and otherwise ignored by `edgeStats`,
+`eulerCharacteristic`, `countComponents` and `countNonManifoldVertices`. The index-only measures allocate by the
+largest index in the buffer.
 
 ### `sdfVolume.ts`
 
@@ -170,8 +192,8 @@ function decodeSdfVolume(volume: SdfVolume): Float32Array<ArrayBuffer>;   // inc
 function sampleSdfVolume(volume: SdfVolume, p: Readonly<Vec3>): number;   // inches, trilinear
 ```
 
-- `encodeSdfVolume` — quantizes a field in inches; saturates; a negative value never becomes 0, so the stored
-  volume has exactly the inside/outside samples of the field.
+- `encodeSdfVolume` — quantizes a field in inches (halves away from zero); saturates; a negative value never
+  becomes 0, so the stored volume has exactly the inside/outside samples of the field.
 - `sampleSdfVolume` — `p` in the volume's frame; outside the lattice box: the value at the nearest box point minus
   the distance to it (the lowest value a distance field could have there). `(p) => sampleSdfVolume(v, p)` is the
   `mesh` function that `partSdf` and `inferAttach` take.
@@ -186,6 +208,8 @@ const sd = signedEdt2d(mask, maskW, maskH, { spacing: worldPerPixel });
 const mesh = marchingCubes(f, [N, N, N], { origin: boxMin, voxel });
 taubinSmooth(mesh.positions, mesh.indices);                    // 10 pairs
 const report = await manifoldReport(mesh);                     // want status 'NoError', genus 0, volume > 0
+const built = await manifoldFromMesh(mesh);                    // or the solid itself, to decompose and keep the largest part
+if (built.status === 'NoError') { /* built.solid.decompose() … */ built.solid.delete(); }
 
 // T3 §2.9.7 — 3D opening for the limb split: two plain transforms (pass the inverted mask for "distance to outside")
 const toOutside = edt3d(outsideMask, [N, N, N], { spacing: voxel });
@@ -211,18 +235,18 @@ A `ColoredMesh` is the result plus labels: `{ ...mesh, labels: new Uint8Array(me
 |---|---|
 | MC, sphere r = 0.8 in [−1.1, 1.1]³, N = 64 | pass — 9 936 vertices, 19 868 triangles; 0 boundary, 0 non-manifold, 0 misoriented edges; χ = 2; 0 zero-area triangles (smallest 8.66e-5 voxel²); volume 0.99891 × analytic |
 | MC, sphere, N = 128 | pass — 40 248 / 80 492; same counts of defects (0); χ = 2; volume 0.99974 × analytic (within 1%) |
-| MC, union of nine ellipsoids, N = 64 and 128 | pass — 6 646 / 13 288 and 27 278 / 54 552; watertight, χ = 2, one piece; the two volumes differ by 0.31%; N = 128 is within 0.04% of the inside-voxel count |
+| MC, union of nine ellipsoids, N = 64 and 128 | pass — 6 646 / 13 288 and 27 278 / 54 552; watertight, χ = 2, one piece; volume 0.99591 and 0.99896 × the integrated volume (0.70355) |
 | MC, torus R 0.6 r 0.25, N = 64 / 128 | pass — χ = 0, watertight, volume 0.99619 / 0.99906 × analytic |
 | MC, two separate spheres, N = 64 | pass — χ = 4, 2 pieces, watertight, volume 0.99328 × analytic |
 | MC at the grid border | pass — documented above; a sphere r = 1.3 cut by all six faces: closed mode watertight, χ = 2, volume 0.99988 × the analytic clipped sphere; open mode χ = −4 with every boundary vertex on the box |
 | Taubin, 10 pairs | pass — sphere volume +0.023% (N = 128), +0.087% (N = 64); teddy +0.085%; index buffer untouched. Noise of ±0.3 voxel on the N = 128 sphere: RMS radial error 0.1735 → 0.0581 voxel, RMS umbrella length 0.484 → 0.047 voxel (3 pairs: 0.0781 and 0.104). Twenty plain Laplacian steps lose 3.0% of the N = 64 sphere |
-| EDT vs brute force | pass — 1D/2D/3D, seeded random grids: integer costs bit-exact in Float64 and Float32; real costs and per-axis spacing within 1e-12; `nearest` always names a winning seed; masks bit-exact; both signed forms bit-exact against their definitions; empty / full masks as documented |
+| EDT vs brute force | pass — 1D/2D/3D, seeded random grids: integer costs bit-exact in Float64 and Float32; real costs and per-axis spacing within 1e-12; `nearest` always names a winning seed; masks bit-exact; both signed forms bit-exact against their definitions; the narrow-band extension equals its definition; empty / full masks as documented |
 | `getManifold` in node | pass — unit cube: `NoError`, genus 0, 1 part; second call returns the same promise and module |
 | MC sphere → manifold-3d | pass — `NoError`, 1 part, genus 0 at N = 64 and 128, before and after Taubin; torus genus 1; two spheres 2 parts |
-| Timing, MC, N = 128 | 21 ms (sphere, 40 k vertices), 16 ms (teddy, 27 k vertices); budget 91 ms. N = 192: 68 ms / 55 ms |
+| Timing, MC, N = 128 | 22 ms (sphere, 40 k vertices), 17 ms (teddy, 27 k vertices); budget 91 ms. N = 192: 68 ms / 55 ms; N = 256 (teddy): 140 ms. Worst case, noise at N = 128 (6.8 M triangles): 247 ms |
 | Timing, Taubin × 10 | 14 ms (sphere), 9.7 ms (teddy); budget 33 ms for 21 k vertices. 3 pairs: 6 ms / 4 ms |
-| Timing, 3D EDT, N = 128 | 52 ms unsigned, 109 ms signed (sphere mask). 2D signed, 512²: 7.6 ms (research: 21 ms). `extendSignedDistance3d`, N = 96: 65 ms |
-| Determinism | pass — byte-identical positions and indices on repeated runs; node and a Chromium worker give the same counts and volume |
+| Timing, 3D EDT, N = 128 | 51 ms unsigned, 110 ms signed (sphere mask). 2D signed, 512²: 7.0 ms (research: 21 ms). `extendSignedDistance3d`, N = 96: 90 ms |
+| Determinism | pass — byte-identical positions and indices on repeated runs and across three processes; node and a Chromium worker give the same counts and volume |
 
 The timing tests assert 300 ms (MC), 150 ms (Taubin), 500 ms / 1 s (3D EDT, unsigned / signed) and 150 ms (2D),
 best of a few runs, retried twice.
@@ -234,19 +258,84 @@ best of a few runs, retried twice.
   patterns of the four cells around a lattice edge (three orientations) were meshed with the closed border: 0
   boundary edges, 0 non-manifold edges, 0 misoriented edges, 0 pinched vertices, 0 zero-area triangles, volume
   always positive, no unused vertex. With the open border: the same, except for the boundary edges on the box.
-  (21 s for both runs; the unit suite runs the two-cell version, 3 × 4096 patterns, and a seeded sample of the
-  four-cell one.) 300 random-noise meshes were all accepted by manifold-3d.
+  A third run gave every sample a hostile magnitude (exact 0, ±1e-12, ±1e-6, ±1, ±1e12, ±Infinity): still 0
+  defects, no NaN, and the smallest triangle of all 786 432 meshes is the corner cut of the clamp, √3/2 · 0.01²
+  voxel². (About 20 s per run; the unit suite runs the two-cell version, 3 × 4096 patterns, and a seeded sample
+  of the four-cell one; `GEOM_FULL=1` runs them all.) A further 2.2 million random 3³ … 6×5×4 lattices: 0 defects.
+- **manifold-3d accepts all of it.** Every one of those four-cell patterns, with ±1 values and with the hostile
+  magnitudes (1 572 858 meshes), and 5 959 random meshes up to 10³ (3.8 M triangles) went through
+  `new Manifold(mesh)`: none rejected; `decompose()` always agreed with `countComponents` and its volume with
+  `signedVolume`.
 - **Against a textbook implementation.** A per-cell, unindexed marching cubes written in the test file from the
-  three.js tables gives exactly the same triangles (as position triples) on smooth and random fields.
+  three.js tables gives exactly the same triangles (as position triples) on smooth and random fields; so does the
+  review's own reference mesher (vertices in a Map keyed by lattice edge) on 600 hostile fields.
+- **The mesh separates inside from outside.** The winding number of the mesh is 1 at every inside lattice point
+  and 0 at every outside one, on random hostile fields; no triangle passes through another on 800 random fields.
 - **The kernels together, on T3's first acceptance item.** Three 512² disc masks → `signedEdt2d` in world units
-  → an N×N table per view → `min` over N³ → marching cubes: the hull of the r = 0.8 sphere has 1.1184 × the sphere's
-  volume at N = 128 (theory 1.1188; T3 must reach 1.119 ± 0.01), watertight, χ = 2; 1.1186 after Taubin. With
-  `measureTo: 'samples'` it is 1.1186.
+  → an N×N table per view → `min` over N³ → marching cubes: the hull of the r = 0.8 sphere has 1.1186 × the sphere's
+  volume at N = 128 (theory 1.1188; the exact distance field of the disc gives 1.1185 on the same lattice; T3 must
+  reach 1.119 ± 0.01), watertight, χ = 2. With `measureTo: 'boundary'` it is 1.1184.
+- **A rehearsal of T5's merge.** Two spheres stored as cropped `SdfVolume`s with different origins and voxel
+  sizes (0.0625 and 0.05 in), sampled with `sampleSdfVolume` onto one 65 × 96 × 65 grid (40 ms), `max`, marching
+  cubes, Taubin: one watertight piece, χ = 2, volume 0.99938 × the analytic union (G24 asks for 2%).
+- **Larger brute-force runs of the transforms** than the unit suite holds: 120 3D grids up to 18³ and 40 2D
+  masks up to 96 × 80 (225 000 samples), and every binary mask of the 4×4, 5×3, 16×1, 1×16, 3×3×2 and 2×2×4
+  grids (557 056 masks): mask, signed (both conventions) and seeded transforms and `nearest` all agree with
+  brute force; per-axis spacing to 6e-8 relative (the float32 result).
+- **No WASM leak in `manifoldReport`.** 30 000 accepted and 30 000 rejected meshes do not grow the WASM memory (a
+  unit test hooks `WebAssembly.Memory.prototype.grow`).
 - **In a real worker.** A temporary page (not committed) ran `getManifold`, marching cubes, Taubin and
   `manifoldReport` inside a module worker in headless Chromium, under `npm run dev` and from a production build
   served by `vite preview`, on port 5268 with a temp projects folder: unit cube `NoError` / genus 0 / 1 part, the
   N = 128 sphere `NoError` / genus 0, one navigation, no console errors. In the worker: MC 18 ms, Taubin 14 ms,
-  3D EDT 50 ms. The worker bundle was 67 kB plus the 541 kB wasm: only the tables of three.js are bundled.
+  3D EDT 50 ms. The worker bundle was 67 kB plus the 541 kB wasm: only the tables of three.js are bundled. (Run
+  with the first version of `manifold.ts`; the loader's `locateFile` path has not changed since.)
+
+## Review
+
+Two independent reviewers attacked the first version (commit `7a2daa1`) with their own reference
+implementations: one took marching cubes, Taubin, the measures and the manifold loader, the other the distance
+transforms and the stored volume. A session limit cut both off before they reported; their test files and the
+measurements those print were recovered, read, and — where they test real requirements — kept in the suite under
+proper names (`*.reference.test.ts`, `marchingCubes.{topology,embedding,acceptance}.test.ts`,
+`manifold.meshes.test.ts`, `manifoldSetupRetry.test.ts`, `edt.{signed,extend,largeGrids}.test.ts`). A third
+reviewer then went over the result (below).
+
+What the first review found, and what was done:
+
+| Finding | Fix |
+|---|---|
+| `minTriangleArea` forgot a NaN triangle unless it came last, and then did not even return the minimum | NaN is returned as soon as one triangle has a NaN corner |
+| `getManifold`: a failure inside `setup()` was cached forever (`.then(ok, reset)` does not see what `ok` throws) | any failed initialization clears the cache |
+| `manifoldReport` lost about half a kilobyte of WASM heap per rejected mesh (16.8 MB → 217 MB over 300 000 rejections): manifold-3d's constructor wrapper throws without deleting | `manifoldFromMesh` uses the constructor underneath the wrapper, reads the status and deletes; a test fails if manifold-3d ever stops leaking, so the detour can go |
+| `manifoldReport` validated another mesh than it was given when an index was 2.9 or NaN (`Uint32Array.from` coerces) | such an index is `'VertexOutOfBounds'` |
+| Marching cubes: from \|coordinate\| / voxel = 2¹⁸ on, float32 rounded the 0.01-voxel clamp away (140 zero-area triangles in a 6³ test lattice), silently; an origin of 1e39 gave ±Infinity positions | such lattices are refused with a `RangeError` (from 2¹⁷ on) |
+| Measures: the triangle (0, 0, 1) passed for a closed surface, (5, 5, 5) counted as a pinched vertex | a triangle that names a vertex twice is counted (`degenerateTriangles`) and otherwise ignored; `isWatertight` is false |
+| `signedVolume` lost digits far from the origin (2.6e-6 relative at 1e4, useless at 1e6) | summed around the mesh's own first vertex |
+| `edtSquared*`: a spacing of 1e160 gave NaN, 1e-170 wrong values (its square overflows / underflows) | spacings outside 1e-100 … 1e100 are refused |
+| `edtSquared*`: a −Infinity cost threw after the first rows had been rewritten | validated before anything is written |
+| `extendSignedDistance3d`: the documented "at most 0.60 voxel too large" did not hold — 0.84 on a rotated box, 0.89 on a plane tilted by 0.01; level sets 6 voxels beyond the band were off by up to 0.46 voxel (0.10 rms) | new method (crossings, plus the bound through a known sample); see "Deviations" 4 for the numbers |
+| `extendSignedDistance3d`: a known value beyond 1.8e19 overflowed the float32 work array and produced NaN; only seeds of the own side were used, so a sample next to a known −0.3 got 9.4 | costs are capped; a known sample of either side bounds every unknown one (that sample now gets 1.3) |
+| `encodeSdfVolume` stored a NaN origin; negative halves rounded toward zero (−1.5 → −1) while positive ones rounded away | origin validated; halves round away from zero on both sides |
+| Signed transform: the default (`'boundary'` then) made an inflated disc 3.2% too small at a radius of 26 px (the spec's form: 1.9% too large), with no gain for the hull (1.1184 vs 1.1186) | the default is the spec's exact form, `'samples'`; `'boundary'` stays as an option; see "Ambiguities" |
+
+What it confirmed with independent means: the triangles against its own reference mesher (600 hostile fields),
+closed = open on the padded field, one vertex per crossed edge, the clamp and zero rules, the connectivity rule
+(pieces = 18-connected inside components + 6-connected outside components − 1), winding numbers, no
+self-intersection, two slices in memory (a 4 × 4 × 500 000 lattice), Taubin against a brute-force Jacobi
+iteration, `vertexAdjacency` with a 200 000-neighbor hub (62 ms), all measures against Map- and Set-based
+references on 600 random soups, the seeded transform with ties (lowest index wins), extreme costs and spacings,
+array views, the signed definitions, `sampleSdfVolume` against a naive trilinear implementation (3e-15 voxel),
+cropping a volume, and the acceptance list (with the teddy's volume integrated independently).
+
+Information it produced for later tracks:
+
+- Taubin, 10 pairs, by feature size (volume change): sphere of radius 16 voxels +0.2%, 8: +0.6%, 5: +1.5%,
+  3: +2.4%, 2: −4.7%, 1.2: −46%; a rod of radius 1.5 voxels +1.4%; a disc 2 voxels thick +0.3%. The 2% of T3's
+  acceptance holds from a radius of about 4 voxels.
+- manifold-3d splits a pinched vertex: two tetrahedra that share one vertex are 2 parts. (Marching cubes never
+  makes one.) A cavity is a part with negative volume.
+- `manifoldReport` on the N = 128 sphere (80 k triangles): 62 ms; `edgeStats` 12 ms.
 
 ## Deviations from the spec, with reasons
 
@@ -259,45 +348,62 @@ best of a few runs, retried twice.
    clears the cached promise, so the next call tries again instead of returning the same rejection forever.
 3. **§2.9.5 item 2, "tables … (`edgeTable`, `triTable`)":** only `triTable` is imported. Crossed edges are found
    from the samples while the slices are scanned; a test proves `edgeTable` says the same.
-4. **§2.9.8 step 3, far field.** `extendSignedDistance3d` returns `‖p − q‖ + |d(q)|` for the winning band sample q,
-   not the square root of the seeded squared transform. With a band of ±2 voxels the square-root form is up to
-   1.95 voxels too small (1.4–1.7 on average; sphere, box, torus, capsule at N = 96), which would fail T5's own
-   acceptance ("within 1 voxel" of a brute-force SDF). The additive form is never too small and at most 0.60
-   voxel too large (0.03–0.09 on average). The plain seeded transform is still exported for whoever wants it.
-5. **`manifoldReport`** is not in the spec. Both T3 (§2.9.5 step 5) and T5 (`merge` returns `genus`) need the same
-   dozen lines around `new Manifold(mesh)`, including the `delete()` calls that are easy to forget in a
-   long-lived worker.
+4. **§2.9.8 step 3, far field.** Not "the EDT seeded from the band, separately inside and outside" read
+   literally (the square root of the transform seeded with d², per side): that is up to 1.96 voxels too small
+   with a band of ±2 voxels (1.4–1.7 on average), which would fail T5's own acceptance ("within 1 voxel" of a
+   brute-force SDF). `extendSignedDistance3d` takes the smaller of two upper bounds — the distance to the nearest
+   sub-voxel crossing between two known samples, and `‖p − q‖ + |d(q)|` for the known sample q that wins the
+   seeded transform, of either side. Measured at N = 96, band ±2: −0.01 … +0.14 voxel on smooth solids (0.01 on
+   average), within 0.1 voxel on planes at any tilt, up to 0.58 voxel next to sharp edges (boxes, a thin plate;
+   0.04–0.06 on average; 0.68 on one rotated box). Marching cubes at ±6 voxels on the completed field of a sphere
+   is within 0.06 voxel of the true level set (0.02 rms). The plain seeded transform is exported for whoever
+   wants it.
+5. **`manifoldFromMesh` and `manifoldReport`** are not in the spec. Both T3 (§2.9.5 step 5) and T5 (`merge`
+   returns `genus`) need the same lines around `new Manifold(mesh)` — and those lines leak when written the
+   obvious way (see "Review").
+6. **Marching cubes refuses a lattice that float32 positions cannot resolve** (|coordinate| / voxel ≥ 2¹⁷). The
+   spec does not mention it; without it the "no zero-area triangle" rule of §2.9.5 item 2 fails silently there.
+   The app's lattices are below 10⁴.
 
 ## Ambiguities resolved
 
 | Where | Reading |
 |---|---|
 | `SdfVolume.origin` (§5.2) — a cell corner or a sample? | The position of sample (0, 0, 0); samples are points. Same rule as the marching cubes `origin`. |
-| §2.9.3 "exact signed EDT … inside positive" — measured to what? | Default `measureTo: 'boundary'`: the pixel-center distance minus half a pixel, so that the zero level lies between the inside and the outside pixel. Exact for straight axis-aligned outlines; on a disc the error against the true distance is within ±0.5 px with no bias at the outline (measured +0.04 px), while the textbook `dIn − dOut` (`'samples'`) is 0…1 px too large (+0.54 px at the outline) and jumps from −1 to +1 across it. `d = max(sd, 0)` is the "inside EDT" of §2.9.3 and §2.9.4. |
+| §2.9.3 "exact signed EDT … inside positive" — measured to what? | To the nearest sample of the other kind (`measureTo: 'samples'`, the default): the textbook `dIn − dOut`, which is what "exact EDT" names and what makes `max(sd, 0)` the "inside EDT" of the inflation formula. Its values step from −1 to +1 pixel across the outline. `'boundary'` subtracts half a pixel so that the field is 0 on the pixel faces and has slope 1 there. Neither is the true distance to a smooth outline: `'samples'` is 0…1 px too large (0.54 px on average next to the outline, 0.13–0.27 px deeper than 5 px), `'boundary'` errs by ±0.5 px (0.04 next to the outline, −0.24…−0.37 deeper). In the spec's callers: the three-view hull gives 1.1186 / 1.1184 (both within 0.0002 of what the exact field gives); marching cubes on the transform's own grid gives the identical mesh; hull vertices from 512² masks at N = 128 are 0.056 / 0.042 voxel rms from the true surface; an inflated disc of radius 10 / 26 / 60 / 120 px has 1.050 / 1.019 / 1.008 / 1.003 × the hemisphere's volume with `'samples'` and 0.935 / 0.968 / 0.985 / 0.991 with `'boundary'`; an inflated strip is 5% / 9% too large (width 20 / 21 px) with `'samples'` and 3% too small / exact with `'boundary'`. |
 | §2.9.5 item 2 "replace exact zeros by 1e-6" — zeros of what? | Of `field − iso`, in field units; the field itself is not modified. The sample counts as inside. |
 | Border of the grid (§2.9.5 does not say) | Closed by default, as above. |
 | NaN and ±Infinity in a field | Marching cubes: +Infinity deep inside, −Infinity and NaN outside. |
 | Image frame in the 2D signed transform | Not a boundary: only the pixels of the mask exist. §2.9.1 already rejects masks that touch the frame. |
 | Taubin on an open mesh | Boundary vertices are smoothed like the others (not pinned). Every mesh of the pipeline is closed. |
 | `ManifoldReport.genus` for several parts | The genus of the largest part by \|volume\| (§2.9.5 step 5 keeps the largest part). |
+| A triangle with a repeated vertex index | Not part of the surface: counted, otherwise ignored by the measures; `isWatertight` is false. |
 
 ## Requests for integration
 
 1. **§5.2 `SdfVolume`:** add to the comment that sample (x, y, z) is the point `origin + voxel·(x, y, z)`, x
    fastest, and that the values saturate at ±127.996 voxels.
 2. **§5.4:** replace `Module(isNode ? {} : { locateFile: () => wasmUrl })` by `Module(isNode ? undefined : …)`
-   (the printed form is a type error), and mention the retry after a failed initialization.
-3. **§2.9.8 step 3:** say that the far field is `‖p − q‖ + |d(q)|` for the band sample q found by the seeded
-   transform (`extendSignedDistance3d`), not the square root of that transform; and that the band is the set of
-   voxels whose computed distance is ≤ 2 voxels (a voxel inside a large triangle's grown bbox can hold a distance
-   that is not the distance to the nearest triangle).
-4. **§2.9.3:** name the signed-EDT convention (`measureTo: 'boundary'`).
-5. **§2.9.5 item 1:** say that the outside flood of `cleanVolume` is 6-connected, to match the mesher.
-6. **§5.1:** list `core/kernel/geom/{meshMeasures,sdfVolume}.ts` as S0 files.
-7. **`src/types/__checks__/entryPoints.check.ts`** (0c): add
+   (the printed form is a type error), mention the retry after a failed initialization, and tell T3 and T5 to
+   build solids with `manifoldFromMesh`, never with `new Manifold(mesh)` inside a `try` (manifold-3d 3.5.4 leaks
+   the rejected object).
+3. **§2.9.8 step 3:** name `extendSignedDistance3d` and what it computes; say that the band is the set of voxels
+   whose computed distance is ≤ 2 voxels (a voxel inside a large triangle's grown bbox can hold a distance that
+   is not the distance to the nearest triangle), and that every sign change must have both of its samples in the
+   band (any band of ±1 voxel or more does).
+4. **§2.9.3:** name the convention (`signedEdt2d`, default `measureTo: 'samples'`). T3 can ask for `'boundary'`
+   in the hull tables (hull vertices 0.042 instead of 0.056 voxel rms from the true surface) and should keep
+   `'samples'` for the inflation. The "hemisphere for a disc (±2%)" of §6.3 holds from a radius of about 25 px
+   with `'samples'` (45 px with `'boundary'`): T3's test disc should be larger than that.
+5. **§2.9.5 item 1:** say that the outside flood of `cleanVolume` is 6-connected, to match the mesher (whose
+   inside is 18-connected).
+6. **§2.9.5 item 3 / §6.3 T3:** "Taubin keeps volume within 2%" holds for features of radius ≥ 4 voxels (see
+   "Review"); thinner ones are the "crochet flat" case of item 5.
+7. **§5.1:** list `core/kernel/geom/{meshMeasures,sdfVolume}.ts` as S0 files.
+8. **`src/types/__checks__/entryPoints.check.ts`** (0c): add
    `Check<SameSignature<typeof import('../../core/kernel/geom/manifold').getManifold, E.GetManifoldFn>>`.
-8. **§2.9.8 budget line / §5.8:** the measured kernel times above can replace the research estimates if wanted
-   (MC 21 ms, Taubin 14 ms at N = 128 on 40 k vertices).
+9. **§2.9.8 budget line / §5.8:** the measured kernel times above can replace the research estimates if wanted
+   (MC 22 ms, Taubin 14 ms at N = 128 on 40 k vertices).
 
 ## Not done, not verified
 
@@ -305,4 +411,5 @@ best of a few runs, retried twice.
   needed for the 10 Hz of §2.9.8 — a whole N = 96 volume re-meshes (marching cubes + 3 Taubin pairs) in 9 ms
   (teddy, 15 k vertices) to 13 ms (sphere, 22 k vertices).
 - Safari / JavaScriptCore timings: not measured (Node 22 and headless Chromium only).
-- The 3 × 2¹⁸ enumeration is not part of the unit suite (15 s).
+- The browser check was not repeated after the review fixes (see "Verification").
+- The three exhaustive enumerations are not part of the default suite (`GEOM_FULL=1`).

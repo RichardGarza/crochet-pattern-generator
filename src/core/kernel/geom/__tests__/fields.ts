@@ -4,6 +4,9 @@
 // [−HALF, HALF]³: sample (x, y, z) is at −HALF + voxel·(x, y, z) with voxel = 2·HALF/(n − 1). The scene is the
 // one of research 04 §11: a sphere of radius 0.8 and a "teddy" of nine axis-aligned ellipsoids in
 // [−1.1, 1.1]³.
+//
+// The fields use only +, −, ×, ÷ and Math.sqrt (no `**`, no Math.hypot, whose results an engine may round as it
+// likes), so the vertex counts and index hashes that the tests pin are the same on every conforming engine.
 import type { Vec3 } from '../../../../types/geometry';
 import type { MeshLike } from '../meshMeasures';
 
@@ -33,15 +36,25 @@ export function sampleField(n: number, f: Implicit, half = HALF): SampledField {
 
 /** Exact signed distance of a sphere. */
 export function sphere(r: number, c: Vec3 = [0, 0, 0]): Implicit {
-  return (x, y, z) => r - Math.sqrt((x - c[0]) ** 2 + (y - c[1]) ** 2 + (z - c[2]) ** 2);
+  return (x, y, z) => {
+    const dx = x - c[0];
+    const dy = y - c[1];
+    const dz = z - c[2];
+    return r - Math.sqrt(dx * dx + dy * dy + dz * dz);
+  };
 }
 
-export const sphereVolume = (r: number): number => (4 / 3) * Math.PI * r ** 3;
+export const sphereVolume = (r: number): number => (4 / 3) * Math.PI * r * r * r;
 
 /** An axis-aligned ellipsoid: positive inside, close to a distance near the surface (not an exact distance). */
 export function ellipsoid(c: Vec3, r: Vec3): Implicit {
   const scale = Math.min(r[0], r[1], r[2]);
-  return (x, y, z) => scale * (1 - Math.sqrt(((x - c[0]) / r[0]) ** 2 + ((y - c[1]) / r[1]) ** 2 + ((z - c[2]) / r[2]) ** 2));
+  return (x, y, z) => {
+    const u = (x - c[0]) / r[0];
+    const v = (y - c[1]) / r[1];
+    const w = (z - c[2]) / r[2];
+    return scale * (1 - Math.sqrt(u * u + v * v + w * w));
+  };
 }
 
 /** Union of implicit solids (positive inside ⇒ maximum). */
@@ -70,10 +83,13 @@ export const teddy: Implicit = union(...TEDDY_PARTS.map((p) => ellipsoid(p.c, p.
 
 /** Exact signed distance of a torus around the Y axis: ring radius R, tube radius r. */
 export function torus(R: number, r: number): Implicit {
-  return (x, y, z) => r - Math.sqrt((Math.sqrt(x * x + z * z) - R) ** 2 + y * y);
+  return (x, y, z) => {
+    const ring = Math.sqrt(x * x + z * z) - R;
+    return r - Math.sqrt(ring * ring + y * y);
+  };
 }
 
-export const torusVolume = (R: number, r: number): number => 2 * Math.PI ** 2 * R * r * r;
+export const torusVolume = (R: number, r: number): number => 2 * Math.PI * Math.PI * R * r * r;
 
 /** Two spheres that do not touch. */
 export const twoSpheres: Implicit = union(sphere(0.35, [-0.5, 0, 0]), sphere(0.3, [0.5, 0.1, 0]));
@@ -94,4 +110,9 @@ export function triangleKeys(mesh: MeshLike): string[] {
     keys.push(`${c[first]} | ${c[(first + 1) % 3]} | ${c[(first + 2) % 3]}`);
   }
   return keys.sort();
+}
+
+/** Prints a measurement when the suite runs with GEOM_VERBOSE=1 (`GEOM_VERBOSE=1 npm test -- …`); silent otherwise. */
+export function note(text: string): void {
+  if (process.env.GEOM_VERBOSE === '1') console.log(text);
 }

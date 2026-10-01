@@ -32,7 +32,10 @@
 // samples are connected through lattice edges only: flood the outside 6-connected when cleaning a volume
 // (§2.9.5 item 1), or the mesh will have pieces the flood did not see.
 //
-// Positions are float32: keep |coordinate| / voxel well below 10^5, or the 0.01-voxel clamp is rounded away.
+// Positions are float32, and the 0.01-voxel clamp must survive that rounding or vertices fall together and
+// triangles lose their area. A lattice whose largest |coordinate| / voxel reaches about 131 000 (2^17: there
+// the float32 spacing passes 0.01 voxel) is therefore refused with a RangeError, as is one that does not fit
+// float32 at all.
 import { triTable } from 'three/addons/objects/MarchingCubes.js';
 import type { SdfVolume, Vec3 } from '../../../types/geometry';
 import { SDF_UNITS_PER_VOXEL } from './sdfVolume';
@@ -131,6 +134,19 @@ export function marchingCubes(field: ArrayLike<number>, dims: GridDims, options:
   const ox = origin[0] - pad * vx;
   const oy = origin[1] - pad * vy;
   const oz = origin[2] - pad * vz;
+  // Float32 positions: at the far corner of the box, neighboring floats must be less than the clamp apart.
+  for (const [o, v, p] of [
+    [ox, vx, px],
+    [oy, vy, py],
+    [oz, vz, pz],
+  ]) {
+    const far = Math.fround(Math.max(Math.abs(o), Math.abs(o + v * (p - 1))));
+    if (!(Math.fround(far + 0.5 * MC_T_MIN * v) > far)) {
+      throw new RangeError(
+        `float32 positions cannot resolve 0.01 voxel on this lattice (origin [${origin.join(', ')}], voxel ${String(voxel)}): keep |coordinate| / voxel below 131 072`,
+      );
+    }
+  }
 
   // Output buffers grow by doubling; the first guess is one slice worth of vertices.
   const guess = Math.min(16384, Math.max(64, sliceSize));

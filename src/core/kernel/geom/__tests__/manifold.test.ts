@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GetManifoldFn } from '../../../../types/entryPoints';
 import { mulberry32 } from '../../prng';
-import { getManifold, manifoldReport } from '../manifold';
+import { getManifold, manifoldFromMesh, manifoldReport } from '../manifold';
 import { marchingCubes } from '../marchingCubes';
 import { signedVolume } from '../meshMeasures';
 import { taubinSmooth } from '../taubin';
@@ -43,6 +43,48 @@ describe('getManifold (§5.4)', () => {
     expect(second).toBe(first);
     expect(await second).toBe(await first);
     expect(await getManifold()).toBe(await first);
+  });
+});
+
+describe('manifoldFromMesh', () => {
+  it('returns the solid of a mesh that manifold-3d accepts; the caller deletes it', async () => {
+    const m = mesh(32, twoSpheres);
+    const built = await manifoldFromMesh(m);
+    expect(built.status).toBe('NoError');
+    if (built.status !== 'NoError') return;
+    const { solid } = built;
+    const parts = solid.decompose();
+    try {
+      expect(solid.status()).toBe('NoError');
+      expect(solid.numTri()).toBe(m.indices.length / 3);
+      expect(solid.volume()).toBeCloseTo(signedVolume(m), 5);
+      expect(parts.length).toBe(2);
+      expect(parts.map((part) => part.genus())).toEqual([0, 0]);
+      // The solid is a real Manifold: it can be meshed again.
+      const again = solid.getMesh();
+      expect(again.triVerts.length).toBe(m.indices.length);
+    } finally {
+      for (const part of parts) part.delete();
+      solid.delete();
+    }
+  });
+
+  it('returns only a status for a mesh that manifold-3d rejects', async () => {
+    const hole = await manifoldFromMesh({ positions: TET, indices: TET_FACES.slice(0, 9) });
+    expect(hole).toEqual({ status: 'NotManifold' });
+    expect(await manifoldFromMesh({ positions: [...TET.slice(0, 11), NaN], indices: TET_FACES })).toEqual({ status: 'NonFiniteVertex' });
+    expect(await manifoldFromMesh({ positions: TET, indices: [...TET_FACES.slice(0, 11), 2.5] })).toEqual({ status: 'VertexOutOfBounds' });
+    expect(await manifoldFromMesh({ positions: TET, indices: [...TET_FACES.slice(0, 11), 4] })).toEqual({ status: 'VertexOutOfBounds' });
+  });
+
+  it('does not modify the buffers it is given, and accepts plain arrays', async () => {
+    const positions = [...TET];
+    const indices = [...TET_FACES];
+    const built = await manifoldFromMesh({ positions, indices });
+    expect(built.status).toBe('NoError');
+    built.solid?.delete();
+    expect(positions).toEqual(TET);
+    expect(indices).toEqual(TET_FACES);
   });
 });
 

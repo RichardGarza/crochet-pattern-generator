@@ -1,6 +1,7 @@
 import { edgeTable, triTable } from 'three/addons/objects/MarchingCubes.js';
 import { describe, expect, it } from 'vitest';
 import type { Vec3 } from '../../../../types/geometry';
+import { fnv1a64Hex } from '../../hash';
 import { mulberry32 } from '../../prng';
 import { type IndexedMesh, MC_T_MAX, MC_T_MIN, MC_ZERO_REPLACEMENT, marchingCubes, marchingCubesSdf } from '../marchingCubes';
 import {
@@ -160,11 +161,16 @@ describe('marchingCubes on analytic solids', () => {
     expect(worst).toBeLessThan(0.011 * voxel);
   });
 
-  it('pins the vertex and triangle counts of the sphere (any change to the mesher shows up here)', () => {
+  it('pins the vertex and triangle counts and the index buffers (any change to the mesher shows up here)', () => {
     const m64 = mesh(sampleField(64, sphere(0.8)));
     expect([m64.positions.length / 3, m64.indices.length / 3]).toEqual([9936, 19868]);
     const m128 = mesh(sampleField(128, sphere(0.8)));
     expect([m128.positions.length / 3, m128.indices.length / 3]).toEqual([40248, 80492]);
+    // Hashes of the index buffers (integers only, §5.8): vertex numbering and triangle order are part of the
+    // output, and nothing downstream may see them change unannounced.
+    expect(fnv1a64Hex(m64.indices)).toBe('0903f5169c337ad4');
+    expect(fnv1a64Hex(mesh(sampleField(64, teddy)).indices)).toBe('47a1e4af66b155af');
+    expect(fnv1a64Hex(mesh(sampleField(64, torus(0.6, 0.25))).indices)).toBe('e84734e855c5f4df');
   });
 
   it('an off-center sphere that fits the lattice has the same quality', () => {
@@ -684,7 +690,7 @@ describe('marchingCubes on arbitrary fields', () => {
     expect(() => marchingCubes(f, [2, 2, 2], { border: 'padded' as never })).toThrow(RangeError);
   });
 
-  it('holds two slices at a time: a long thin lattice is as cheap as its cross-section', () => {
+  it('meshes a long thin lattice (two slices in memory at a time; marchingCubes.reference.test.ts measures that)', () => {
     // 6×6×4000 samples with a tube along z; the buffers that are not output are 8×8 slices.
     const dims: [number, number, number] = [6, 6, 4000];
     const field = new Float32Array(36 * 4000);

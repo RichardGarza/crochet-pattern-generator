@@ -20,12 +20,15 @@ export const SDF_UNITS_PER_VOXEL = 256;
 const INT16_MAX = 32767;
 const INT16_MIN = -32768;
 
-function checkGrid(length: number, dims: readonly [number, number, number], voxel: number): void {
-  for (const n of dims) {
-    if (!Number.isInteger(n) || n < 1) throw new RangeError(`grid dimensions must be integers >= 1, got [${dims.join(', ')}]`);
+function checkGrid(length: number, dims: readonly [number, number, number], origin: Readonly<Vec3>, voxel: number): void {
+  if (dims.length !== 3 || !dims.every((n) => Number.isInteger(n) && n >= 1)) {
+    throw new RangeError(`grid dimensions must be three integers >= 1, got [${dims.join(', ')}]`);
   }
   if (length !== dims[0] * dims[1] * dims[2]) {
     throw new RangeError(`field has ${length} samples, expected ${dims[0]}×${dims[1]}×${dims[2]} = ${dims[0] * dims[1] * dims[2]}`);
+  }
+  if (origin.length !== 3 || !origin.every((v) => Number.isFinite(v))) {
+    throw new RangeError(`origin must be three finite numbers, got [${origin.join(', ')}]`);
   }
   if (!(voxel > 0) || !Number.isFinite(voxel)) throw new RangeError(`voxel size must be a positive number, got ${voxel}`);
 }
@@ -33,10 +36,11 @@ function checkGrid(length: number, dims: readonly [number, number, number], voxe
 /**
  * Quantizes a signed-distance field given in world units (inches) to the stored Int16 form.
  *
- * The sign of every sample survives: a negative value never rounds to 0 (it becomes −1 at least), and 0 and
- * positive values stay ≥ 0 — so the stored volume has exactly the same inside/outside samples as the field
- * under the marching-cubes rule "a sample at the iso level is inside". Values beyond ±127.996 voxels saturate;
- * +Infinity and −Infinity saturate too. NaN is not a distance and throws.
+ * Values are rounded to the nearest unit, halves away from zero. The side of every sample survives: a
+ * negative value never becomes 0 (it is −1 at least), and 0 and positive values stay ≥ 0 — so the stored
+ * volume has exactly the same inside/outside samples as the field under the marching-cubes rule "a sample at
+ * the level is inside". Values beyond ±127.996 voxels saturate; +Infinity and −Infinity saturate too. NaN is
+ * not a distance and throws.
  */
 export function encodeSdfVolume(
   field: ArrayLike<number>,
@@ -44,22 +48,26 @@ export function encodeSdfVolume(
   origin: Readonly<Vec3>,
   voxel: number,
 ): SdfVolume {
-  checkGrid(field.length, dims, voxel);
+  checkGrid(field.length, dims, origin, voxel);
   const data = new Int16Array(field.length);
   const scale = SDF_UNITS_PER_VOXEL / voxel;
   for (let i = 0; i < field.length; i++) {
     const v = field[i];
     if (v !== v) throw new RangeError(`encodeSdfVolume: sample ${i} is NaN`);
-    let q = Math.round(v * scale);
-    if (v < 0 && q > -1) q = -1;
-    data[i] = q > INT16_MAX ? INT16_MAX : q < INT16_MIN ? INT16_MIN : q;
+    if (v < 0) {
+      const units = Math.floor(-v * scale + 0.5);
+      data[i] = units < 1 ? -1 : units > -INT16_MIN ? INT16_MIN : -units;
+    } else {
+      const units = Math.floor(v * scale + 0.5);
+      data[i] = units > INT16_MAX ? INT16_MAX : units;
+    }
   }
   return { data, dims: [dims[0], dims[1], dims[2]], origin: [origin[0], origin[1], origin[2]], voxel };
 }
 
 /** The stored volume as signed distances in world units (inches), same layout as `volume.data`. */
 export function decodeSdfVolume(volume: SdfVolume): Float32Array<ArrayBuffer> {
-  checkGrid(volume.data.length, volume.dims, volume.voxel);
+  checkGrid(volume.data.length, volume.dims, volume.origin, volume.voxel);
   const out = new Float32Array(volume.data.length);
   const scale = volume.voxel / SDF_UNITS_PER_VOXEL;
   for (let i = 0; i < out.length; i++) out[i] = volume.data[i] * scale;

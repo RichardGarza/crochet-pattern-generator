@@ -80,6 +80,11 @@ describe('signedVolume and surfaceArea', () => {
     const far = cube([100, -50, 7], 2);
     expect(signedVolume(far)).toBeCloseTo(8, 6);
     expect(surfaceArea(far)).toBeCloseTo(24, 6);
+    // No digits are lost far from the origin: the volume is summed around the mesh's own first vertex.
+    // (Float64 positions here; around the origin the same sum would be off by 1e-3 at this distance.)
+    const c = cube();
+    const moved = { positions: Float64Array.from(c.positions, (v, i) => v + [1e7, -3e7, 2e7][i % 3]), indices: c.indices };
+    expect(signedVolume(moved)).toBe(1);
   });
 
   it('torus mesh converges to 2π²Rr² and 4π²Rr', () => {
@@ -109,26 +114,26 @@ describe('signedVolume and surfaceArea', () => {
 
 describe('edgeStats, isWatertight, eulerCharacteristic, countComponents', () => {
   it('closed meshes', () => {
-    expect(edgeStats(TET.indices)).toEqual({ edges: 6, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 0 });
+    expect(edgeStats(TET.indices)).toEqual({ edges: 6, degenerateTriangles: 0, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 0 });
     expect(isWatertight(TET.indices)).toBe(true);
     expect(eulerCharacteristic(TET.indices)).toBe(2);
     expect(countComponents(TET.indices)).toBe(1);
     const c = cube();
-    expect(edgeStats(c.indices)).toEqual({ edges: 18, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 0 });
+    expect(edgeStats(c.indices)).toEqual({ edges: 18, degenerateTriangles: 0, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 0 });
     expect(eulerCharacteristic(c.indices)).toBe(2);
     const t = torusMesh(0.6, 0.25, 12, 8);
-    expect(edgeStats(t.indices)).toEqual({ edges: 3 * 96, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 0 });
+    expect(edgeStats(t.indices)).toEqual({ edges: 3 * 96, degenerateTriangles: 0, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 0 });
     expect(eulerCharacteristic(t.indices)).toBe(0);
     expect(countComponents(t.indices)).toBe(1);
   });
 
   it('a hole: boundary edges, χ drops by one', () => {
     const open = TET.indices.slice(0, 9);
-    expect(edgeStats(open)).toEqual({ edges: 6, boundaryEdges: 3, nonManifoldEdges: 0, misorientedEdges: 0 });
+    expect(edgeStats(open)).toEqual({ edges: 6, degenerateTriangles: 0, boundaryEdges: 3, nonManifoldEdges: 0, misorientedEdges: 0 });
     expect(isWatertight(open)).toBe(false);
     expect(eulerCharacteristic(open)).toBe(1);
     // A single triangle is a disc.
-    expect(edgeStats([0, 1, 2])).toEqual({ edges: 3, boundaryEdges: 3, nonManifoldEdges: 0, misorientedEdges: 0 });
+    expect(edgeStats([0, 1, 2])).toEqual({ edges: 3, degenerateTriangles: 0, boundaryEdges: 3, nonManifoldEdges: 0, misorientedEdges: 0 });
     expect(eulerCharacteristic([0, 1, 2])).toBe(1);
   });
 
@@ -136,7 +141,7 @@ describe('edgeStats, isWatertight, eulerCharacteristic, countComponents', () => 
     const flipped = Uint32Array.from(TET.indices);
     flipped[1] = TET.indices[2];
     flipped[2] = TET.indices[1];
-    expect(edgeStats(flipped)).toEqual({ edges: 6, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 3 });
+    expect(edgeStats(flipped)).toEqual({ edges: 6, degenerateTriangles: 0, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 3 });
     expect(isWatertight(flipped)).toBe(false);
     // A mesh that is inside out as a whole is consistently wound.
     expect(isWatertight([0, 1, 2, 0, 3, 1, 1, 3, 2, 0, 2, 3])).toBe(true);
@@ -144,7 +149,7 @@ describe('edgeStats, isWatertight, eulerCharacteristic, countComponents', () => 
 
   it('three triangles on one edge: non-manifold', () => {
     const fins = [0, 1, 2, 0, 1, 3, 0, 1, 4];
-    expect(edgeStats(fins)).toEqual({ edges: 7, boundaryEdges: 6, nonManifoldEdges: 1, misorientedEdges: 0 });
+    expect(edgeStats(fins)).toEqual({ edges: 7, degenerateTriangles: 0, boundaryEdges: 6, nonManifoldEdges: 1, misorientedEdges: 0 });
     // Two cubes that share an edge: that edge carries four triangles.
     const a = cube();
     const merged = [...a.indices];
@@ -167,13 +172,28 @@ describe('edgeStats, isWatertight, eulerCharacteristic, countComponents', () => 
     expect(countComponents(shuffled)).toBe(3);
   });
 
-  it('ignores vertices no triangle uses, and edges of a repeated index', () => {
+  it('ignores vertices no triangle uses, and triangles that name a vertex twice', () => {
     // Vertex numbers 10…13 instead of 0…3: the ten unused vertices do not change χ.
     const shifted = Array.from(TET.indices, (i) => i + 10);
     expect(countUsedVertices(shifted)).toBe(4);
     expect(eulerCharacteristic(shifted)).toBe(2);
-    // A triangle with a repeated index has one real edge.
-    expect(edgeStats([0, 0, 1])).toEqual({ edges: 1, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 0 });
+    // A triangle with a repeated index is counted as degenerate and is not part of the surface.
+    const none = { edges: 0, degenerateTriangles: 1, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 0 };
+    expect(edgeStats([0, 0, 1])).toEqual(none);
+    expect(edgeStats([3, 3, 3])).toEqual(none);
+    expect(isWatertight([0, 0, 1])).toBe(false);
+    expect(eulerCharacteristic([0, 0, 1])).toBe(0);
+    expect(countComponents([0, 0, 1])).toBe(0);
+    expect(countNonManifoldVertices([5, 5, 5, 5, 5, 6])).toBe(0);
+    expect(countUsedVertices([0, 0, 1])).toBe(2);
+    // Added to a closed mesh, such triangles change nothing but the count — and the verdict.
+    const padded = [...TET.indices, 0, 0, 1, 2, 9, 9];
+    expect(edgeStats(padded)).toEqual({ edges: 6, degenerateTriangles: 2, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 0 });
+    expect(eulerCharacteristic(padded)).toBe(2);
+    expect(countComponents(padded)).toBe(1);
+    expect(countNonManifoldVertices(padded)).toBe(0);
+    expect(isWatertight(padded)).toBe(false);
+    expect(isWatertight([])).toBe(true);
   });
 
   it('matches a hash-map census on random triangle soups', () => {
@@ -184,11 +204,15 @@ describe('edgeStats, isWatertight, eulerCharacteristic, countComponents', () => 
       const indices: number[] = [];
       for (let i = 0; i < 3 * triangles; i++) indices.push(Math.floor(rng() * vertices));
       const uses = new Map<string, { forward: number; backward: number }>();
+      const surface = new Set<number>();
+      let faces = 0;
       for (let t = 0; t < indices.length; t += 3) {
+        if (new Set(indices.slice(t, t + 3)).size < 3) continue;
+        faces++;
         for (let e = 0; e < 3; e++) {
+          surface.add(indices[t + e]);
           const a = indices[t + e];
           const b = indices[t + ((e + 1) % 3)];
-          if (a === b) continue;
           const key = `${Math.min(a, b)}-${Math.max(a, b)}`;
           const entry = uses.get(key) ?? { forward: 0, backward: 0 };
           if (a < b) entry.forward++;
@@ -196,14 +220,18 @@ describe('edgeStats, isWatertight, eulerCharacteristic, countComponents', () => 
           uses.set(key, entry);
         }
       }
-      const expected = { edges: uses.size, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 0 };
+      const expected = { edges: uses.size, degenerateTriangles: 0, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 0 };
+      for (let t = 0; t < indices.length; t += 3) {
+        if (new Set(indices.slice(t, t + 3)).size < 3) expected.degenerateTriangles++;
+      }
       for (const { forward, backward } of uses.values()) {
         if (forward + backward === 1) expected.boundaryEdges++;
         else if (forward + backward > 2) expected.nonManifoldEdges++;
         else if (forward !== backward) expected.misorientedEdges++;
       }
       expect(edgeStats(indices)).toEqual(expected);
-      expect(eulerCharacteristic(indices)).toBe(new Set(indices).size - uses.size + triangles);
+      expect(expected.degenerateTriangles).toBe(triangles - faces);
+      expect(eulerCharacteristic(indices)).toBe(surface.size - uses.size + faces);
     }
   });
 
@@ -262,6 +290,21 @@ describe('countZeroAreaTriangles, minTriangleArea', () => {
     expect(minTriangleArea(TET)).toBeCloseTo(0.5, 12);
     expect(minTriangleArea({ positions: [], indices: [] })).toBe(Infinity);
     expect(minTriangleArea({ positions: [0, 0, 0, 1, 0, 0, 2, 0, 0], indices: [0, 1, 2] })).toBe(0);
+    // The smallest area whatever the order of the triangles; NaN as soon as one corner is NaN, wherever
+    // that triangle stands in the buffer.
+    const positions = [0, 0, 0, 1, 0, 0, 0, 1, 0, 4, 0, 0, 0, 4, 0, NaN, 0, 0];
+    const small = [0, 1, 2];
+    const large = [0, 3, 4];
+    const broken = [0, 1, 5];
+    expect(minTriangleArea({ positions, indices: [...small, ...large] })).toBe(0.5);
+    expect(minTriangleArea({ positions, indices: [...large, ...small] })).toBe(0.5);
+    for (const order of [
+      [...broken, ...small, ...large],
+      [...small, ...broken, ...large],
+      [...large, ...small, ...broken],
+    ]) {
+      expect(minTriangleArea({ positions, indices: order })).toBeNaN();
+    }
   });
 });
 
@@ -270,6 +313,8 @@ describe('meshBounds', () => {
     expect(meshBounds(TET.positions)).toEqual({ min: [0, 0, 0], max: [1, 1, 1] });
     expect(meshBounds([3, -1, 2, -4, 5, 2])).toEqual({ min: [-4, -1, 2], max: [3, 5, 2] });
     expect(meshBounds([])).toEqual({ min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] });
+    // A NaN coordinate is skipped.
+    expect(meshBounds([1, NaN, 2, 3, 4, NaN])).toEqual({ min: [1, 4, 2], max: [3, 4, 2] });
     expect(() => meshBounds([1, 2])).toThrow(RangeError);
   });
 });

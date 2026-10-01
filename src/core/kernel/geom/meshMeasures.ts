@@ -4,6 +4,9 @@
 // χ = 2, no zero-area triangles, volume > 0". They read a position buffer (x, y, z per vertex) and a triangle
 // index buffer (three vertex indices per triangle) and never modify either. Winding convention (§0.1,
 // right-handed): a triangle is counter-clockwise seen from OUTSIDE the solid, so `signedVolume` is positive.
+//
+// The measures that take only an index buffer allocate by the LARGEST index in it, not by the number of
+// triangles: they are meant for meshes whose vertices are numbered 0 … V − 1.
 import type { Vec3 } from '../../../types/geometry';
 
 /** A position buffer and a triangle index buffer. `ColoredMesh` and the marching-cubes output both fit. */
@@ -17,6 +20,8 @@ export interface MeshLike {
 export interface EdgeStats {
   /** Distinct undirected edges. */
   edges: number;
+  /** Triangles with a repeated vertex index: not triangles at all. Their real edge still counts below. */
+  degenerateTriangles: number;
   /** Edges used by exactly one triangle: the mesh has a hole there. */
   boundaryEdges: number;
   /** Edges used by three or more triangles. */
@@ -50,28 +55,35 @@ function checkIndexRange(mesh: MeshLike): void {
 /**
  * The enclosed volume of a closed, consistently wound mesh: positive when the triangles are counter-clockwise
  * seen from outside, negative when the mesh is inside out (manifold-3d accepts an inside-out mesh with status
- * `NoError`, so "volume > 0" is a separate check, §2.9.5 step 5). It is the sum of the signed tetrahedra
- * (origin, a, b, c); for an open mesh that sum depends on where the origin is and means nothing.
+ * `NoError`, so "volume > 0" is a separate check, §2.9.5 step 5).
+ *
+ * It is the sum of the signed tetrahedra (r, a, b, c) with r the first vertex the index buffer names, so the
+ * result does not lose digits when the mesh is far from the origin. For an open mesh the sum depends on r and
+ * means nothing.
  */
 export function signedVolume(mesh: MeshLike): number {
   triangleCount(mesh.indices);
   checkIndexRange(mesh);
   const p = mesh.positions;
   const idx = mesh.indices;
+  if (idx.length === 0) return 0;
+  const rx = p[3 * idx[0]];
+  const ry = p[3 * idx[0] + 1];
+  const rz = p[3 * idx[0] + 2];
   let six = 0;
   for (let t = 0; t < idx.length; t += 3) {
     const a = 3 * idx[t];
     const b = 3 * idx[t + 1];
     const c = 3 * idx[t + 2];
-    const ax = p[a];
-    const ay = p[a + 1];
-    const az = p[a + 2];
-    const bx = p[b];
-    const by = p[b + 1];
-    const bz = p[b + 2];
-    const cx = p[c];
-    const cy = p[c + 1];
-    const cz = p[c + 2];
+    const ax = p[a] - rx;
+    const ay = p[a + 1] - ry;
+    const az = p[a + 2] - rz;
+    const bx = p[b] - rx;
+    const by = p[b + 1] - ry;
+    const bz = p[b + 2] - rz;
+    const cx = p[c] - rx;
+    const cy = p[c + 1] - ry;
+    const cz = p[c + 2] - rz;
     six += ax * (by * cz - bz * cy) + ay * (bz * cx - bx * cz) + az * (bx * cy - by * cx);
   }
   return six / 6;
@@ -117,46 +129,62 @@ export function countZeroAreaTriangles(mesh: MeshLike, maxArea = 0): number {
   return count;
 }
 
-/** The smallest triangle area (Infinity for a mesh without triangles; NaN positions give NaN). */
+/** The smallest triangle area: Infinity for a mesh without triangles, NaN as soon as one triangle has a NaN corner. */
 export function minTriangleArea(mesh: MeshLike): number {
   triangleCount(mesh.indices);
   checkIndexRange(mesh);
   let min = Infinity;
   for (let t = 0; t < mesh.indices.length; t += 3) {
     const area = doubleArea(mesh.positions, mesh.indices, t) / 2;
-    if (!(area >= min)) min = area;
+    if (area !== area) return NaN;
+    if (area < min) min = area;
   }
   return min;
 }
 
-/**
- * Edge census of a triangle index buffer. An edge with twice the same vertex (a triangle with a repeated
- * index) is not an edge and is skipped. O(T log T): the half-edges are sorted, not hashed, so the result
- * never depends on a hash order.
- */
-export function edgeStats(indices: ArrayLike<number>): EdgeStats {
-  const triangles = triangleCount(indices);
-  let maxIndex = -1;
+/** Validates an index buffer and returns the largest index in it (−1 for an empty buffer). */
+function largestIndex(indices: ArrayLike<number>): number {
+  triangleCount(indices);
+  let max = -1;
   for (let i = 0; i < indices.length; i++) {
     const v = indices[i];
     if (!(v >= 0) || !Number.isInteger(v)) throw new RangeError(`index ${v} at ${i} is not a vertex index`);
-    if (v > maxIndex) maxIndex = v;
+    if (v > max) max = v;
   }
-  const m = maxIndex + 1;
+  return max;
+}
+
+/** True when the triangle that starts at `t` names a vertex twice: it has no area and is not part of the surface. */
+function isDegenerate(indices: ArrayLike<number>, t: number): boolean {
+  return indices[t] === indices[t + 1] || indices[t + 1] === indices[t + 2] || indices[t + 2] === indices[t];
+}
+
+/**
+ * Edge census of a triangle index buffer. A triangle that names a vertex twice is counted in
+ * `degenerateTriangles` and otherwise ignored — here and in `eulerCharacteristic`, `countComponents` and
+ * `countNonManifoldVertices`. O(T log T): the half-edges are sorted, not hashed, so the result never depends
+ * on a hash order.
+ */
+export function edgeStats(indices: ArrayLike<number>): EdgeStats {
+  const m = largestIndex(indices) + 1;
   // key = (lo·m + hi)·2 + direction must stay an exact integer in a double.
   if (2 * m * m >= Number.MAX_SAFE_INTEGER) throw new RangeError(`edgeStats: ${m} vertices are too many`);
-  const keys = new Float64Array(3 * triangles);
+  const keys = new Float64Array(indices.length);
   let n = 0;
+  let degenerate = 0;
   for (let t = 0; t < indices.length; t += 3) {
+    if (isDegenerate(indices, t)) {
+      degenerate++;
+      continue;
+    }
     for (let e = 0; e < 3; e++) {
       const a = indices[t + e];
       const b = indices[t + ((e + 1) % 3)];
-      if (a === b) continue;
       keys[n++] = a < b ? (a * m + b) * 2 : (b * m + a) * 2 + 1;
     }
   }
   const sorted = keys.subarray(0, n).sort();
-  const stats: EdgeStats = { edges: 0, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 0 };
+  const stats: EdgeStats = { edges: 0, degenerateTriangles: degenerate, boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 0 };
   let i = 0;
   while (i < n) {
     const edge = Math.floor(sorted[i] / 2);
@@ -172,22 +200,18 @@ export function edgeStats(indices: ArrayLike<number>): EdgeStats {
   return stats;
 }
 
-/** True when every edge is shared by exactly two triangles that agree on the outside (a closed, oriented surface). */
+/**
+ * True when every edge is shared by exactly two triangles that agree on the outside, and no triangle names a
+ * vertex twice: a closed, oriented surface. (A buffer without triangles is watertight too.)
+ */
 export function isWatertight(indices: ArrayLike<number>): boolean {
   const s = edgeStats(indices);
-  return s.boundaryEdges === 0 && s.nonManifoldEdges === 0 && s.misorientedEdges === 0;
+  return s.boundaryEdges === 0 && s.nonManifoldEdges === 0 && s.misorientedEdges === 0 && s.degenerateTriangles === 0;
 }
 
-/** The number of distinct vertices the index buffer refers to (vertices no triangle uses are not counted). */
+/** The number of distinct vertices the index buffer names (vertices no triangle uses are not counted). */
 export function countUsedVertices(indices: ArrayLike<number>): number {
-  triangleCount(indices);
-  let maxIndex = -1;
-  for (let i = 0; i < indices.length; i++) {
-    const v = indices[i];
-    if (!(v >= 0) || !Number.isInteger(v)) throw new RangeError(`index ${v} at ${i} is not a vertex index`);
-    if (v > maxIndex) maxIndex = v;
-  }
-  const seen = new Uint8Array(maxIndex + 1);
+  const seen = new Uint8Array(largestIndex(indices) + 1);
   let used = 0;
   for (let i = 0; i < indices.length; i++) {
     if (seen[indices[i]] === 0) {
@@ -199,24 +223,30 @@ export function countUsedVertices(indices: ArrayLike<number>): number {
 }
 
 /**
- * Euler characteristic χ = V − E + F, with V the vertices that triangles use. For a closed orientable surface
+ * Euler characteristic χ = V − E + F of the surface: F its triangles, E their edges, V their vertices
+ * (degenerate triangles and vertices that only they use are left out). For a closed orientable surface
  * χ = 2·(components) − 2·(total genus): 2 for a sphere, 0 for a torus, 4 for two separate spheres.
  */
 export function eulerCharacteristic(indices: ArrayLike<number>): number {
-  return countUsedVertices(indices) - edgeStats(indices).edges + triangleCount(indices);
+  const stats = edgeStats(indices);
+  const seen = new Uint8Array(largestIndex(indices) + 1);
+  let vertices = 0;
+  for (let t = 0; t < indices.length; t += 3) {
+    if (isDegenerate(indices, t)) continue;
+    for (let c = 0; c < 3; c++) {
+      if (seen[indices[t + c]] === 0) {
+        seen[indices[t + c]] = 1;
+        vertices++;
+      }
+    }
+  }
+  return vertices - stats.edges + (indices.length / 3 - stats.degenerateTriangles);
 }
 
 /** The number of connected pieces of the surface (triangles connected through shared vertices). */
 export function countComponents(indices: ArrayLike<number>): number {
-  triangleCount(indices);
-  let maxIndex = -1;
-  for (let i = 0; i < indices.length; i++) {
-    const v = indices[i];
-    if (!(v >= 0) || !Number.isInteger(v)) throw new RangeError(`index ${v} at ${i} is not a vertex index`);
-    if (v > maxIndex) maxIndex = v;
-  }
   // Union-find; the smaller root index wins, so the result does not depend on triangle order.
-  const parent = new Int32Array(maxIndex + 1).fill(-1);
+  const parent = new Int32Array(largestIndex(indices) + 1).fill(-1);
   const find = (v: number): number => {
     let root = v;
     while (parent[root] !== root) root = parent[root];
@@ -242,6 +272,7 @@ export function countComponents(indices: ArrayLike<number>): number {
     components--;
   };
   for (let t = 0; t < indices.length; t += 3) {
+    if (isDegenerate(indices, t)) continue;
     const a = touch(indices[t]);
     union(a, touch(indices[t + 1]));
     union(find(indices[t]), touch(indices[t + 2]));
@@ -255,22 +286,19 @@ export function countComponents(indices: ArrayLike<number>): number {
  * fan when they share an edge that ends at the vertex. 0 on a manifold surface, with or without boundary.
  */
 export function countNonManifoldVertices(indices: ArrayLike<number>): number {
-  const triangles = triangleCount(indices);
-  let maxIndex = -1;
-  for (let i = 0; i < indices.length; i++) {
-    const v = indices[i];
-    if (!(v >= 0) || !Number.isInteger(v)) throw new RangeError(`index ${v} at ${i} is not a vertex index`);
-    if (v > maxIndex) maxIndex = v;
-  }
-  const vertexCount = maxIndex + 1;
+  const vertexCount = largestIndex(indices) + 1;
   // Triangles around every vertex, in compressed rows.
   const offsets = new Uint32Array(vertexCount + 1);
-  for (let i = 0; i < indices.length; i++) offsets[indices[i] + 1]++;
+  for (let t = 0; t < indices.length; t += 3) {
+    if (isDegenerate(indices, t)) continue;
+    for (let c = 0; c < 3; c++) offsets[indices[t + c] + 1]++;
+  }
   for (let v = 0; v < vertexCount; v++) offsets[v + 1] += offsets[v];
-  const around = new Uint32Array(indices.length);
+  const around = new Uint32Array(offsets[vertexCount]);
   const fill = offsets.slice(0, vertexCount);
-  for (let t = 0; t < triangles; t++) {
-    for (let c = 0; c < 3; c++) around[fill[indices[3 * t + c]]++] = t;
+  for (let t = 0; t < indices.length; t += 3) {
+    if (isDegenerate(indices, t)) continue;
+    for (let c = 0; c < 3; c++) around[fill[indices[t + c]]++] = t;
   }
   // Per vertex: union the triangles that share a second vertex. `owner[w]` is the first local triangle seen
   // with neighbor w; `stamp[w] === v + 1` says the entry belongs to the current vertex.
@@ -293,7 +321,7 @@ export function countNonManifoldVertices(indices: ArrayLike<number>): number {
     };
     let fans = count;
     for (let k = 0; k < count; k++) {
-      const t = 3 * around[start + k];
+      const t = around[start + k];
       for (let c = 0; c < 3; c++) {
         const w = indices[t + c];
         if (w === v) continue;
@@ -315,7 +343,10 @@ export function countNonManifoldVertices(indices: ArrayLike<number>): number {
   return pinched;
 }
 
-/** The axis-aligned bounding box of a position buffer; `min` > `max` (±Infinity) when there are no vertices. */
+/**
+ * The axis-aligned bounding box of a position buffer; `min` > `max` (±Infinity) when there are no vertices. A
+ * NaN coordinate is skipped.
+ */
 export function meshBounds(positions: ArrayLike<number>): { min: Vec3; max: Vec3 } {
   if (positions.length % 3 !== 0) throw new RangeError(`position buffer length ${positions.length} is not a multiple of 3`);
   const min: Vec3 = [Infinity, Infinity, Infinity];

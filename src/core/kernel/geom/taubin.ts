@@ -8,6 +8,10 @@
 //
 // Only positions move: the index buffer is read, never written, so the topology (and watertightness) of the
 // mesh is exactly what it was.
+//
+// What it does to the volume: ten pairs change a marching-cubes sphere of radius 23 voxels or more by less
+// than 0.1%. The filter cannot tell a small feature from noise, though: below a radius of about 4 voxels the
+// change passes 2% (thin ears and tails are what §2.9.5 item 5 flags as "crochet flat").
 
 /** Default number of λ|μ pairs (§2.9.5 item 3). Sculpting uses 3 while a stroke is in progress (§2.9.8). */
 export const TAUBIN_PAIRS = 10;
@@ -106,7 +110,8 @@ export function vertexAdjacency(indices: ArrayLike<number>, vertexCount: number)
  * Every step uses the positions of the previous step for all vertices (simultaneous update), and the work is
  * done in double precision and rounded to the array's precision once at the end. A vertex without neighbors
  * stays where it is. Boundary vertices of an open mesh are smoothed like any other vertex (they are not
- * pinned); the meshes of this app are closed.
+ * pinned); the meshes of this app are closed. Positions are not validated: a NaN spreads to the neighbors of
+ * its vertex, one ring per step.
  */
 export function taubinSmooth<P extends Float32Array | Float64Array>(positions: P, indices: ArrayLike<number>, options: TaubinOptions = {}): P {
   const pairs = options.pairs ?? TAUBIN_PAIRS;

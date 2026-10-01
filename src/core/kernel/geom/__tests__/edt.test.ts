@@ -347,33 +347,54 @@ describe('signedEdt1d/2d/3d', () => {
     }
   });
 
-  it('is positive exactly on the mask and never 0', () => {
+  it('is positive exactly on the mask and never 0: at least 1 spacing away from 0, or half with `boundary`', () => {
     const rng = mulberry32(42);
     for (let trial = 0; trial < 50; trial++) {
       const dims = randomDims(rng, 2, 16);
       const mask = randomMask(rng, total(dims));
-      const sd = signedEdt2d(mask, dims[0], dims[1]);
+      const samples = signedEdt2d(mask, dims[0], dims[1]);
+      const boundary = signedEdt2d(mask, dims[0], dims[1], { measureTo: 'boundary' });
       let wrong = 0;
       for (let i = 0; i < mask.length; i++) {
-        if (mask[i] !== 0 ? !(sd[i] >= 0.5) : !(sd[i] <= -0.5)) wrong++;
+        if (mask[i] !== 0 ? !(samples[i] >= 1 && boundary[i] >= 0.5) : !(samples[i] <= -1 && boundary[i] <= -0.5)) wrong++;
       }
       expect(wrong).toBe(0);
     }
   });
 
-  it("'boundary' (default) is the exact distance to a straight boundary; 'samples' is half a pixel off", () => {
+  it("the default is 'samples', the exact transform of §2.9.3: max(sd, 0) is the plain inside transform", () => {
+    const rng = mulberry32(43);
+    for (let trial = 0; trial < 30; trial++) {
+      const dims = randomDims(rng, 2, 14);
+      const mask = randomMask(rng, total(dims));
+      const sd = signedEdt2d(mask, dims[0], dims[1]);
+      expect(sd).toEqual(signedEdt2d(mask, dims[0], dims[1], { measureTo: 'samples' }));
+      // The distance from every pixel to the nearest OUTSIDE pixel is the plain transform of the inverted mask.
+      const inside = edt2d(
+        mask.map((v) => (v ? 0 : 1)),
+        dims[0],
+        dims[1],
+      );
+      const outside = edt2d(mask, dims[0], dims[1]);
+      expect(sd.map((v) => Math.max(v, 0))).toEqual(inside);
+      expect(sd.map((v) => Math.max(-v, 0))).toEqual(outside);
+    }
+  });
+
+  it("'boundary' is the exact distance to a straight boundary between the pixels; 'samples' is half a pixel more", () => {
     // Inside: x ≥ 4 on a 10×3 image. The boundary is the line x = 3.5 (in pixel-center coordinates).
     const mask = Uint8Array.from({ length: 30 }, (_, i) => (i % 10 >= 4 ? 1 : 0));
-    const toBoundary = signedEdt2d(mask, 10, 3);
-    const toSamples = signedEdt2d(mask, 10, 3, { measureTo: 'samples' });
+    const toBoundary = signedEdt2d(mask, 10, 3, { measureTo: 'boundary' });
+    const toSamples = signedEdt2d(mask, 10, 3);
     for (let i = 0; i < 30; i++) {
       const x = i % 10;
       expect(toBoundary[i]).toBe(x - 3.5);
       expect(toSamples[i]).toBe(x >= 4 ? x - 3 : x - 4);
     }
-    expect(Array.from(signedEdt1d([0, 0, 1, 1, 1, 0]))).toEqual([-1.5, -0.5, 0.5, 1.5, 0.5, -0.5]);
-    expect(Array.from(signedEdt1d([0, 0, 1, 1, 1, 0], { measureTo: 'samples' }))).toEqual([-2, -1, 1, 2, 1, -1]);
-    expect(Array.from(signedEdt1d([0, 1, 1], { spacing: 0.5 }))).toEqual([-0.25, 0.25, 0.75]);
+    expect(Array.from(signedEdt1d([0, 0, 1, 1, 1, 0]))).toEqual([-2, -1, 1, 2, 1, -1]);
+    expect(Array.from(signedEdt1d([0, 0, 1, 1, 1, 0], { measureTo: 'boundary' }))).toEqual([-1.5, -0.5, 0.5, 1.5, 0.5, -0.5]);
+    expect(Array.from(signedEdt1d([0, 1, 1], { spacing: 0.5 }))).toEqual([-0.5, 0.5, 1]);
+    expect(Array.from(signedEdt1d([0, 1, 1], { spacing: 0.5, measureTo: 'boundary' }))).toEqual([-0.25, 0.25, 0.75]);
   });
 
   it("on a disc, 'boundary' is within half a pixel of the true distance and unbiased at the outline; 'samples' is up to a pixel long", () => {
@@ -422,10 +443,12 @@ describe('signedEdt1d/2d/3d', () => {
     expect(Array.from(signedEdt3d(new Uint8Array(8).fill(1), [2, 2, 2], { measureTo: 'samples' }))).toEqual(Array(8).fill(Infinity));
     expect(Array.from(signedEdt1d([]))).toEqual([]);
     // Inside touches the left edge of the image: distances are measured to the outside pixels on the right only.
-    expect(Array.from(signedEdt1d([1, 1, 1, 0]))).toEqual([2.5, 1.5, 0.5, -0.5]);
+    expect(Array.from(signedEdt1d([1, 1, 1, 0]))).toEqual([3, 2, 1, -1]);
     // One inside pixel in the middle of 3×3.
-    const d = Math.fround(-(Math.SQRT2 - 0.5));
-    expect(Array.from(signedEdt2d([0, 0, 0, 0, 1, 0, 0, 0, 0], 3, 3))).toEqual([d, -0.5, d, -0.5, 0.5, -0.5, d, -0.5, d]);
+    const d = Math.fround(-Math.SQRT2);
+    expect(Array.from(signedEdt2d([0, 0, 0, 0, 1, 0, 0, 0, 0], 3, 3))).toEqual([d, -1, d, -1, 1, -1, d, -1, d]);
+    const h = Math.fround(-(Math.SQRT2 - 0.5));
+    expect(Array.from(signedEdt2d([0, 0, 0, 0, 1, 0, 0, 0, 0], 3, 3, { measureTo: 'boundary' }))).toEqual([h, -0.5, h, -0.5, 0.5, -0.5, h, -0.5, h]);
   });
 
   it('feeds marching cubes: a voxel ball becomes one closed surface of the right volume', () => {
@@ -464,53 +487,80 @@ describe('signedEdt1d/2d/3d', () => {
 // ---- narrow band → whole grid ----------------------------------------------------------------------------
 
 describe('extendSignedDistance3d', () => {
-  it('fills every unknown sample with ‖p − q‖ + |sdf[q]| for the seed q of its side that wins the squared transform', () => {
+  it('gives every unknown sample the smaller of: the distance to the nearest crossing, and ‖p − q‖ + |sdf[q]| for the known sample that wins the squared transform', () => {
     const rng = mulberry32(51);
     let checked = 0;
-    for (let trial = 0; trial < 60; trial++) {
+    let viaCrossing = 0;
+    for (let trial = 0; trial < 80; trial++) {
       const dims = randomDims(rng, 3, 6) as [number, number, number];
       const n = total(dims);
       const spacing: [number, number, number] = trial % 2 === 0 ? [1, 1, 1] : [0.5 + rng(), 0.5 + rng(), 0.5 + rng()];
       const sdf = new Float64Array(n);
+      const knownShare = 0.15 + 0.6 * rng();
       for (let i = 0; i < n; i++) {
         const side = rng() < 0.5 ? 1 : -1;
-        sdf[i] = rng() < 0.3 ? side * rng() * 2 : side * Infinity;
+        sdf[i] = rng() < knownShare ? side * rng() * 2 : side * Infinity;
       }
       const before = Float64Array.from(sdf);
       expect(extendSignedDistance3d(sdf, dims, { spacing })).toBe(sdf);
+      // Brute force. The crossings: on every lattice edge between two known samples of different sides, the
+      // zero of the line through the two values.
+      const crossings: [number, number, number][] = [];
+      for (let p = 0; p < n; p++) {
+        const a = before[p];
+        if (!Number.isFinite(a)) continue;
+        const at = coords(p, dims);
+        for (let axis = 0; axis < 3; axis++) {
+          if (at[axis] + 1 >= dims[axis]) continue;
+          const b = before[p + (axis === 0 ? 1 : axis === 1 ? dims[0] : dims[0] * dims[1])];
+          if (!Number.isFinite(b) || a >= 0 === b >= 0) continue;
+          const point: [number, number, number] = [at[0] * spacing[0], at[1] * spacing[1], at[2] * spacing[2]];
+          point[axis] += (a / (a - b)) * spacing[axis];
+          crossings.push(point);
+        }
+      }
+      let anyKnown = false;
+      for (let q = 0; q < n; q++) if (Number.isFinite(before[q])) anyKnown = true;
       for (let p = 0; p < n; p++) {
         if (Number.isFinite(before[p])) {
           expect(sdf[p]).toBe(before[p]);
           continue;
         }
         const side = before[p] > 0 ? 1 : -1;
-        // Brute force: the smallest squared cost over the known samples of this side…
-        let best = Infinity;
-        for (let q = 0; q < n; q++) {
-          if (!Number.isFinite(before[q]) || side * before[q] < 0) continue;
-          best = Math.min(best, gap2(p, q, dims, spacing) + before[q] ** 2);
-        }
-        if (best === Infinity) {
-          expect(sdf[p]).toBe(side * Infinity);
+        if (!anyKnown) {
+          expect(sdf[p]).toBe(before[p]);
           continue;
         }
-        // …and the sum for a seed that attains it (the kernel works in float32, so allow near-ties).
+        const at = coords(p, dims);
+        let toCrossing = Infinity;
+        for (const c of crossings) {
+          toCrossing = Math.min(toCrossing, Math.hypot(at[0] * spacing[0] - c[0], at[1] * spacing[1] - c[1], at[2] * spacing[2] - c[2]));
+        }
+        // The smallest squared cost over ALL known samples, of either side…
+        let best = Infinity;
+        for (let q = 0; q < n; q++) {
+          if (Number.isFinite(before[q])) best = Math.min(best, gap2(p, q, dims, spacing) + before[q] ** 2);
+        }
+        // …and the result for a sample that attains it (the kernel works in float32, so allow near-ties).
         let matches = false;
         for (let q = 0; q < n && !matches; q++) {
-          if (!Number.isFinite(before[q]) || side * before[q] < 0) continue;
+          if (!Number.isFinite(before[q])) continue;
           const cost = gap2(p, q, dims, spacing) + before[q] ** 2;
           if (cost > best * (1 + 1e-5) + 1e-9) continue;
-          const value = side * (Math.sqrt(gap2(p, q, dims, spacing)) + Math.abs(before[q]));
-          if (Math.abs(sdf[p] - value) <= 1e-9 * Math.max(1, Math.abs(value))) matches = true;
+          const value = side * Math.min(toCrossing, Math.sqrt(gap2(p, q, dims, spacing)) + Math.abs(before[q]));
+          if (Math.abs(sdf[p] - value) <= 1e-6 * Math.max(1, Math.abs(value))) matches = true;
         }
         expect(matches).toBe(true);
+        if (Math.abs(Math.abs(sdf[p]) - toCrossing) <= 1e-6 * Math.max(1, toCrossing)) viaCrossing++;
         checked++;
       }
     }
-    expect(checked).toBeGreaterThan(2000);
+    // 1769 unknown samples; the crossing bound decides 1258 of them, the known-sample bound the other 511.
+    expect(checked).toBe(1769);
+    expect(viaCrossing).toBe(1258);
   });
 
-  it('on a sphere with a ±2 voxel band the far field is within 0.6 voxel and never too small; √(squared) is 1.9 voxels short', () => {
+  it('on a sphere with a ±2 voxel band the far field is within 0.13 voxel; the square root of the seeded transform is 1.9 voxels short', () => {
     const n = 64;
     const dims: [number, number, number] = [n, n, n];
     const exact = new Float32Array(n * n * n);
@@ -520,7 +570,7 @@ describe('extendSignedDistance3d', () => {
     }
     const band = Float32Array.from(exact, (d) => (Math.abs(d) <= 2 ? d : d > 0 ? Infinity : -Infinity));
     const sdf = extendSignedDistance3d(Float32Array.from(band), dims);
-    // What a literal reading of §2.9.8 gives: the square root of the transform seeded with d².
+    // What a literal reading of §2.9.8 gives: the square root of the transform seeded with d², per side.
     const literal = new Float32Array(exact.length);
     for (const side of [1, -1]) {
       const seeds = Float32Array.from(band, (d) => (Number.isFinite(d) && side * d >= 0 ? d * d : Infinity));
@@ -532,13 +582,13 @@ describe('extendSignedDistance3d', () => {
     let sum = 0;
     let far = 0;
     let literalLow = 0;
-    let signErrors = 0;
+    let wrong = 0;
     for (let i = 0; i < exact.length; i++) {
       if (Number.isFinite(band[i])) {
-        if (sdf[i] !== band[i]) signErrors++;
+        if (sdf[i] !== band[i]) wrong++;
         continue;
       }
-      if (sdf[i] > 0 !== exact[i] > 0) signErrors++;
+      if (sdf[i] > 0 !== exact[i] > 0) wrong++;
       // Error of the magnitude, in voxels.
       const err = Math.abs(sdf[i]) - Math.abs(exact[i]);
       low = Math.min(low, err);
@@ -547,28 +597,83 @@ describe('extendSignedDistance3d', () => {
       far++;
       literalLow = Math.min(literalLow, Math.abs(literal[i]) - Math.abs(exact[i]));
     }
-    expect(signErrors).toBe(0);
+    expect(wrong).toBe(0);
     expect(far).toBeGreaterThan(200000);
-    // Measured: 0 … +0.525 voxel, mean 0.069; the literal form reaches −1.92 (mean 1.50).
-    expect(low).toBeGreaterThan(-1e-4);
-    expect(high).toBeLessThan(0.6);
-    expect(sum / far).toBeLessThan(0.1);
+    // Measured: −0.006 … +0.127 voxel, mean 0.012; the literal form reaches −1.92 (mean 1.50). The small
+    // negative error is the straight-line zero between two samples of a curved surface.
+    expect(low).toBeGreaterThan(-0.02);
+    expect(high).toBeLessThan(0.2);
+    expect(sum / far).toBeLessThan(0.025);
     expect(literalLow).toBeLessThan(-1.5);
   });
 
-  it('keeps known samples, leaves a side without seeds infinite, and seeds both sides from a known 0', () => {
+  it('is within a tenth of a voxel on a plane, whatever its tilt, and within a voxel next to the sharp edges of a box', () => {
+    const n = 48;
+    const dims: [number, number, number] = [n, n, n];
+    const worst = (f: (x: number, y: number, z: number) => number, counted: (i: number, d: number) => boolean): number => {
+      const exact = new Float32Array(n * n * n);
+      for (let i = 0; i < exact.length; i++) {
+        const [x, y, z] = coords(i, dims);
+        exact[i] = f(x, y, z);
+      }
+      const sdf = extendSignedDistance3d(
+        Float32Array.from(exact, (d) => (Math.abs(d) <= 2 ? d : d > 0 ? Infinity : -Infinity)),
+        dims,
+      );
+      let high = 0;
+      for (let i = 0; i < exact.length; i++) {
+        if (Math.abs(exact[i]) > 2 && counted(i, exact[i])) high = Math.max(high, Math.abs(Math.abs(sdf[i]) - Math.abs(exact[i])));
+      }
+      return high;
+    };
+    // Planes through the middle of the grid: only samples whose nearest plane point is inside the grid count
+    // (beyond the grid the plane is not known).
+    for (const tilt of [0, 0.013, 0.1, 0.4, 1]) {
+      const length = Math.hypot(tilt, 1, 0.7 * tilt);
+      const u = [tilt / length, 1 / length, (0.7 * tilt) / length];
+      const plane = (x: number, y: number, z: number): number => -((x - 23.5) * u[0] + (y - 23.2) * u[1] + (z - 23.5) * u[2]);
+      const footInside = (i: number, d: number): boolean => {
+        const [x, y, z] = coords(i, dims);
+        return [x + d * u[0], y + d * u[1], z + d * u[2]].every((c) => c >= 0 && c <= n - 1);
+      };
+      // Measured: 0 (tilt 0), 0.003, 0.036, 0.073, 0.096 voxel.
+      expect(worst(plane, footInside)).toBeLessThan(0.15);
+    }
+    // A box: its convex edges and corners are not crossed by any lattice edge; the second bound covers them.
+    const box = (x: number, y: number, z: number): number => {
+      const q = [Math.abs(x - 23.3) - 13.2, Math.abs(y - 23.6) - 9.7, Math.abs(z - 23.1) - 16.4];
+      return -(Math.hypot(Math.max(q[0], 0), Math.max(q[1], 0), Math.max(q[2], 0)) + Math.min(Math.max(q[0], q[1], q[2]), 0));
+    };
+    // Measured: 0.49 voxel.
+    expect(worst(box, () => true)).toBeLessThan(0.75);
+  });
+
+  it('keeps known samples, uses a known sample of either side, and changes nothing without any', () => {
     // Nothing unknown: nothing changes.
     const known = Float32Array.of(1, 0.5, -0.5, -1, 1, 0.5, -0.5, -1);
     expect(extendSignedDistance3d(Float32Array.from(known), [4, 2, 1])).toEqual(known);
-    // Unknown inside samples, but only outside seeds: they stay +Infinity; the outside is filled.
+    // Nothing known: nothing changes.
+    const blank = Float64Array.of(Infinity, Infinity, -Infinity, -Infinity);
+    expect(Array.from(extendSignedDistance3d(Float64Array.from(blank), [4, 1, 1]))).toEqual(Array.from(blank));
+    // Only an outside sample is known: no crossing, so every sample is bounded through it — also the inside
+    // ones (the surface is 0.5 beyond it; 1 + 0.5 and 2 + 0.5 are upper bounds, not the distance).
     const lonely = extendSignedDistance3d(Float64Array.of(Infinity, Infinity, -0.5, -Infinity), [4, 1, 1]);
-    expect(Array.from(lonely)).toEqual([Infinity, Infinity, -0.5, -1.5]);
+    expect(Array.from(lonely)).toEqual([2.5, 1.5, -0.5, -1.5]);
     // A known 0 lies on the surface: both sides measure from it.
     const zero = extendSignedDistance3d(Float64Array.of(Infinity, Infinity, 0, -Infinity, -Infinity), [5, 1, 1], { spacing: 0.5 });
     expect(Array.from(zero)).toEqual([1, 0.5, 0, -0.5, -1]);
-    // 1D by hand, with a weighted seed on each side.
+    // A crossing between +0.25 and −0.75, a quarter of the way: both bounds agree along the line.
     const line = extendSignedDistance3d(Float64Array.of(Infinity, Infinity, 0.25, -0.75, -Infinity, -Infinity), [1, 6, 1]);
     expect(Array.from(line)).toEqual([2.25, 1.25, 0.25, -0.75, -1.75, -2.75]);
+    // Off the line the crossing is nearer than any known sample plus its distance: 2×3, crossing at (0.5, 1).
+    const grid = extendSignedDistance3d(Float64Array.of(Infinity, Infinity, 0.5, -0.5, -Infinity, -Infinity), [2, 3, 1]);
+    expect(grid[0]).toBeCloseTo(Math.hypot(0.5, 1), 6);
+    expect(grid[1]).toBeCloseTo(Math.hypot(0.5, 1), 6);
+    expect(grid[4]).toBeCloseTo(-Math.hypot(0.5, 1), 6);
+    expect(grid[5]).toBeCloseTo(-Math.hypot(0.5, 1), 6);
+    // An absurdly large known value neither overflows the work array nor makes a NaN.
+    const huge = extendSignedDistance3d(Float64Array.of(1e25, Infinity, -1, -Infinity), [4, 1, 1]);
+    expect(Array.from(huge)).toEqual([1e25, 2, -1, -2]);
   });
 
   it('rejects NaN and malformed grids', () => {
