@@ -1584,8 +1584,8 @@ by hand. A property test checks that every symmetric profile gives symmetric cou
   round would have been 5); **exact** → `5 5 6 8 10 12 14 16 18 20 22 24 26 27 29 31` (hysteresis gives
   `2 4 6 8 …`; the pole rule sets n₁ = 5 and lifts n₂ to 5).
 - Horn: cone r = 0.6, h = 1.8 worked from the base (`crochet.start: 'bottom'`, closed base disc), exact →
-  `7 13 19 17 14 12 10 8 6 5`, then close (raw tail `… 6 4 2` → `… 6 5 5` → the one raised duplicate dropped);
-  BLO on Rnd 4, written `BLO (…, sc2tog) …`.
+  `7 13 19 17 14 12 10 8 6 5`, then close (raw tail `… 6 4 2` → `… 6 5 5` → trailing duplicate dropped);
+  BLO on Rnd 4, written `BLO (…, sc2tog) …`. (The dropped duplicate is the one round the closed-end rule raised.)
 - Closed cylinder ⌀1.5 × 2 → `6 12 18 24 | 24 ×10 | 18 12 6` (17 rounds), BLO on rounds 5 and 15; exact text:
   ```
   Rnd 4: sc, (inc, 2 sc) x 5, inc, sl st (24)
@@ -1630,8 +1630,8 @@ by hand. A property test checks that every symmetric profile gives symmetric cou
   'sewn'`, `seam = π·d`, d = the largest distance between two of the piece's §2.10.3 ring samples that lie inside
   the parent (at least 4·wS). Printed rounded up to the next 2 in; cm = that × 2.54 rounded to 5 cm. A closed sewn
   piece prints "Fasten off, leaving a {6 + T}" tail; close with the Ultimate Finish and keep the rest of the tail to
-  sew the piece on." Examples (worsted, firm gauge wS 0.20475): 12-st arm opening → 14" (35 cm); 36-st opening → 30" (75 cm)
-  (3 × 7.371 + 6 = 28.1 → 30; at the light gauge it is 28" (70 cm)). Yardage uses
+  sew the piece on." Examples (worsted): 12-st arm opening → 14" (35 cm); 36-st opening → 30" (75 cm) (the 36-st one
+  at the firm gauge wS 0.20475: 3 × 7.371 + 6 = 28.1 → 30; at the light gauge it is 28" (70 cm)). Yardage uses
   the same lengths (§2.8).
 - **Cues inside a piece**, printed after the named round in this order:
   0. **Front marker** (pieces that host eyes, features, patches or other pieces): after the piece's reference round
