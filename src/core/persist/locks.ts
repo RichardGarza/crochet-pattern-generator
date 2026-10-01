@@ -80,7 +80,16 @@ export function holdLock(locks: LockManagerLike, name: string, o: { ifAvailable?
  * exclusive, FIFO, `ifAvailable` and `steal`, but nothing is shared with other tabs. Compare-and-swap saves
  * still keep two tabs from overwriting each other there; only the read-only mode is missing.
  */
-export function createLocalLocks(): LockManagerLike {
+/** What `navigator.locks.query()` answers, as far as the repository reads it. */
+export interface LockSnapshot {
+  held?: { name?: string }[];
+  pending?: { name?: string }[];
+}
+
+/** A lock manager that can also list its locks (`navigator.locks`, the in-tab fallback). */
+export type QueryableLocks = LockManagerLike & { query?(): Promise<LockSnapshot> };
+
+export function createLocalLocks(): LockManagerLike & { query(): Promise<LockSnapshot> } {
   interface Entry {
     cb: (lock: unknown) => Promise<unknown>;
     resolve(v: unknown): void;
@@ -115,6 +124,10 @@ export function createLocalLocks(): LockManagerLike {
     if (entry) grant(name, entry);
   };
   return {
+    // The in-tab manager knows only this tab's locks (it exists where there is no navigator.locks).
+    async query() {
+      return { held: [...held.keys()].map((name) => ({ name })), pending: [...queues].flatMap(([name, q]) => q.map(() => ({ name }))) };
+    },
     request(name, o, cb) {
       return new Promise((resolve, reject) => {
         const entry: Entry = { cb, resolve, reject };

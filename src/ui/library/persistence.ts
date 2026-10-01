@@ -5,21 +5,30 @@
 //
 // In a browser the app starts it once, when `useAutosave.ts` is first imported (`autoStartPersistence`; the
 // shell imports that module at start-up). Tests call `startPersistence({ repo, … })` with fakes and `stop()`.
+//
+// T8.2 adds the library (delete into "Recently deleted", restore, delete for good, duplicate, export, import),
+// the start-up chores (after the unload journal: purge "Recently deleted" past 30 days, then asset GC — both
+// before this tab opens a project, GC skipped while another tab edits), the folder mirror (started when the
+// server's probe says it is on) and the preferences (the `settings` store).
 import { hrefFor, navigate as routerNavigate } from '../../app/router';
 import { notify as appNotify } from '../../app/toasts';
 import { createAutosave, type Autosave, type ConflictInfo } from '../../core/persist/autosave';
 import { collectAssetKeys, expandAssetKeys } from '../../core/persist/assets';
 import { buildProjectFile, projectFileBlob, projectFileName } from '../../core/persist/fileFormat';
+import { createFolderApi, createFolderMirror, type FolderApi, type FolderMirror, type MirrorState } from '../../core/persist/folderClient';
 import { createLocalLocks } from '../../core/persist/locks';
 import {
+  TRASH_PREFIX,
   createPersistRepository,
   isProjectNotFound,
   realTimers,
+  type ImportOutcome,
   type PersistRepository,
   type RepositoryEvent,
   type Timers,
 } from '../../core/persist/repo';
 import { appStore, type AppStore, type Route } from '../../state/appStore';
+import { libraryStore, type LibraryStore } from '../../state/slices/library';
 import { projectStore, type ProjectStore } from '../../state/projectStore';
 import type { ChannelLike, LockManagerLike } from '../../types/entryPoints';
 import type { ProjectDoc } from '../../types/project';
@@ -62,6 +71,22 @@ export interface PersistenceDeps {
   install?: boolean;
   /** Where the unload journal goes (default `localStorage`; null: none). */
   journal?: JournalStorage | null;
+  /** The library's state (default: the app's `libraryStore`). */
+  library?: LibraryStore;
+  /**
+   * Start-up chores before any project opens: purge "Recently deleted" past 30 days, then asset GC (skipped
+   * while another tab edits). The app turns it on; tests opt in.
+   */
+  startup?: boolean;
+  /**
+   * The folder mirror (§5.5.4). Absent: none. `whenCapable`: start once the server's probe says the mirror is
+   * on (`capabilities.folderMirror`); otherwise it starts at once.
+   */
+  mirror?: { api?: FolderApi; locks?: LockManagerLike; timers?: Timers; debounceMs?: number; whenCapable?: boolean; newId?: () => string };
+  /** The key of the stored preferences in the `settings` store (null: preferences are not persisted). */
+  prefsKey?: string | null;
+  /** Object URLs for thumbnails (default `URL.createObjectURL` / `revokeObjectURL`). */
+  objectUrls?: { create(blob: Blob): string; revoke(url: string): void } | null;
 }
 
 export interface PersistenceSession {
@@ -80,6 +105,24 @@ export interface PersistenceSession {
   snapshot(label: string): Promise<void>;
   /** Resolves when the unload journal of the last page was replayed (projects open only after it). */
   readonly recovered: Promise<Recovery[]>;
+  /** Resolves when the start-up chores are done (or gave up waiting): projects open after it. */
+  readonly ready: Promise<void>;
+  /** The folder mirror, once it runs. */
+  mirror(): FolderMirror | null;
+  /** Library delete: into "Recently deleted" (with an Undo toast). False when it was refused. */
+  deleteProject(id: string): Promise<boolean>;
+  /** Back from "Recently deleted". */
+  restoreProject(id: string): Promise<boolean>;
+  /** Deletes a project of "Recently deleted" for good (the folder keeps a copy in Backups/deleted). */
+  deleteForever(id: string): Promise<boolean>;
+  duplicateProject(id: string): Promise<string | null>;
+  /** Downloads a stored project as `.crochet.json` (with its snapshots). */
+  exportProject(id: string): Promise<boolean>;
+  /** Imports a `.crochet.json` file (never overwrites). */
+  importFile(file: Blob): Promise<ImportOutcome | null>;
+  refreshTrash(): Promise<void>;
+  /** Loads a thumbnail into the library's cache (`library.thumbs[key]`). */
+  loadThumbnail(key: string): Promise<void>;
   stop(): void;
 }
 
@@ -134,6 +177,13 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
   const previousBackend = (deps.getBackend ?? projectBackend)();
   const journal = deps.journal === undefined ? browserJournalStorage() : deps.journal;
   const now = deps.now ?? (() => new Date());
+  const library = deps.library ?? libraryStore;
+  const objectUrls =
+    deps.objectUrls === undefined
+      ? typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
+        ? { create: (blob: Blob) => URL.createObjectURL(blob), revoke: (url: string) => URL.revokeObjectURL(url) }
+        : null
+      : deps.objectUrls;
   const page = deps.page === undefined ? (typeof window !== 'undefined' && typeof document !== 'undefined' ? { document, window } : null) : deps.page;
 
   let handOver: HandOverState = 'idle';
@@ -145,6 +195,7 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
     return s.doc !== null && s.changeId !== s.savedChangeId;
   };
   const openId = (): string | null => store.getState().doc?.id ?? null;
+  const nameOf = (id: string): string => app.getState().library?.find((p) => p.id === id)?.name ?? 'this project';
 
   // ---- banners
 
@@ -247,10 +298,30 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
       return list;
     });
 
+  // Start-up chores (§5.5.5): after the journal, before any project opens. A slow GC (a large library) never
+  // holds the first open back for more than 2 s: at start-up this tab names nothing GC could take.
+  const chores = recovered.then(async () => {
+    if (!deps.startup) return;
+    try {
+      await repo.purgeTrash();
+    } catch {
+      // retried at the next start
+    }
+    try {
+      await repo.gcAssets({ skipWhileEditing: true });
+    } catch {
+      // retried at the next start
+    }
+  });
+  const ready: Promise<void> = Promise.race([
+    chores,
+    deps.startup ? new Promise<void>((resolve) => (deps.timers ?? realTimers).setTimeout(resolve, 2000)) : chores,
+  ]).then(() => undefined);
+
   const backend: ProjectBackend = {
     kind: 'repository',
     async create(doc) {
-      await recovered;
+      await ready;
       const stored = await repo.create(doc);
       // §5.5.2: ask for persistent storage when a project is created (idempotent).
       void repo.requestPersistence().then((persisted) => {
@@ -259,8 +330,10 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
       return stored;
     },
     async open(id) {
-      await recovered;
+      await ready;
       try {
+        // A project in "Recently deleted" opens only after it is restored (the library offers that).
+        if ((await repo.getMeta(TRASH_PREFIX + id).catch(() => undefined)) !== undefined) return null;
         const opened = await repo.open(id, 'edit');
         return { doc: opened.doc, readOnly: opened.readOnly };
       } catch (error) {
@@ -303,8 +376,28 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
       case 'saved':
         app.getState().upsertSummary(e.summary);
         return;
+      case 'trashed':
+        app.getState().removeSummary(e.id);
+        void session.refreshTrash();
+        if (openId() === e.id) {
+          banners.show({
+            id: BANNER.removed,
+            kind: 'info',
+            tone: 'warn',
+            title: 'This project was deleted in another tab',
+            message: 'It is in Recently deleted. Any change you make here brings it back.',
+            dismissible: true,
+          });
+        }
+        return;
+      case 'restored':
+        app.getState().upsertSummary(e.summary);
+        void session.refreshTrash();
+        if (openId() === e.id) banners.dismiss(BANNER.removed);
+        return;
       case 'removed':
         app.getState().removeSummary(e.id);
+        void session.refreshTrash();
         if (e.remote && openId() === e.id) {
           banners.show({
             id: BANNER.removed,
@@ -517,6 +610,114 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
     },
 
     recovered,
+    ready,
+
+    mirror: () => mirror,
+
+    async deleteProject(id) {
+      const name = nameOf(id);
+      try {
+        await repo.trash(id);
+      } catch (error) {
+        notify.error(
+          (error as { name?: unknown })?.name === 'ProjectLockedError'
+            ? `“${name}” is open in another tab. Close it there, then delete it.`
+            : `Couldn’t delete “${name}”: ${messageOf(error)}`,
+        );
+        return false;
+      }
+      notify.info(`Moved “${name}” to Recently deleted. It stays there for 30 days.`, {
+        key: `library-deleted-${id}`,
+        action: { label: 'Undo', run: () => void session.restoreProject(id) },
+        timeoutMs: 8000,
+      });
+      return true;
+    },
+
+    async restoreProject(id) {
+      try {
+        const summary = await repo.restoreFromTrash(id);
+        notify.success(`Restored “${summary.name}”.`, { key: `library-restored-${id}` });
+        return true;
+      } catch (error) {
+        notify.error(`Couldn’t restore it: ${messageOf(error)}`);
+        return false;
+      }
+    },
+
+    async deleteForever(id) {
+      const name = library.getState().trash?.find((t) => t.summary.id === id)?.summary.name ?? nameOf(id);
+      try {
+        await repo.remove(id);
+      } catch (error) {
+        notify.error(
+          (error as { name?: unknown })?.name === 'ProjectLockedError'
+            ? `“${name}” is open in another tab. Close it there first.`
+            : `Couldn’t delete “${name}”: ${messageOf(error)}`,
+        );
+        return false;
+      }
+      notify.info(`Deleted “${name}” for good.`, { key: `library-purged-${id}` });
+      return true;
+    },
+
+    async duplicateProject(id) {
+      library.getState().setBusy(id, 'Duplicating…');
+      try {
+        const copy = await repo.duplicate(id);
+        notify.success(`Made a copy: “${copy.name}”.`, { key: `library-copy-${id}` });
+        return copy.id;
+      } catch (error) {
+        notify.error(`Couldn’t duplicate it: ${messageOf(error)}`);
+        return null;
+      } finally {
+        library.getState().setBusy(id, null);
+      }
+    },
+
+    async exportProject(id) {
+      library.getState().setBusy(id, 'Exporting…');
+      try {
+        const doc = await repo.peek(id);
+        if (!doc) throw new Error('It is no longer in this browser.');
+        download(await repo.exportFile(id), projectFileName(doc.name));
+        notify.success(`Exported “${doc.name}”.`, { key: `library-export-${id}` });
+        return true;
+      } catch (error) {
+        notify.error(`Couldn’t export it: ${messageOf(error)}`);
+        return false;
+      } finally {
+        library.getState().setBusy(id, null);
+      }
+    },
+
+    async importFile(file) {
+      try {
+        const outcome = await repo.importFile(file);
+        if (outcome.status === 'already-present') notify.info(`“${outcome.name}” is already in your library.`, { key: 'library-import' });
+        else if (outcome.status === 'imported-as-copy') notify.success(`Imported as “${outcome.name}” — a project with the same id is already here, so it was kept as a copy.`, { key: 'library-import' });
+        else notify.success(`Imported “${outcome.name}”.`, { key: 'library-import' });
+        return outcome;
+      } catch (error) {
+        notify.error(`Couldn’t import that file: ${messageOf(error)}`);
+        return null;
+      }
+    },
+
+    async refreshTrash() {
+      try {
+        library.getState().setTrash(await repo.listTrash());
+      } catch {
+        library.getState().setTrash([]);
+      }
+    },
+
+    async loadThumbnail(key) {
+      if (!objectUrls || library.getState().thumbs[key]) return;
+      const blob = await repo.getAssetByKey(key).catch(() => undefined);
+      if (!blob || library.getState().thumbs[key]) return;
+      library.getState().setThumb(key, objectUrls.create(blob));
+    },
 
     async refreshLibrary() {
       await recovered;
@@ -533,6 +734,9 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
       if (stopped) return;
       stopped = true;
       for (const c of cleanups.splice(0).reverse()) c();
+      mirror?.dispose();
+      mirror = null;
+      library.getState().reset(objectUrls?.revoke);
       autosave.dispose();
       repo.close();
       setBackend(previousBackend);
@@ -540,14 +744,114 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
     },
   };
 
+  // ---- the folder mirror (§5.5.4)
+
+  let mirror: FolderMirror | null = null;
+  const startMirror = (): void => {
+    if (mirror || stopped || !deps.mirror) return;
+    const m = createFolderMirror({
+      repo,
+      api: deps.mirror.api ?? createFolderApi(),
+      locks: deps.mirror.locks,
+      timers: deps.mirror.timers ?? deps.timers,
+      debounceMs: deps.mirror.debounceMs,
+      newId: deps.mirror.newId,
+    });
+    mirror = m;
+    let seen: MirrorState = m.state();
+    let errorShown = false;
+    library.getState().setMirror(seen);
+    cleanups.push(
+      m.subscribe((state) => {
+        library.getState().setMirror(state);
+        for (const kept of state.keptBoth.slice(seen.keptBoth.length)) {
+          notify.info(`“${kept.name}” was changed both here and in the projects folder. Both are kept: the folder’s version is now “${kept.copyName}”.`, {
+            key: `mirror-kept-${kept.id}`,
+            timeoutMs: 0,
+          });
+        }
+        if (state.status === 'idle') errorShown = false;
+        if (state.status === 'error' && !errorShown) {
+          errorShown = true;
+          notify.warn(`Couldn’t copy to the projects folder: ${state.lastError ?? 'no answer'}. Your projects are still saved in this browser.`, { key: 'mirror-error' });
+        }
+        seen = state;
+      }),
+    );
+    void ready.then(() => m.reconcile()).catch(() => {});
+  };
+  if (deps.mirror) {
+    if (deps.mirror.whenCapable) {
+      if (app.getState().capabilities.folderMirror === true) startMirror();
+      else
+        cleanups.push(
+          app.subscribe((s) => {
+            if (s.capabilities.folderMirror === true) startMirror();
+          }),
+        );
+    } else {
+      startMirror();
+    }
+  }
+
+  // ---- preferences (the `settings` store; appStore.hydratePrefs)
+
+  // Every change is written synchronously to `localStorage` first (a journal, like the unload journal of
+  // documents: an IndexedDB write started just before a reload may never land), then to the `settings` store.
+  // At start the journal, when there is one, is the newest copy; otherwise the stored one; otherwise what the
+  // page started with (main.tsx read the theme back).
+  const prefsKey = deps.prefsKey === undefined ? null : deps.prefsKey;
+  if (prefsKey !== null) {
+    const journalKey = `${PREFS_JOURNAL_PREFIX}${prefsKey}`;
+    const readJournal = (): unknown => {
+      try {
+        const text = journal?.getItem(journalKey);
+        return text ? (JSON.parse(text) as unknown) : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    const writeJournal = (prefs: unknown): void => {
+      try {
+        journal?.setItem(journalKey, JSON.stringify(prefs));
+      } catch {
+        // storage refused: the settings store still gets it
+      }
+    };
+    void (async () => {
+      const stored = await repo.getSetting(prefsKey).catch(() => undefined);
+      if (stopped) return;
+      const latest = readJournal() ?? stored;
+      app.getState().hydratePrefs(latest === undefined ? app.getState().prefs : latest);
+      const hydrated = app.getState().prefs;
+      writeJournal(hydrated);
+      void repo.putSetting(prefsKey, hydrated).catch(() => {});
+      cleanups.push(
+        app.subscribe((s, prev) => {
+          if (!s.prefsHydrated || s.prefs === prev.prefs) return;
+          writeJournal(s.prefs);
+          void repo.putSetting(prefsKey, s.prefs).catch(() => {});
+        }),
+      );
+    })();
+  }
+
   setBackend(backend);
   if (deps.install) setCurrent(session);
   void session.refreshLibrary().catch((error: unknown) => {
     app.getState().setLibrary([]);
     notify.error(`Couldn’t read your saved projects: ${error instanceof Error ? error.message : String(error)}`);
   });
+  void session.refreshTrash();
   return session;
 }
+
+const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** The `settings` key of the preferences. */
+export const PREFS_KEY = 'prefs';
+/** `localStorage` key prefix of the preferences' synchronous copy. */
+export const PREFS_JOURNAL_PREFIX = 'cpg.prefs.';
 
 /** A channel for browsers without BroadcastChannel: talks to nobody. */
 function silentChannel(): ChannelLike {
@@ -565,8 +869,11 @@ export function autoStartPersistence(): PersistenceSession | null {
   if (!idb) return null;
   const locks = (navigator as { locks?: LockManagerLike | null }).locks ?? createLocalLocks();
   const channel = typeof BroadcastChannel === 'function' ? (name: string) => new BroadcastChannel(name) as unknown as ChannelLike : silentChannel;
-  const session = startPersistence({ repo: createPersistRepository({ idb, locks, channel }), install: true });
-  // Asset GC once the app has settled (only assets unreferenced for 7+ days go).
-  realTimers.setTimeout(() => void session.repo.gcAssets().catch(() => {}), 60_000);
-  return session;
+  return startPersistence({
+    repo: createPersistRepository({ idb, locks, channel }),
+    install: true,
+    startup: true,
+    mirror: { locks, whenCapable: true },
+    prefsKey: PREFS_KEY,
+  });
 }

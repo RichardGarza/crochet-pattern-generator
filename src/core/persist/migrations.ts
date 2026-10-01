@@ -33,6 +33,28 @@ export type MigrationTable = Readonly<Record<number, Migration>>;
 
 export const MIGRATIONS: MigrationTable = {};
 
+/**
+ * What is wrong with a migration table for `current` (empty when nothing): a missing step between 1 and
+ * `current`, or a step beyond it. A unit test runs it on `MIGRATIONS`, so raising `CURRENT_DOC_VERSION` without
+ * its migration fails the build instead of every old project at open.
+ *
+ * How to add version N + 1 (T8.2 scaffold):
+ *   1. write `migrate_vN_to_vN1(doc)` here (pure; keep every field; list deliberate renames in `drops`);
+ *   2. add it as `MIGRATIONS[N]` and raise `CURRENT_DOC_VERSION`;
+ *   3. add a fixture of a version-N document to the migration tests and check the fields it adds.
+ * Everything that reads a document — `open`, `.crochet.json` import, the folder mirror's restore and "load the
+ * folder version", backups — runs `migrateDoc`; the repository snapshots the original before writing back.
+ */
+export function checkMigrationTable(table: MigrationTable, current: number = CURRENT_DOC_VERSION): string[] {
+  const problems: string[] = [];
+  for (let v = 1; v < current; v++) if (!table[v]) problems.push(`no migration from version ${v} to ${v + 1}`);
+  for (const key of Object.keys(table)) {
+    const v = Number(key);
+    if (!Number.isInteger(v) || v < 1 || v >= current) problems.push(`a migration from version ${key}, outside 1…${current - 1}`);
+  }
+  return problems;
+}
+
 export class MigrationError extends Error {
   readonly code: 'not-a-project' | 'bad-version' | 'newer-version' | 'missing-step' | 'lost-fields';
   constructor(code: MigrationError['code'], message: string) {

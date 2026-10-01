@@ -10,7 +10,9 @@
 //   - schema upgrades: a `versionchange` from a newer tab flushes, closes this connection and tells the app
 //     ("This tab was closed for an update"); a blocked upgrade asks to close the other tabs;
 //   - snapshots (every 20 revs or 5 minutes, before migrations, imports and take-overs; retention of §5.5.2);
-//   - `.crochet.json` export and import (import never overwrites), asset store and GC, `storage.persist()`.
+//   - `.crochet.json` export and import (import never overwrites), asset store and GC, `storage.persist()`;
+//   - the library (T8.2): "Recently deleted" (a deleted project stays 30 days, `meta` entry `trash:<id>`),
+//     duplicate, and the `meta` entries of the folder mirror (`sync:<id>`).
 //
 // Unit tests pass fake-indexeddb, the lock fake and the channel fake (src/test/fakes.ts); the app passes
 // nothing and gets `indexedDB`, `navigator.locks` and `BroadcastChannel`.
@@ -21,7 +23,7 @@ import { assetKeyOf, collectAssetKeys, expandAssetKeys, refFor, selectUnreferenc
 import { MAX_REV, buildProjectFile, checkDoc, isValidProjectId, parseProjectFile, projectFileBlob, type ProjectFileRevision } from './fileFormat';
 import type { IDBPTransaction } from 'idb';
 import { openDatabase, projectRange, type CpgDatabase, type CpgDB, type StoredAsset, type StoredRevision } from './idb';
-import { holdLock, lockName, type HeldLock } from './locks';
+import { holdLock, lockName, type HeldLock, type LockSnapshot, type QueryableLocks } from './locks';
 import { CURRENT_DOC_VERSION, isNewerVersion, migrateDoc } from './migrations';
 import { revsToKeep, snapshotDue, type SnapshotInfo } from './snapshots';
 
@@ -37,6 +39,14 @@ export const HAND_OVER_TIMEOUT_MS = 5000;
 export const HAND_OVER_RETRY_MS = 100;
 /** How long a hand-over or an upgrade waits for the pending save before letting go anyway. */
 export const FLUSH_TIMEOUT_MS = 4000;
+/** "Recently deleted" keeps a project this long before it is purged (§5.5.5). */
+export const TRASH_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+/** `meta` key of a deleted project: `{ deletedAt }`. */
+export const TRASH_PREFIX = 'trash:';
+/** `meta` key of the folder mirror's sync base of a project (§5.5.1). */
+export const SYNC_PREFIX = 'sync:';
+/** `meta` key of a project deleted for good whose folder copy the mirror must still move away: `{ deletedAt, lastSyncedHash }`. */
+export const GONE_PREFIX = 'gone:';
 
 export interface Timers {
   setTimeout(fn: () => void, ms: number): unknown;
@@ -72,6 +82,11 @@ export interface RepositoryOptions {
   dbVersion?: number;
   handOverTimeoutMs?: number;
   flushTimeoutMs?: number;
+  /**
+   * Lists the origin's held Web Locks (`navigator.locks.query`): start-up GC skips its round while another tab
+   * edits a project. Default: the lock manager's own `query`, if it has one.
+   */
+  queryLocks?: () => Promise<LockSnapshot>;
 }
 
 export type LockLostReason = 'stolen' | 'handed-over' | 'failed';
@@ -85,6 +100,10 @@ export type RepositoryEvent =
   | { type: 'hand-over-requested'; id: string }
   | { type: 'saved'; id: string; rev: number; summary: ProjectSummary; remote: boolean }
   | { type: 'removed'; id: string; remote: boolean }
+  /** Moved to "Recently deleted" (the document is kept). */
+  | { type: 'trashed'; id: string; remote: boolean }
+  /** Back from "Recently deleted". */
+  | { type: 'restored'; id: string; summary: ProjectSummary; remote: boolean }
   /** A newer version of the app wants the database: the pending save is flushed, then the connection closes. */
   | { type: 'blocking' }
   | { type: 'closed-for-upgrade' }
@@ -117,6 +136,23 @@ export interface RevisionInfo {
   label: string;
 }
 
+/** A project in "Recently deleted". */
+export interface TrashEntry {
+  summary: ProjectSummary;
+  /** ISO time it was deleted. */
+  deletedAt: string;
+}
+
+/** A stored project as the folder mirror sees it. */
+export interface StoredProjectInfo {
+  id: string;
+  rev: number;
+  name: string;
+  trashed: boolean;
+}
+
+export type GcResult = { deleted: string[]; skipped?: 'editing-elsewhere' | 'no-lock-query' };
+
 /** The repository of the app: the frozen `ProjectRepository` plus what the session and the library need. */
 export interface PersistRepository extends ProjectRepository {
   readonly tabId: string;
@@ -147,10 +183,34 @@ export interface PersistRepository extends ProjectRepository {
   getAssetByKey(key: string): Promise<Blob | undefined>;
   /** Stores a blob under its key (hash checked), unless it is there already. */
   putAssetBlob(key: string, blob: Blob): Promise<void>;
-  /** Deletes assets referenced by no project and no snapshot, older than 7 days (§5.5.5). */
-  gcAssets(o?: { minAgeMs?: number }): Promise<{ deleted: string[] }>;
+  /**
+   * Deletes assets referenced by no project and no snapshot, older than 7 days (§5.5.5). With
+   * `skipWhileEditing` (start-up) the round is skipped while another tab holds a `project:` lock.
+   */
+  gcAssets(o?: { minAgeMs?: number; skipWhileEditing?: boolean }): Promise<GcResult>;
   getSetting(key: string): Promise<unknown>;
   putSetting(key: string, value: unknown): Promise<void>;
+  /** The `meta` store (per installation, never exported): `sync:<id>`, `trash:<id>`. */
+  getMeta(key: string): Promise<unknown>;
+  putMeta(key: string, value: unknown): Promise<void>;
+  deleteMeta(key: string): Promise<void>;
+  /** Every stored project (trashed ones too) with its rev: what the folder mirror compares. */
+  storedProjects(): Promise<StoredProjectInfo[]>;
+  /** A stored document without taking its lock (migrated in memory, never written); undefined when absent. */
+  peek(id: string): Promise<ProjectDoc | undefined>;
+  /**
+   * Library delete: snapshots the project and moves it to "Recently deleted" (kept 30 days). Refuses a project
+   * another tab is editing (`ProjectLockedError`).
+   */
+  trash(id: string): Promise<void>;
+  /** Back from "Recently deleted". */
+  restoreFromTrash(id: string): Promise<ProjectSummary>;
+  /** "Recently deleted", newest first. */
+  listTrash(): Promise<TrashEntry[]>;
+  /** Deletes for good (`remove`) the projects deleted more than `keepMs` ago; skips any another tab holds. */
+  purgeTrash(o?: { keepMs?: number }): Promise<string[]>;
+  /** A copy of a stored project under a new id, named "<name> (copy)"; assets are shared by key. */
+  duplicate(id: string): Promise<ProjectSummary>;
   /** `navigator.storage.persist()`; null when there is no storage manager. */
   requestPersistence(): Promise<boolean | null>;
   estimate(): Promise<{ usage: number; quota: number } | null>;
@@ -205,6 +265,10 @@ export function summaryOfDoc(doc: ProjectDoc): ProjectSummary {
   };
 }
 
+/** Library order: last changed first, then by id (names may repeat, §5.5.2). */
+export const newestFirst = (a: ProjectSummary, b: ProjectSummary): number =>
+  a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+
 /** "<name> (copy, 14:05)" — the conflict copy's name (§5.5.2). */
 export function copyName(name: string, at: Date): string {
   return `${name} (copy, ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')})`;
@@ -217,7 +281,7 @@ export function importedName(name: string, at: Date): string {
 
 const defaultId = (): string => crypto.randomUUID();
 
-type TxStore = 'projects' | 'assets' | 'revisions';
+type TxStore = 'projects' | 'assets' | 'revisions' | 'meta';
 
 /** The content of a document for "identical" (§5.5.3): everything but the persistence counters. */
 const contentOf = (doc: ProjectDoc): string => canonicalJson({ ...doc, rev: 0, updatedAt: '' });
@@ -230,6 +294,8 @@ type ChannelMessage =
   | { type: 'released'; id: string; to: string }
   | { type: 'saved'; id: string; rev: number; summary: ProjectSummary; from: string }
   | { type: 'removed'; id: string; from: string }
+  | { type: 'trashed'; id: string; from: string }
+  | { type: 'restored'; id: string; summary: ProjectSummary; from: string }
   | { type: 'taken-over'; id: string; from: string };
 
 function readMessage(data: unknown): ChannelMessage | null {
@@ -240,9 +306,12 @@ function readMessage(data: unknown): ChannelMessage | null {
     case 'release':
     case 'saved':
     case 'removed':
+    case 'trashed':
+    case 'restored':
     case 'taken-over':
       if (typeof m.from !== 'string') return null;
       if (m.type === 'saved' && (typeof m.rev !== 'number' || typeof m.summary !== 'object' || m.summary === null)) return null;
+      if (m.type === 'restored' && (typeof m.summary !== 'object' || m.summary === null)) return null;
       return m as ChannelMessage;
     case 'released':
       return typeof m.to === 'string' ? (m as ChannelMessage) : null;
@@ -269,7 +338,8 @@ function defaultStorage(): StorageLike | null {
 export function createPersistRepository(o: RepositoryOptions = {}): PersistRepository {
   const factory = o.idb ?? (globalThis as { indexedDB?: IDBFactory }).indexedDB;
   if (!factory) throw new Error('createProjectRepository: no IndexedDB (pass `idb`)');
-  const locks = o.locks ?? defaultLocks();
+  const locks: QueryableLocks = o.locks ?? defaultLocks();
+  const queryLocks = o.queryLocks ?? (typeof locks.query === 'function' ? () => locks.query!() : undefined);
   const now = o.now ?? (() => new Date());
   const newId = o.newId ?? defaultId;
   const timers = o.timers ?? realTimers;
@@ -440,6 +510,12 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
       case 'removed':
         if (m.from !== tabId) emit({ type: 'removed', id: m.id, remote: true });
         return;
+      case 'trashed':
+        if (m.from !== tabId) emit({ type: 'trashed', id: m.id, remote: true });
+        return;
+      case 'restored':
+        if (m.from !== tabId) emit({ type: 'restored', id: m.id, summary: m.summary, remote: true });
+        return;
       case 'taken-over':
         return; // the stolen lock's AbortError tells the old holder
     }
@@ -538,16 +614,25 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
       return asset.blob.type ? asset.blob : new Blob([asset.blob], { type: asset.mime });
     };
 
+  /** The ids in "Recently deleted". */
+  const trashedIds = async (d: CpgDatabase): Promise<Set<string>> => {
+    if (!d.objectStoreNames.contains('meta')) return new Set(); // a foreign or damaged database: nothing trashed
+    const keys = await d.getAllKeys('meta', IDBKeyRange.bound(TRASH_PREFIX, TRASH_PREFIX + '\uffff'));
+    return new Set(keys.map((k) => String(k).slice(TRASH_PREFIX.length)));
+  };
+
   const repo: PersistRepository = {
     tabId,
     isClosed: () => closed !== null,
 
     async list() {
-      const docs = await (await db()).getAll('projects');
+      const d = await db();
+      const docs = await d.getAll('projects');
+      const trashed = await trashedIds(d);
       return docs
-        .filter((d) => typeof d === 'object' && d !== null && typeof d.id === 'string')
+        .filter((doc) => typeof doc === 'object' && doc !== null && typeof doc.id === 'string' && !trashed.has(doc.id))
         .map(summaryOfDoc)
-        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : a.id < b.id ? -1 : 1));
+        .sort(newestFirst);
     },
 
     async create(doc) {
@@ -625,13 +710,18 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
     async save(doc, newAssets, o) {
       checkSavable(doc);
       const at = now();
-      const result = await inTransaction(['projects', 'assets', 'revisions'], async (tx) => {
+      const result = await inTransaction(['projects', 'assets', 'revisions', 'meta'], async (tx) => {
         const projects = tx.objectStore('projects');
         const stored = await projects.get(doc.id);
         const storedRev = stored?.rev ?? 0;
         if (storedRev > o.baseRev || (stored && isNewerVersion(stored.version))) {
           return { ok: false as const, conflict: { storedRev } };
         }
+        // An edit of a project in "Recently deleted" (a tab that had it open, "Edit here instead", a journal
+        // replay) takes it out again: new work is never purged with the deleted project (§5.5.5).
+        const meta = tx.objectStore('meta');
+        const untrashed = (await meta.getKey(TRASH_PREFIX + doc.id)) !== undefined;
+        if (untrashed) await meta.delete(TRASH_PREFIX + doc.id);
         const rev = Math.max(storedRev, o.baseRev) + 1;
         if (!Number.isSafeInteger(rev) || rev > MAX_REV) throw new RangeError(`The revision counter of this project is exhausted (${rev}).`);
         const assets = tx.objectStore('assets');
@@ -644,10 +734,15 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
         }
         const revisions = tx.objectStore('revisions');
         if (snapshotDue(await newestSnapshot(revisions, doc.id), rev, at)) await writeSnapshot(revisions, next, AUTOSAVE_LABEL, at);
-        return { ok: true as const, rev, next, missing };
+        return { ok: true as const, rev, next, missing, untrashed };
       });
       if (!result.ok) return result;
       announceSaved(result.next);
+      if (result.untrashed) {
+        const summary = summaryOfDoc(result.next);
+        emit({ type: 'restored', id: doc.id, summary, remote: false });
+        post({ type: 'restored', id: doc.id, summary, from: tabId });
+      }
       return { ok: true, rev: result.rev, ...(result.missing.length > 0 ? { missingAssets: result.missing } : {}) };
     },
 
@@ -770,10 +865,17 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
       const mine = held.get(id)?.held() ?? false;
       if (!mine && !(await acquire(id, { ifAvailable: true }))) throw new ProjectLockedError(id, 'close it');
       try {
-        await inTransaction(['projects', 'revisions'], async (tx) => {
+        await inTransaction(['projects', 'revisions', 'meta'], async (tx) => {
           await tx.objectStore('projects').delete(id);
           const revisions = tx.objectStore('revisions');
           for (const key of await revisions.getAllKeys(projectRange(id))) await revisions.delete(key);
+          const meta = tx.objectStore('meta');
+          await meta.delete(TRASH_PREFIX + id);
+          // A tombstone for the folder mirror: what it last synced of this project, so that its folder copy is
+          // moved to Backups/deleted even when the mirror starts after this delete (and never offered back).
+          const base = (await meta.get(SYNC_PREFIX + id)) as { lastSyncedHash?: unknown } | undefined;
+          if (base && typeof base.lastSyncedHash === 'string') await meta.put({ deletedAt: now().toISOString(), lastSyncedHash: base.lastSyncedHash }, GONE_PREFIX + id);
+          await meta.delete(SYNC_PREFIX + id);
         });
       } finally {
         release(id);
@@ -888,6 +990,17 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
 
     async gcAssets(opts = {}) {
       const minAgeMs = opts.minAgeMs ?? ASSET_GC_MIN_AGE_MS;
+      if (opts.skipWhileEditing) {
+        // A long-lived tab may still name (in its undo history) an asset no stored document names: never collect
+        // while another tab edits a project (§5.5.5). Without a way to ask, skip too — it only costs disk.
+        if (!queryLocks) return { deleted: [], skipped: 'no-lock-query' };
+        const snapshot = await queryLocks().catch(() => null);
+        if (!snapshot) return { deleted: [], skipped: 'no-lock-query' };
+        const mine = new Set(repo.heldIds().map(lockName));
+        if ((snapshot.held ?? []).some((l) => typeof l.name === 'string' && l.name.startsWith(lockName('')) && !mine.has(l.name))) {
+          return { deleted: [], skipped: 'editing-elsewhere' };
+        }
+      }
       const d = await db();
       // 1. References of every project and snapshot, then of the JSON assets they name (read outside a transaction).
       const referenced = new Set<string>();
@@ -922,6 +1035,122 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
 
     async putSetting(key, value) {
       await (await db()).put('settings', value, key);
+    },
+
+    async getMeta(key) {
+      return (await db()).get('meta', key);
+    },
+
+    async putMeta(key, value) {
+      await (await db()).put('meta', value, key);
+    },
+
+    async deleteMeta(key) {
+      await (await db()).delete('meta', key);
+    },
+
+    async storedProjects() {
+      const d = await db();
+      const trashed = await trashedIds(d);
+      return (await d.getAll('projects'))
+        .filter((doc) => typeof doc === 'object' && doc !== null && typeof doc.id === 'string')
+        .map((doc) => ({ id: doc.id, rev: doc.rev, name: doc.name, trashed: trashed.has(doc.id) }));
+    },
+
+    async peek(id) {
+      const raw = await readDoc(id);
+      return raw ? migrated(raw).doc : undefined;
+    },
+
+    async trash(id) {
+      const mine = held.get(id)?.held() ?? false;
+      if (!mine && !(await acquire(id, { ifAvailable: true }))) throw new ProjectLockedError(id, 'close it');
+      const at = now();
+      try {
+        // The lock is held while the entry is written: no other tab can open the project for editing meanwhile.
+        await inTransaction(['projects', 'revisions', 'meta'], async (tx) => {
+          const stored = await tx.objectStore('projects').get(id);
+          if (!stored) throw new ProjectNotFoundError(id);
+          await writeSnapshot(tx.objectStore('revisions'), stored, 'Before delete', at);
+          await tx.objectStore('meta').put({ deletedAt: at.toISOString() }, TRASH_PREFIX + id);
+        });
+      } finally {
+        if (!mine) release(id);
+      }
+      emit({ type: 'trashed', id, remote: false });
+      post({ type: 'trashed', id, from: tabId });
+    },
+
+    async restoreFromTrash(id) {
+      const summary = await inTransaction(['projects', 'meta'], async (tx) => {
+        const stored = await tx.objectStore('projects').get(id);
+        if (!stored) throw new ProjectNotFoundError(id);
+        await tx.objectStore('meta').delete(TRASH_PREFIX + id);
+        return summaryOfDoc(stored);
+      });
+      emit({ type: 'restored', id, summary, remote: false });
+      post({ type: 'restored', id, summary, from: tabId });
+      return summary;
+    },
+
+    async listTrash() {
+      const d = await db();
+      const range = IDBKeyRange.bound(TRASH_PREFIX, TRASH_PREFIX + '\uffff');
+      const keys = await d.getAllKeys('meta', range);
+      const values = await d.getAll('meta', range);
+      const out: TrashEntry[] = [];
+      for (let i = 0; i < keys.length; i++) {
+        const id = String(keys[i]).slice(TRASH_PREFIX.length);
+        const doc = await d.get('projects', id);
+        if (!doc) continue; // purged elsewhere; the stale entry goes with the next remove
+        const v = values[i] as { deletedAt?: unknown } | undefined;
+        out.push({ summary: summaryOfDoc(doc), deletedAt: typeof v?.deletedAt === 'string' ? v.deletedAt : new Date(0).toISOString() });
+      }
+      return out.sort((a, b) => (a.deletedAt < b.deletedAt ? 1 : a.deletedAt > b.deletedAt ? -1 : a.summary.id < b.summary.id ? -1 : 1));
+    },
+
+    async purgeTrash(opts = {}) {
+      const keepMs = opts.keepMs ?? TRASH_KEEP_MS;
+      const at = now().getTime();
+      const d = await db();
+      const range = IDBKeyRange.bound(TRASH_PREFIX, TRASH_PREFIX + '\uffff');
+      const keys = await d.getAllKeys('meta', range);
+      const values = await d.getAll('meta', range);
+      const purged: string[] = [];
+      for (let i = 0; i < keys.length; i++) {
+        const id = String(keys[i]).slice(TRASH_PREFIX.length);
+        const deletedAt = Date.parse(String((values[i] as { deletedAt?: unknown } | undefined)?.deletedAt));
+        // A malformed date is never old enough: keeping costs little.
+        if (!Number.isFinite(deletedAt) || at - deletedAt < keepMs) continue;
+        try {
+          await repo.remove(id);
+          purged.push(id);
+        } catch (error) {
+          if ((error as { name?: unknown }).name !== 'ProjectLockedError') throw error;
+        }
+      }
+      return purged;
+    },
+
+    async duplicate(id) {
+      const d = await db();
+      const raw = await d.get('projects', id);
+      if (!raw) throw new ProjectNotFoundError(id);
+      const source = migrated(raw).doc;
+      const copyId = newId();
+      if (!isValidProjectId(copyId)) throw new TypeError(`newId produced an invalid project id ${JSON.stringify(copyId)}`);
+      const names = new Set((await d.getAll('projects')).map((p) => p.name));
+      let name = `${source.name} (copy)`;
+      for (let n = 2; names.has(name); n++) name = `${source.name} (copy ${n})`;
+      const at = now();
+      const copy: ProjectDoc = { ...source, id: copyId, name, rev: 1, createdAt: at.toISOString(), updatedAt: at.toISOString() };
+      await inTransaction(['projects', 'revisions'], async (tx) => {
+        if (await tx.objectStore('projects').getKey(copyId)) throw new Error(`A project with the id ${copyId} exists already.`);
+        await tx.objectStore('projects').put(copy);
+        await writeSnapshot(tx.objectStore('revisions'), copy, `Duplicate of ${id}`, at);
+      });
+      announceSaved(copy);
+      return summaryOfDoc(copy);
     },
 
     async requestPersistence() {
