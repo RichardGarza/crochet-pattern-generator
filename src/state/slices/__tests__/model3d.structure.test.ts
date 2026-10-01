@@ -17,6 +17,7 @@ import {
   addPartBlockedReason,
   attachBlockedReason,
   attachPart,
+  beginResizeGesture,
   deleteBlockedReason,
   deleteParts,
   dropStaleProximal,
@@ -343,6 +344,9 @@ describe('Mirror (M)', () => {
   it('refuses parts on the middle line and mesh parts', () => {
     const m = teddy();
     expect(mirrorBlockedReason(m, 'muzzle')).toMatch(/middle line/);
+    // Close to the middle: its mirror image would overlap it.
+    const near = addPart(m, 'head', 'sphere', { dir: [0.04, 1, 0] }, { size: 0.6 });
+    expect(mirrorBlockedReason(near.model, near.id as string)).toMatch(/overlap/);
     expect(mirrorParts(m, ['muzzle']).model).toBe(m);
   });
 
@@ -490,3 +494,81 @@ describe('Make as, Start / axis (crochet.*)', () => {
     expect(byId(next).ear_r.crochet?.make).toBe('applique');
   });
 });
+
+describe('T6.2 review fixes', () => {
+  it('Mirror updates an existing unlinked twin on the other side instead of adding a second one', () => {
+    const m = movePart(unlinkMirror(teddy(), 'ear_l'), 'ear_l', [0.2, 0, 0], 'alone');
+    const { model, twins } = mirrorParts(m, ['ear_l']);
+    expect(twins).toEqual(['ear_r']);
+    expect(model.parts).toHaveLength(m.parts.length);
+    expect(byId(model).ear_r.mirrorOf).toBe('ear_l');
+    expect(byId(model).ear_r.position[0]).toBeCloseTo(-byId(model).ear_l.position[0], 9);
+    expectValid(model);
+  });
+
+  it('Mirror again carries what hangs from the twin (no floating inner ear)', () => {
+    const m = movePart(teddy(), 'ear_l', [0.3, 0.2, 0], 'subtree'); // unlinked edit: the pair is out of step
+    const { model } = mirrorParts(m, ['ear_l']);
+    expect(surfaceGap(byId(model).ear_r_inner, byId(model).ear_r)).toBeLessThanOrEqual(0.1);
+    // The same after a resize of the source.
+    const r = mirrorParts(setPartDim(teddy(), 'ear_l', 'rx', 1.2), ['ear_l']).model;
+    expect(surfaceGap(byId(r).ear_r_inner, byId(r).ear_r)).toBeLessThanOrEqual(0.1);
+  });
+
+  it('a linked edit copies only what changed: a color change does not re-pose an asymmetric twin', () => {
+    const m = teddy();
+    m.palette.push({ id: 'pink', hex: '#ffaacc' });
+    const asym = movePart(m, 'arm_r', [0, 0.4, 0], 'alone'); // an imported, intentionally different arm
+    const next = linkEdit(asym, setPartColor(asym, 'arm_l', 'pink'));
+    expect(byId(next).arm_r.color).toBe('pink');
+    expect(byId(next).arm_r.position).toEqual(byId(asym).arm_r.position);
+  });
+
+  it('new parts are named by their side and never share a label; copies count up', () => {
+    let m = teddy();
+    const a = addPart(m, 'body', 'capsule', { dir: [1, 0, 0] }, { label: 'Capsule' });
+    expect(a.id).toBe('capsule_l');
+    expect(byId(a.model).capsule_l.label).toBe('Left capsule');
+    m = a.model;
+    const b = addPart(m, 'body', 'capsule', { dir: [1, 0.2, 0] }, { label: 'Capsule' });
+    expect(b.id).toBe('capsule_l_2');
+    expect(byId(b.model)[b.id as string].label).toBe('Left capsule 2');
+    const c = addPart(m, 'body', 'capsule', { dir: [0, 1, 0] }, { label: 'Capsule' });
+    expect(byId(c.model)[c.id as string].label).toBe('Capsule');
+    const d1 = duplicateParts(m, ['capsule_l']);
+    const d2 = duplicateParts(d1.model, d1.ids);
+    expect(byId(d2.model)[d2.ids[0]].label).toBe('Left capsule copy 2');
+  });
+
+  it('add part clamps an out-of-range size; a box is turned flat onto the surface', () => {
+    for (const size of [0.01, 0.1, 45, 1000]) {
+      for (const type of ADDABLE_TYPES) expectValid(addPart(teddy(), 'body', type, { dir: [0, 0, 1] }, { size }).model);
+    }
+    const box = addPart(teddy(), 'body', 'box', { dir: [1, 0, 0] });
+    expect(overlapAlongRay(byId(box.model).body, byId(box.model)[box.id as string])).toBeCloseTo(0.1, 3);
+  });
+
+  it('a resize drag defers the twin’s re-anchoring like the source’s, and ends exact', () => {
+    const store = createProjectStore();
+    openTeddy(store);
+    let t = 0;
+    const timers: (() => void)[] = [];
+    const g = beginResizeGesture('Resize Left Ear', { store, now: () => t, schedule: (fn) => (timers.push(fn), () => undefined) })!;
+    g.update('ear_l', (m, o) => setPartDim(m, 'ear_l', 'rx', 1.0, o));
+    const innerAfterFull = byId(store.getState().doc!.threeD!.model!).ear_r_inner.position;
+    t = 10;
+    g.update('ear_l', (m, o) => setPartDim(m, 'ear_l', 'rx', 1.3, o));
+    const mid = store.getState().doc!.threeD!.model!;
+    expect(byId(mid).ear_r.dims).toEqual(byId(mid).ear_l.dims);
+    expect(byId(mid).ear_r_inner.position).toEqual(innerAfterFull);
+    g.end();
+    const end = store.getState().doc!.threeD!.model!;
+    const once = linkEdit(teddy(), setPartDim(teddy(), 'ear_l', 'rx', 1.3));
+    expect(withoutRevision(end)).toEqual(withoutRevision(once));
+  });
+});
+
+function withoutRevision(m: CrochetModelV1): Omit<CrochetModelV1, 'revision'> {
+  const { revision: _r, ...rest } = m;
+  return rest;
+}

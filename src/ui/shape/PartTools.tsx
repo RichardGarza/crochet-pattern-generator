@@ -111,6 +111,7 @@ export function HowItsMade({ part, readOnly }: { part: Part; readOnly: boolean }
   const name = partName(part);
   const many = ids.length > 1 ? ` (${ids.length} parts)` : '';
   const crocheted = make === 'auto' || make === 'piece';
+  const isRoot = !part.attach;
   const disabled = readOnly;
   return (
     <div className="shape-make">
@@ -118,11 +119,15 @@ export function HowItsMade({ part, readOnly }: { part: Part; readOnly: boolean }
         label="Make it as"
         value={make}
         disabled={disabled}
-        options={MAKE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+        options={MAKE_OPTIONS.map((o) => ({
+          value: o.value,
+          label: isRoot && (o.value === 'region' || o.value === 'applique') ? `${o.label} (not for the main piece)` : o.label,
+          disabled: isRoot && (o.value === 'region' || o.value === 'applique') && o.value !== make,
+        }))}
         onChange={(v) => setHints(ids, { make: v }, `Make ${ids.length > 1 ? `${ids.length} parts` : name} as ${MAKE_OPTIONS.find((o) => o.value === v)?.label.toLowerCase()}`)}
         hint={MAKE_OPTIONS.find((o) => o.value === make)?.hint}
       />
-      {crocheted && part.type !== 'mesh' && part.type !== 'flat' ? (
+      {crocheted && part.type !== 'mesh' && part.type !== 'flat' && part.type !== 'torus' ? (
         <>
           <Hinted hint={c.start ? 'Round 1 starts at this end; the other end is where it closes or is sewn on.' : 'Auto: an attached part starts at its free tip, the main piece at its bottom.'}>
             <SegmentedControl<'auto' | 'bottom' | 'top'>
@@ -140,7 +145,7 @@ export function HowItsMade({ part, readOnly }: { part: Part; readOnly: boolean }
             />
           </Hinted>
           {axisHonored(part.type) ? (
-            <Hinted hint="The direction the rounds stack up: X side to side, Y up and down, Z front to back.">
+            <Hinted hint="Along the part’s own directions (as if it were not turned): X side to side, Y up and down, Z front to back.">
               <SegmentedControl<'auto' | 'x' | 'y' | 'z'>
                 label="Rounds stack along"
                 size="sm"

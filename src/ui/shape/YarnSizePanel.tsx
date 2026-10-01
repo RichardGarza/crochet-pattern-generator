@@ -42,6 +42,10 @@ import {
 } from './yarnSize';
 import './yarnSize.css';
 
+/** Suggestions dismissed in this session ("Keep my yarn") and pre-fills already done, by project and suggestion. */
+const dismissedSuggestions = new Set<string>();
+const prefillDone = new Set<string>();
+
 type ModelTools = typeof import('./yarnSizeModel');
 let toolsPromise: Promise<ModelTools> | null = null;
 
@@ -78,15 +82,20 @@ export function YarnSizePanel({ context, onDone }: YarnSizePanelProps) {
   // §4.5 / §3.7.7: after an import into a project the import created, the panel pre-fills from `model.yarn`
   // (never over a gauge somebody set: otherwise it only offers it).
   const suggestion = yarnFromModel(model?.yarn);
+  const suggestionKey = suggestion ? JSON.stringify(suggestion) : '';
   const [prefilled, setPrefilled] = useState(false);
+  const [, forceDismiss] = useState(0);
+  const dismissKey = `${doc?.id ?? ''}:${suggestionKey}`;
   useEffect(() => {
-    if (context !== 'post-import' || readOnly || !suggestion || prefilled) return;
-    if (threeD?.origin === 'claude-design' && isPristineGauge(doc?.gauge) && !usesModelYarn(gauge, suggestion)) {
+    // Once per suggestion: also when the model arrives after the panel opened.
+    if (context !== 'post-import' || readOnly || !suggestion || prefillDone.has(dismissKey)) return;
+    const origin = threeD?.origin;
+    if ((origin === 'claude-design' || origin === 'describe') && isPristineGauge(doc?.gauge) && !usesModelYarn(gauge, suggestion)) {
+      prefillDone.add(dismissKey);
       if (applyModelYarn()) setPrefilled(true);
     }
-    // Once per mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [suggestionKey, context, readOnly]);
 
   if (!doc || !threeD) {
     return (
@@ -121,10 +130,15 @@ export function YarnSizePanel({ context, onDone }: YarnSizePanelProps) {
 
       <Panel title="Your yarn" icon="yarn">
         <div className="ysp-stack">
-          {suggestion && !usesModelYarn(gauge, suggestion) ? (
+          {suggestion && !usesModelYarn(gauge, suggestion) && !dismissedSuggestions.has(dismissKey) ? (
             <Banner
               tone="info"
               icon="sparkles"
+              onDismiss={() => {
+                dismissedSuggestions.add(dismissKey);
+                forceDismiss((n) => n + 1);
+              }}
+              dismissLabel="Keep my yarn"
               title="Claude Design suggested a yarn"
               actions={
                 <Button size="sm" disabledReason={disabled ? READ_ONLY : undefined} onClick={() => applyModelYarn()}>
@@ -215,6 +229,11 @@ export function YarnSizePanel({ context, onDone }: YarnSizePanelProps) {
       ) : null}
     </div>
   );
+}
+
+/** A number with a real minus sign (−0.125). */
+function signed(x: number): string {
+  return x < 0 ? `−${formatNumber(-x, 3)}` : formatNumber(x, 3);
 }
 
 function clearedText(cleared: ClearedField[]): string {
@@ -365,7 +384,7 @@ function TestBallFields({ gauge, units, disabled }: { gauge: GaugeSpec; units: U
     if (s !== null && c !== null && s > 0 && c > 0) setGauge('Test ball', withTestBall(gauge, { maxSts: s, circumferenceIn: c }));
     else if (gauge.testBall) setGauge('Clear the test ball', withTestBall(gauge, undefined));
   };
-  const warnings = gauge.testBall ? gaugeWarnings(gauge) : [];
+  const warnings = gauge.testBall ? gaugeWarnings(gauge).filter((w) => w.code !== 'W_GAUGE_LSC') : [];
   return (
     <Step n={1} title="Test ball" done={!!gauge.testBall}>
       <p className="ysp-hint">
@@ -439,6 +458,13 @@ function YarnPerStitchField({ gauge, units, disabled }: { gauge: GaugeSpec; unit
         disabled={disabled}
         onChange={(v) => setGauge(v === null ? 'Clear the yarn per stitch' : 'Yarn per stitch', withYarnPerStitch(gauge, v ?? undefined))}
       />
+      {gaugeWarnings(gauge)
+        .filter((w) => w.code === 'W_GAUGE_LSC')
+        .map((w) => (
+          <Banner key={w.message} tone="warn">
+            {w.message}
+          </Banner>
+        ))}
       <p className={gauge.lscCalibratedIn !== undefined ? 'ysp-result' : 'ysp-hint'}>
         {gauge.lscCalibratedIn !== undefined
           ? `${formatLength(gauge.lscCalibratedIn, units, 2)} of yarn per stitch: yarn amounts are now within ±5%.`
@@ -455,7 +481,8 @@ function LeanField({ ami, disabled }: { ami: AmiSettings; disabled: boolean }) {
       <p className="ysp-hint">Rounds worked in a spiral drift sideways a little, which moves stripes and spots. The pattern allows for it.</p>
       <div className="ysp-lean">
         <NumberField
-          label="Stitches per round"
+          label="Drift per round"
+          suffix="st"
           value={ami.leanStPerRnd}
           min={-LEAN_LIMIT}
           max={LEAN_LIMIT}
@@ -464,7 +491,7 @@ function LeanField({ ami, disabled }: { ami: AmiSettings; disabled: boolean }) {
           stepper
           disabled={disabled}
           onChange={(v) => v !== null && setAmi('Spiral lean', { leanStPerRnd: v })}
-          hint="0 turns it off. About 0.25 is usual for right-handers who yarn over."
+          hint="In stitches, from −2 to 2. 0 turns it off; about 0.25 is usual for right-handers who yarn over."
         />
         <Button size="sm" icon="ruler" disabledReason={disabled ? READ_ONLY : undefined} onClick={() => setOpen(true)}>
           Measure it…
@@ -496,10 +523,12 @@ function LeanDialog({ hand, onClose }: { hand: AmiSettings['hand']; onClose(): v
             disabledReason={lean === null ? 'Count the stitches first' : undefined}
             onClick={() => {
               if (lean === null) return;
-              if (setAmi('Spiral lean (measured)', { leanStPerRnd: lean })) onClose();
+              // The same value as before is a success too (0.25, the default, is the usual result).
+              setAmi('Spiral lean (measured)', { leanStPerRnd: lean });
+              onClose();
             }}
           >
-            {lean === null ? 'Use it' : `Use ${formatNumber(lean, 3)}`}
+            {lean === null ? 'Use it' : `Use ${signed(lean)}`}
           </Button>
         </>
       }

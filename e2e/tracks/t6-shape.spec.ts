@@ -234,20 +234,20 @@ test.describe('T6 Shape tab', () => {
     await expect(page.getByText(/Click on the model where the new cone goes/)).toBeVisible();
     const head = await frontViewPoint(page, 7.278905, TEDDY_BOX);
     await page.mouse.click(head.x - 45, head.y - 55);
-    await expect(page.getByRole('heading', { level: 2, name: 'Cone' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'Right cone' })).toBeVisible(); // the toy's own right: screen left in the Front view
     await expect(page.getByTestId('undo')).toHaveAccessibleName(/Undo Add cone to (Head|Left Ear)/);
     await expect(page.getByText('Every part touches its parent')).toBeVisible();
 
     // Mirror (M): the twin on the other side, linked.
     await page.keyboard.press('m');
-    await expect(page.getByRole('treeitem', { name: 'Cone mirrored', exact: true })).toBeVisible();
+    await expect(page.getByRole('treeitem', { name: 'Left cone', exact: true })).toBeVisible();
     await expect(page.getByText(/Mirrored with/)).toBeVisible();
     await expect(page.getByRole('treeitem')).toHaveCount(19);
     const xField = () => page.getByRole('spinbutton', { name: /^X left to right/ });
     const coneX = Number(await xField().inputValue());
-    await row(page, 'Cone mirrored').click();
+    await row(page, 'Left cone').click();
     expect(Number(await xField().inputValue())).toBeCloseTo(-coneX, 2);
-    await row(page, 'Cone').click();
+    await row(page, 'Right cone').click();
     await snap(page, info, 't6-mirror-front-light');
     await page.getByRole('group', { name: 'Camera' }).getByRole('button', { name: 'Reset' }).click();
     await snap(page, info, 't6-mirror-light');
@@ -267,6 +267,8 @@ test.describe('T6 Shape tab', () => {
     await snap(page, info, 't6-how-made-light');
     await page.getByRole('tab', { name: 'Yarn & size' }).click();
     await expect(page.getByRole('combobox', { name: 'Yarn weight' })).toBeVisible();
+    // The optional panels start collapsed here: really hidden, not only marked so.
+    await expect(page.getByRole('radio', { name: 'Classic' })).toBeHidden();
     await snap(page, info, 't6-yarn-size-light');
     await page.getByRole('button', { name: /Match your tension/ }).click();
     await page.getByRole('spinbutton', { name: 'Stitches in the widest round' }).fill('36');
@@ -291,7 +293,7 @@ test.describe('T6 Shape tab', () => {
     await page.getByRole('tab', { name: 'Shape' }).click();
     await expect(page.locator('[data-testid="shape-viewport"] canvas')).toBeVisible({ timeout: 60_000 });
     await page.getByRole('tab', { name: 'Part' }).click();
-    await row(page, 'Cone').click();
+    await row(page, 'Right cone').click();
     await snap(page, info, 't6-mirror-dark');
     await page.getByRole('button', { name: 'Add part' }).click();
     await snap(page, info, 't6-add-part-dark');
@@ -318,20 +320,20 @@ test.describe('T6 Shape tab', () => {
     await dialog.getByRole('combobox', { name: 'Side' }).selectOption('left');
     await dialog.getByRole('button', { name: 'Add the oval ball' }).focus();
     await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading', { level: 2, name: 'Oval ball' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'Left oval ball' })).toBeVisible();
     // M mirrors, ⌘D duplicates, ⌫ + Enter on Delete deletes.
     await page.locator('body').focus();
     await page.keyboard.press('m');
-    await expect(page.getByRole('treeitem', { name: 'Oval ball mirrored', exact: true })).toBeVisible();
+    await expect(page.getByRole('treeitem', { name: 'Right oval ball', exact: true })).toBeVisible();
     await page.keyboard.press('ControlOrMeta+d');
-    await expect(page.getByRole('heading', { level: 2, name: 'Oval ball copy' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'Left oval ball copy' })).toBeVisible();
     await page.keyboard.press('Backspace');
-    const del = page.getByRole('dialog', { name: 'Delete Oval ball copy?' });
+    const del = page.getByRole('dialog', { name: 'Delete Left oval ball copy?' });
     await expect(del.getByRole('button', { name: 'Cancel' })).toBeFocused();
     await del.getByRole('button', { name: 'Delete' }).focus();
     await page.keyboard.press('Enter');
-    await expect(page.getByRole('treeitem', { name: 'Oval ball copy', exact: true })).toHaveCount(0);
-    await expect(page.getByTestId('undo')).toHaveAccessibleName('Undo Delete Oval ball copy');
+    await expect(page.getByRole('treeitem', { name: 'Left oval ball copy', exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('undo')).toHaveAccessibleName('Undo Delete Left oval ball copy');
     // The "?" list shows the Shape tab's keys.
     await page.keyboard.press('?');
     await expect(page.getByRole('dialog').getByText('Shape tab')).toBeVisible();

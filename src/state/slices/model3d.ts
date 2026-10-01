@@ -13,7 +13,7 @@
 // child's subtree is translated by the displacement of its anchor on the parent's surface; children keep their
 // rotation and size.
 import { original, isDraft, type Draft } from 'immer';
-import { attachGraph, GAP_WARN_IN, GAP_FLOAT_IN, subtreeIds } from '../../core/model/attach';
+import { attachGraph, GAP_WARN_IN, GAP_FLOAT_IN, leftTwinId, subtreeIds } from '../../core/model/attach';
 import { mulMat3, type Mat3 } from '../../core/kernel/vec';
 import { MODEL_LIMITS } from '../../core/model/limits';
 import { DEFAULT_OVERLAP_IN, placeChildOnSurface, reanchorChildren } from '../../core/model/place';
@@ -34,6 +34,7 @@ import {
   roundCoord,
   roundVec3,
   type Rigid,
+  worldBounds,
 } from '../../core/model/transforms';
 import type { Issue } from '../../types/issues';
 import type { CrochetModelV1, Feature, Part, PartCrochetHints, Region, Vec3 } from '../../types/model';
@@ -606,7 +607,8 @@ let dragCounter = 0;
  */
 export interface ModelGesture {
   readonly start: CrochetModelV1;
-  update(edit: ModelEdit): boolean;
+  /** `reanchorTwins: false`: a mirror twin that changes size keeps its children until a later update (a resize preview). */
+  update(edit: ModelEdit, o?: { reanchorTwins?: boolean }): boolean;
   end(): void;
   cancel(): void;
 }
@@ -628,10 +630,10 @@ export function beginModelGesture(label: string, o: { store?: ProjectStore } & L
     );
   return {
     start,
-    update(edit) {
+    update(edit, uo) {
       if (ended || !store.getState().doc?.threeD?.model) return false;
       const next = edit(start);
-      return write(withRevision(start, linked ? linkEdit(start, next) : next));
+      return write(withRevision(start, linked ? linkEdit(start, next, { reanchor: uo?.reanchorTwins !== false }) : next));
     },
     end() {
       if (ended) return;
@@ -716,7 +718,7 @@ export function beginResizeGesture(label: string, o: ResizeGestureOptions = {}):
         cancelTimer = null;
         if (pending && !done) full(pending.edit);
       }, Math.max(0, interval - (now() - lastAt)));
-      return gesture.update(() => next);
+      return gesture.update(() => next, { reanchorTwins: false });
     },
     flush() {
       if (pending && !done) full(pending.edit);
@@ -741,6 +743,9 @@ export function beginResizeGesture(label: string, o: ResizeGestureOptions = {}):
 // T6.2 — structure edits (§4.2): Add part, Duplicate, Delete, Mirror (+ linked edits), Attach, Make as, Start
 // / axis. All pure like the edits above; none of them ever produces a repeated part id (§0.1).
 // =====================================================================================================
+
+/** Re-exported for the UI: a part and everything attached below it. */
+export { subtreeIds };
 
 // ---- ids
 
@@ -854,7 +859,7 @@ export function newPrimitiveDims(type: AddableType, d: number): Part['dims'] {
 /** The local axis a new part points along the surface normal: round shapes their length (Y), flat ones their face (Z). */
 const ORIENT_AXIS: Readonly<Record<AddableType, Vec3 | null>> = {
   sphere: null,
-  box: null,
+  box: [0, 1, 0],
   ellipsoid: [0, 1, 0],
   capsule: [0, 1, 0],
   cylinder: [0, 1, 0],
@@ -936,16 +941,20 @@ export function addPart(
 ): { model: CrochetModelV1; id: string | null } {
   const parent = byId(model, parentId);
   if (!parent || addPartBlockedReason(model, parentId) || !(ADDABLE_TYPES as readonly string[]).includes(type)) return { model, id: null };
-  const size = o.size !== undefined && Number.isFinite(o.size) && o.size > 0 ? o.size : newPartSize(parent);
-  const id = uniquePartId(model, o.id ?? NEW_PART_ID[type]);
+  const size = o.size !== undefined && Number.isFinite(o.size) && o.size > 0 ? Math.min(30, Math.max(0.3, o.size)) : newPartSize(parent);
   const color = o.color && model.palette.some((c) => c.id === o.color) ? o.color : parent.color;
   const normal = 'dir' in at ? at.dir : at.normal;
-  const draft = { id, type, dims: newPrimitiveDims(type, size), position: partCenter(parent), color, attach: { to: parentId } } as Part;
+  const draft = { id: 'new', type, dims: newPrimitiveDims(type, size), position: partCenter(parent), color, attach: { to: parentId } } as Part;
   const rotationDeg = orientationFor(type, normal);
   if (rotationDeg) draft.rotationDeg = rotationDeg;
-  const label = o.label?.trim().slice(0, MODEL_LIMITS.maxTextChars);
-  if (label) draft.label = label;
   const placed = placeChildOnSurface(parent, draft, at, o.overlapIn ?? ADD_OVERLAP_IN);
+  // Named by the side it lands on (the toy's own left is +X), so Mirror pairs it as `_l` / `_r`.
+  const x = partCenter(placed)[0];
+  const side = Math.abs(x) < MIRROR_CENTER_IN ? '' : x > 0 ? '_l' : '_r';
+  const id = uniquePartId(model, o.id ?? `${NEW_PART_ID[type]}${side}`);
+  placed.id = id;
+  const label = o.label?.trim().slice(0, MODEL_LIMITS.maxTextChars);
+  if (label) placed.label = uniqueLabel(model, o.id ? label : sidedLabel(label, x));
   return { model: { ...model, parts: [...model.parts, placed] }, id };
 }
 
@@ -987,12 +996,14 @@ export function duplicateParts(
     taken.add(copyId);
     map[id] = copyId;
   }
+  const done: Part[] = [];
   const copies = chosen.map((id) => {
     const p = byId(model, id) as Part;
     const copy = deepCopy(p);
     copy.id = map[id];
     copy.position = roundVec3([p.position[0] + offset[0], p.position[1] + offset[1], p.position[2] + offset[2]]);
-    copy.label = `${partName(p)} copy`.slice(0, MODEL_LIMITS.maxTextChars);
+    copy.label = uniqueLabel({ parts: [...model.parts, ...done] }, `${partName(p).replace(/ copy( \d+)?$/, '')} copy`).slice(0, MODEL_LIMITS.maxTextChars);
+    done.push(copy);
     delete copy.mirrorOf;
     copy.attach = p.attach ? { ...p.attach, to: map[p.attach.to] ?? p.attach.to } : { to: p.id };
     return copy;
@@ -1114,12 +1125,6 @@ export function rightTwinId(id: string): string | null {
   return null;
 }
 
-/** "Left Ear" → "Right Ear" (and left/right in any case); `null` when the label names no side. */
-function rightLabel(label: string): string | null {
-  if (!/\bleft\b/i.test(label)) return null;
-  return label.replace(/\bleft\b/gi, (w) => (w === 'LEFT' ? 'RIGHT' : w[0] === 'L' ? 'Right' : 'right'));
-}
-
 /**
  * The part mirror-linked with `partId`: the part it names in `mirrorOf`, or the part whose `mirrorOf` names it
  * (the first in parts order). `undefined` when it has none.
@@ -1142,7 +1147,7 @@ export function mirrorPair(model: Pick<CrochetModelV1, 'parts'>, partId: string)
   return p.mirrorOf === t.id ? { source: t, twin: p } : { source: p, twin: t };
 }
 
-/** Parts that sit on the middle line (|center x| below this) mirror onto themselves. */
+/** Parts whose center is this close to the middle line (or closer than half their width) overlap their mirror image. */
 export const MIRROR_CENTER_IN = 0.05;
 
 /** Why `partId` cannot be mirrored now, or null. */
@@ -1151,7 +1156,9 @@ export function mirrorBlockedReason(model: Pick<CrochetModelV1, 'parts'>, partId
   if (!p) return 'Select the part to mirror';
   if (p.type === 'mesh') return 'Sculpted parts are mirrored with the sculpt tools (X symmetry)';
   if (mirrorPair(model, partId)) return null; // re-mirrors the twin
-  if (Math.abs(partCenter(p)[0]) < MIRROR_CENTER_IN) return 'This part sits on the middle line, so its mirror image would land on itself';
+  const b = worldBounds(p);
+  const halfX = (b.max[0] - b.min[0]) / 2;
+  if (Math.abs(partCenter(p)[0]) < Math.max(MIRROR_CENTER_IN, halfX)) return 'This part sits on (or across) the middle line, so its mirror image would overlap it';
   if (model.parts.length >= MAX_PARTS) return `A model holds at most ${MAX_PARTS} parts`;
   return null;
 }
@@ -1228,42 +1235,117 @@ export function mirroredFrom(source: Part, onto?: Part): Part {
   return out as Part;
 }
 
+/** The id of the same part on the other side: `_l` ↔ `_r` (and left/right, fl/fr, bl/br); `null` without a side. */
+export function otherSideId(id: string): string | null {
+  return rightTwinId(id) ?? leftTwinId(id);
+}
+
+/** "Left Ear" ↔ "Right Ear" (any case); `null` when the label names no side. */
+function otherSideLabel(label: string): string | null {
+  if (!/\b(left|right)\b/i.test(label)) return null;
+  return label.replace(/\b(left|right)\b/gi, (w) => {
+    const to = w.toLowerCase() === 'left' ? 'right' : 'left';
+    return w === w.toUpperCase() ? to.toUpperCase() : w[0] === w[0].toUpperCase() ? to[0].toUpperCase() + to.slice(1) : to;
+  });
+}
+
+/** A label no other part has: `label`, else "label 2", "label 3", … */
+export function uniqueLabel(model: Pick<CrochetModelV1, 'parts'>, label: string): string {
+  const used = new Set(model.parts.map((p) => partName(p).toLowerCase()));
+  if (!used.has(label.toLowerCase())) return label;
+  for (let n = 2; ; n++) if (!used.has(`${label} ${n}`.toLowerCase())) return `${label} ${n}`;
+}
+
+/** "Cone" → "Left cone" / "Right cone" by the side of x = 0 the part is on (toy's left = +X); unchanged on the middle. */
+function sidedLabel(label: string, x: number): string {
+  if (Math.abs(x) < MIRROR_CENTER_IN || /\b(left|right)\b/i.test(label)) return label;
+  return `${x > 0 ? 'Left' : 'Right'} ${label[0].toLowerCase()}${label.slice(1)}`;
+}
+
 /**
- * Mirror (M): for each part, in tree order (parents first): a part that is mirror-linked re-mirrors its pair —
- * the twin (the part carrying `mirrorOf`) is rewritten from its source; otherwise a new twin is made across
- * x = 0 with `mirrorOf` = the part, the id `<id>_r` from `<id>_l` (`rightTwinId`; else `<id>_r`; made unique),
- * the label with Left → Right (else "<name> mirrored"), hanging from the mirror twin of the part's parent when
- * that has one (so `ear_l_inner`'s twin hangs from `ear_r`), else from the same parent. Mesh parts and parts on the
- * middle line are skipped (`mirrorBlockedReason`). Returns the twins' ids.
+ * Rewrites the twin `twinId` as `next` and keeps what hangs from it attached: after a change of size its direct
+ * children are re-anchored on its new surface (§4.2; skipped with `reanchor: false`, a drag's preview), after a move
+ * its subtree follows by the same rigid motion when `follow` is set. Parts in `skip` (rewritten by their own link)
+ * are left alone.
+ */
+function rewriteTwin(model: CrochetModelV1, twinId: string, next: Part, o: { follow: boolean; skip: ReadonlySet<string>; reanchor: boolean }): CrochetModelV1 {
+  const current = byId(model, twinId);
+  if (!current || sameJson(next, current)) return model;
+  const motion = multiplyRigid(composeRigid(partCenter(next), next.rotationDeg), invertRigid(composeRigid(partCenter(current), current.rotationDeg)));
+  const resized = !sameJson([current.type, current.dims], [next.type, next.dims]);
+  const m = withParts(model, new Map([[twinId, next]]));
+  const followers = subtreeIds(m, twinId).slice(1).filter((id) => !o.skip.has(id));
+  if (followers.length === 0) return m;
+  if (resized) {
+    if (!o.reanchor) return m;
+    const re = reanchorChildren(model, m, twinId);
+    const keep = new Map<string, Part>();
+    for (const id of followers) {
+      const q = byId(re, id);
+      if (q) keep.set(id, q);
+    }
+    return withParts(m, keep);
+  }
+  if (!o.follow || isIdentityRigid(motion)) return m;
+  const moved = new Map<string, Part>();
+  for (const id of followers) {
+    const q = byId(m, id);
+    if (q) moved.set(id, applyRigidToPart(q, motion));
+  }
+  return withParts(m, moved);
+}
+
+/**
+ * Mirror (M), for each part in tree order (parents first):
+ * - a mirror-linked part re-mirrors its pair: the twin (the part carrying `mirrorOf`) is rewritten from its source,
+ *   and what hangs from the twin follows it;
+ * - else an unlinked part of the same type on the other side (`otherSideId`: `ear_l` ↔ `ear_r`) is updated and
+ *   linked to it (§4.2 "create/update <id>_r");
+ * - else a new twin is made across x = 0 with `mirrorOf` = the part: id from the other side's token (else `_r` / `_l`
+ *   by the side the twin lands on; made unique), label Left ↔ Right (else "Right cone" / "Left cone"), hanging from
+ *   the mirror twin of the part's parent when that has one (so `ear_l_inner`'s twin hangs from `ear_r`), else from
+ *   the same parent.
+ * Mesh parts and parts that overlap their own mirror image are skipped (`mirrorBlockedReason`). Returns the twins.
  */
 export function mirrorParts(model: CrochetModelV1, ids: readonly string[]): { model: CrochetModelV1; twins: string[] } {
   const depth = (id: string) => ancestorIds(model, id).length;
   const order = existingIds(model, ids).sort((a, b) => depth(a) - depth(b));
   let m = model;
   const twins: string[] = [];
+  const none = new Set<string>();
   for (const id of order) {
     if (mirrorBlockedReason(m, id)) continue;
     const pair = mirrorPair(m, id);
     if (pair) {
-      const next = mirroredFrom(pair.source, pair.twin);
-      m = withParts(m, new Map([[pair.twin.id, sameJson(next, pair.twin) ? pair.twin : next]]));
+      m = rewriteTwin(m, pair.twin.id, mirroredFrom(pair.source, pair.twin), { follow: true, skip: none, reanchor: true });
       twins.push(pair.twin.id);
       continue;
     }
     const p = byId(m, id) as Part;
-    const twinId = uniquePartId(m, rightTwinId(p.id) ?? `${p.id}_r`);
+    const otherId = otherSideId(p.id);
+    const existing = otherId ? byId(m, otherId) : undefined;
+    if (existing && existing.type === p.type && !existing.mirrorOf && !m.parts.some((q) => q.mirrorOf === existing.id)) {
+      const next = mirroredFrom(p, existing);
+      next.mirrorOf = p.id;
+      m = rewriteTwin(m, existing.id, next, { follow: true, skip: none, reanchor: true });
+      if (byId(m, existing.id)?.mirrorOf !== p.id) m = withParts(m, new Map([[existing.id, { ...(byId(m, existing.id) as Part), mirrorOf: p.id }]]));
+      twins.push(existing.id);
+      continue;
+    }
     const twin = mirroredFrom(p);
-    twin.id = twinId;
+    const twinX = partCenter(twin)[0];
+    twin.id = uniquePartId(m, otherId ?? `${p.id}_${twinX > 0 ? 'l' : 'r'}`);
     twin.mirrorOf = p.id;
-    const label = p.label ? rightLabel(p.label) ?? `${p.label} mirrored` : null;
-    if (label) twin.label = label.slice(0, MODEL_LIMITS.maxTextChars);
-    else delete twin.label;
+    if (p.label) {
+      const label = otherSideLabel(p.label) ?? sidedLabel(p.label, twinX);
+      twin.label = uniqueLabel(m, label).slice(0, MODEL_LIMITS.maxTextChars);
+    } else delete twin.label;
     if (p.attach) {
       const parentTwin = mirrorTwin(m, p.attach.to);
       twin.attach = { ...p.attach, to: parentTwin ? parentTwin.id : p.attach.to };
     } else twin.attach = { to: p.id }; // a mirrored root hangs from it: one tree
     m = { ...m, parts: [...m.parts, twin] };
-    twins.push(twinId);
+    twins.push(twin.id);
   }
   return { model: m, twins };
 }
@@ -1281,70 +1363,85 @@ function sameJson(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-/** The fields a mirror link carries over (everything `mirroredFrom` writes). */
-function mirrorKey(p: Part): string {
-  return JSON.stringify([p.type, p.dims, p.position, p.rotationDeg ?? null, p.color, p.stuffing ?? null, p.flatten ?? null, p.regions ?? null, p.paint ?? null, p.crochet ?? null, p[LIMB_PROXIMAL_KEY] ?? null]);
+/** The field groups a mirror link carries (everything `mirroredFrom` writes), each copied only when it changed. */
+type LinkGroup = 'place' | 'shape' | 'color' | 'stuffing' | 'regions' | 'paint' | 'crochet' | 'proximal';
+const LINK_FIELDS: Readonly<Record<LinkGroup, readonly string[]>> = {
+  place: ['position', 'rotationDeg'],
+  shape: ['type', 'dims'],
+  color: ['color'],
+  stuffing: ['stuffing', 'flatten'],
+  regions: ['regions'],
+  paint: ['paint'],
+  crochet: ['crochet'],
+  proximal: [LIMB_PROXIMAL_KEY],
+};
+const LINK_GROUPS = Object.keys(LINK_FIELDS) as LinkGroup[];
+
+function groupJson(p: Part, g: LinkGroup): string {
+  const r = p as unknown as Record<string, unknown>;
+  return JSON.stringify(LINK_FIELDS[g].map((k) => r[k] ?? null));
+}
+
+function changedGroups(a: Part, b: Part): LinkGroup[] {
+  return LINK_GROUPS.filter((g) => groupJson(a, g) !== groupJson(b, g));
+}
+
+/** `onto` with the fields of `groups` taken from `mirrored` (a torus arc's turn depends on its arc: shape brings place). */
+function withGroups(onto: Part, mirrored: Part, groups: readonly LinkGroup[]): Part {
+  const all = new Set(groups);
+  if (all.has('shape') && (mirrored.type === 'torus' || onto.type !== mirrored.type)) all.add('place');
+  const out = { ...onto } as Record<string, unknown>;
+  const src = mirrored as unknown as Record<string, unknown>;
+  for (const g of all) {
+    for (const k of LINK_FIELDS[g]) {
+      if (src[k] === undefined) delete out[k];
+      else out[k] = src[k];
+    }
+  }
+  return out as unknown as Part;
 }
 
 /**
  * Linked edits (§4.2): after an edit `before → after`, each mirror-linked pair of which exactly ONE side changed
- * in a mirrored field (shape, place, color, stuffing, regions, paint, crochet hints) gets the other side rewritten
- * as its mirror image (`mirroredFrom`) — in the same history step. When that twin changed size its own children
- * are re-anchored (§4.2), and when it moved while the changed side's children moved with it (a subtree move) its
- * subtree follows by the same rigid motion; children that are themselves linked to a changed part are rewritten
- * as twins instead. Pairs where both sides changed (a move of their common parent) are left as they are.
+ * in a mirrored field group (place, shape, color, stuffing, regions, paint, crochet hints, stored limb end) gets
+ * those groups — and only those — rewritten on the other side as the mirror image (`mirroredFrom`), in the same
+ * history step; a colour change does not re-pose an intentionally asymmetric twin. When the twin changed size its
+ * own children are re-anchored (§4.2; `reanchor: false` defers that, as a resize drag does between its 10 Hz
+ * re-anchors), and when it moved while the changed side's children moved with it (a subtree move) its subtree
+ * follows; children that are themselves linked to a changed part are rewritten as twins instead. Pairs where both
+ * sides changed (a move of their common parent) are left as they are.
  */
-export function propagateMirrors(before: CrochetModelV1, after: CrochetModelV1): CrochetModelV1 {
+export function propagateMirrors(before: CrochetModelV1, after: CrochetModelV1, o: { reanchor?: boolean } = {}): CrochetModelV1 {
   if (before === after) return after;
   const prev = new Map(before.parts.map((p) => [p.id, p]));
-  const changed = new Set<string>();
+  const changed = new Map<string, LinkGroup[]>();
   for (const p of after.parts) {
     const b = prev.get(p.id);
-    if (b && b !== p && mirrorKey(b) !== mirrorKey(p)) changed.add(p.id);
+    if (!b || b === p) continue;
+    const groups = changedGroups(b, p);
+    if (groups.length > 0) changed.set(p.id, groups);
   }
   if (changed.size === 0) return after;
   // Linked pairs, the changed side first, parents first.
-  const jobs: { from: Part; to: Part }[] = [];
+  const jobs: { from: Part; to: Part; groups: LinkGroup[] }[] = [];
   const seen = new Set<string>();
-  for (const id of changed) {
+  for (const [id, groups] of changed) {
     const twin = mirrorTwin(after, id);
     if (!twin || changed.has(twin.id) || seen.has(twin.id) || !prev.has(twin.id)) continue;
     seen.add(twin.id);
-    jobs.push({ from: byId(after, id) as Part, to: twin });
+    jobs.push({ from: byId(after, id) as Part, to: twin, groups });
   }
   if (jobs.length === 0) return after;
   const depth = (id: string) => ancestorIds(after, id).length;
   jobs.sort((a, b) => depth(a.to.id) - depth(b.to.id));
-  const rewritten = new Set(jobs.map((j) => j.to.id));
+  const skip = new Set([...jobs.map((j) => j.to.id), ...changed.keys()]);
   let m = after;
-  for (const { from, to } of jobs) {
+  for (const { from, to, groups } of jobs) {
     const current = byId(m, to.id) as Part;
-    const next = mirroredFrom(from, current);
-    if (sameJson(next, current)) continue;
-    const motion = multiplyRigid(composeRigid(partCenter(next), next.rotationDeg), invertRigid(composeRigid(partCenter(current), current.rotationDeg)));
-    const resized = sameJson([current.type, current.dims], [next.type, next.dims]) === false;
-    const beforeTwin = m;
-    m = withParts(m, new Map([[to.id, next]]));
-    // The twin's own children: linked ones are rewritten by their own job; the others follow.
+    const next = withGroups(current, mirroredFrom(from, current), groups);
     const fromChildren = childrenIdsOf(after, from.id);
-    const subtreeMoved = fromChildren.length === 0 || fromChildren.some((c) => changed.has(c));
-    const followers = subtreeIds(m, to.id).slice(1).filter((id) => !rewritten.has(id) && !changed.has(id));
-    if (resized) {
-      const re = reanchorChildren(beforeTwin, m, to.id);
-      const keep = new Map<string, Part>();
-      for (const id of followers) {
-        const q = byId(re, id);
-        if (q) keep.set(id, q);
-      }
-      m = withParts(m, keep);
-    } else if (subtreeMoved && followers.length > 0 && !isIdentityRigid(motion)) {
-      const moved = new Map<string, Part>();
-      for (const id of followers) {
-        const q = byId(m, id);
-        if (q) moved.set(id, applyRigidToPart(q, motion));
-      }
-      m = withParts(m, moved);
-    }
+    const follow = fromChildren.length === 0 || fromChildren.some((c) => changed.has(c));
+    m = rewriteTwin(m, to.id, next, { follow, skip, reanchor: o.reanchor !== false });
   }
   return m;
 }
@@ -1384,9 +1481,9 @@ export function dropStaleProximal(before: CrochetModelV1, after: CrochetModelV1)
 }
 
 /** What every editor edit runs after itself (§4.2): mirror-linked twins follow, stale limb ends are dropped. */
-export function linkEdit(before: CrochetModelV1, after: CrochetModelV1): CrochetModelV1 {
+export function linkEdit(before: CrochetModelV1, after: CrochetModelV1, o: { reanchor?: boolean } = {}): CrochetModelV1 {
   if (before === after) return after;
-  return dropStaleProximal(before, propagateMirrors(before, after));
+  return dropStaleProximal(before, propagateMirrors(before, after, o));
 }
 
 // ---- Attach (§4.2: "pick a new parent (cycles refused; the root has none; there is no detach, so the model

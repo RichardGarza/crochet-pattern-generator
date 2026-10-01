@@ -150,6 +150,8 @@ function Editor({ Viewport, units, readOnly }: { Viewport: ComponentType<Viewpor
 
   useEditorShortcuts();
   useShortcutGroup(SHAPE_SHORTCUTS);
+  // A click the editor was waiting for does not outlive the tab.
+  useEffect(() => () => editorStore.getState().setSurfacePick(null), []);
 
   if (!model) return null;
   const primary = selection[selection.length - 1];
@@ -305,6 +307,12 @@ const SHAPE_SHORTCUTS: ShortcutGroup = {
   ],
 };
 
+/** Any form control (sliders, switches, radios and checkboxes included, which `isEditableTarget` lets through). */
+function isControl(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target instanceof HTMLInputElement || !!target.closest('[role="slider"], [role="radiogroup"], [role="switch"]');
+}
+
 /**
  * Q / W / E / R pick the tool, F frames the selection, ⌘D duplicates, M mirrors, ⌫ asks to delete, Escape cancels a
  * drag or a surface pick, then clears the selection (outside text fields and dialogs).
@@ -345,11 +353,12 @@ function useEditorShortcuts(): void {
         e.preventDefault();
         editor.requestCamera('fit');
       } else if (key === 'm' && !e.shiftKey) {
-        if (readOnly || editor.selection.length === 0) return;
+        if (readOnly || editor.selection.length === 0 || isControl(e.target)) return;
         e.preventDefault();
         mirrorSelection();
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (readOnly || editor.selection.length === 0) return;
+        // Not from a slider, switch, radio or checkbox: Backspace there must never ask to delete a part.
+        if (readOnly || editor.selection.length === 0 || isControl(e.target)) return;
         e.preventDefault();
         requestDeleteSelection();
       } else if (e.key === 'Escape' && editor.selection.length > 0) {

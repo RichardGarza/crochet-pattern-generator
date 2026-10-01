@@ -118,8 +118,11 @@ describe('Duplicate, Delete, Mirror', () => {
     act(() => editorStore.getState().setSurfacePick({ kind: 'add', type: 'cone' }));
     act(() => completeSurfacePick('head', [2, 8, 0], [1, 0.3, 0]));
     const id = editorStore.getState().selection[0];
+    expect(id).toBe('cone_l');
+    expect(byId(model())[id].label).toBe('Left cone');
     key('m');
-    const twinId = `${id}_r`;
+    const twinId = 'cone_r';
+    expect(byId(model())[twinId].label).toBe('Right cone');
     const src = byId(model())[id];
     const twin = byId(model())[twinId];
     expect(twin.mirrorOf).toBe(id);
@@ -140,7 +143,7 @@ describe('Duplicate, Delete, Mirror', () => {
     select('muzzle');
     const button = screen.getByRole('button', { name: 'Mirror' });
     expect(button.getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByText(/its mirror image would land on itself/)).toBeTruthy();
+    expect(screen.getByText(/its mirror image would overlap it/)).toBeTruthy();
   });
 });
 
@@ -215,5 +218,26 @@ describe('the tab around the tools', () => {
     expect(screen.queryByRole('dialog', { name: /Delete/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Add part' }).getAttribute('aria-disabled')).toBe('true');
     expect(history()).toEqual([]);
+  });
+
+  it('Backspace on a focused slider or switch never asks to delete the part', () => {
+    mount();
+    select('head');
+    const slider = screen.getAllByRole('slider')[0];
+    fireEvent.keyDown(slider, { key: 'Backspace' });
+    fireEvent.keyDown(screen.getByRole('switch', { name: 'Attached parts follow' }), { key: 'Delete' });
+    expect(screen.queryByRole('dialog', { name: /Delete/ })).toBeNull();
+  });
+
+  it('Delete can take the attached parts too', async () => {
+    mount();
+    select('ear_l');
+    key('Delete');
+    const dialog = screen.getByRole('dialog', { name: 'Delete Left Ear?' });
+    fireEvent.click(within(dialog).getByRole('switch', { name: /Also delete the part attached to it/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete 2 parts' }));
+    await waitFor(() => expect(byId(model()).ear_l).toBeUndefined());
+    expect(byId(model()).ear_l_inner).toBeUndefined();
+    expect(byId(model()).ear_r.mirrorOf).toBeUndefined();
   });
 });

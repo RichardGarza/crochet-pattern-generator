@@ -102,7 +102,7 @@ export function withWeight(g: GaugeSpec, cyc: AmiCyc): { gauge: GaugeSpec; clear
 /** The hook (mm); `undefined` = the recommended Table E hook of the weight. */
 export function withHook(g: GaugeSpec, hookMm: number | undefined): GaugeSpec {
   const out = { ...amigurumiGauge(g) };
-  if (hookMm === undefined || !(hookMm > 0) || Math.abs(hookMm - amiHookMm(out.cyc)) < 1e-9) delete out.hookMm;
+  if (hookMm === undefined || !Number.isFinite(hookMm) || hookMm < 0.1 || hookMm > 100 || Math.abs(hookMm - amiHookMm(out.cyc)) < 1e-9) delete out.hookMm;
   else out.hookMm = hookMm;
   return out;
 }

@@ -162,7 +162,7 @@ describe('YarnSizePanel', () => {
     open();
     render(<YarnSizePanel context="pattern" />);
     fireEvent.click(screen.getByRole('button', { name: /Match your tension/ }));
-    commit(screen.getByRole('spinbutton', { name: 'Stitches per round' }), '0');
+    commit(screen.getByRole('spinbutton', { name: /Drift per round/ }), '0');
     expect(doc().threeD!.ami.leanStPerRnd).toBe(0);
     fireEvent.click(screen.getByRole('button', { name: 'Measure it…' }));
     const dialog = screen.getByRole('dialog', { name: 'Measure your spiral lean' });
@@ -174,7 +174,7 @@ describe('YarnSizePanel', () => {
     const again = screen.getByRole('dialog', { name: 'Measure your spiral lean' });
     commit(within(again).getByRole('spinbutton', { name: 'Stitches between the ruler and the marker' }), '1.5');
     fireEvent.click(within(again).getByRole('radio', { name: 'Left of the ruler' }));
-    fireEvent.click(within(again).getByRole('button', { name: 'Use -0.125' }));
+    fireEvent.click(within(again).getByRole('button', { name: 'Use −0.125' }));
     expect(doc().threeD!.ami.leanStPerRnd).toBe(-0.125);
   });
 
@@ -267,5 +267,50 @@ describe('YarnSizePanel', () => {
     render(<PatternTab settingsSlot={<YarnSizePanel context="pattern" />} />);
     expect(document.querySelector('[data-context="pattern"]')).toBeTruthy();
     expect(screen.getByRole('combobox', { name: 'Yarn weight' })).toBeTruthy();
+  });
+
+  it('the test tube result equal to the current lean (0.25, the default) still closes the dialog', () => {
+    open();
+    render(<YarnSizePanel context="shape" />);
+    fireEvent.click(screen.getByRole('button', { name: /Match your tension/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Measure it…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Measure your spiral lean' });
+    commit(within(dialog).getByRole('spinbutton', { name: 'Stitches between the ruler and the marker' }), '3');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Use 0.25' }));
+    expect(screen.queryByRole('dialog', { name: 'Measure your spiral lean' })).toBeNull();
+    expect(doc().threeD!.ami.leanStPerRnd).toBe(0.25);
+  });
+
+  it('the optional panels start collapsed in the Shape context (hidden, aria-expanded false) and open on demand', () => {
+    open();
+    render(<YarnSizePanel context="shape" />);
+    const toggle = screen.getByRole('button', { name: /Pattern style/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(document.getElementById(toggle.getAttribute('aria-controls')!)!.hidden).toBe(true);
+    fireEvent.click(toggle);
+    expect(document.getElementById(toggle.getAttribute('aria-controls')!)!.hidden).toBe(false);
+  });
+
+  it('the Claude Design suggestion can be dismissed ("Keep my yarn")', () => {
+    const d = teddyProject({ id: 'p-dismiss' });
+    d.gauge = { cyc: 5, technique: 'amigurumi_sc' };
+    d.threeD!.model!.yarn = { weightCYC: 4 };
+    open(d);
+    render(<YarnSizePanel context="shape" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Keep my yarn' }));
+    expect(screen.queryByRole('button', { name: 'Use it' })).toBeNull();
+    expect(doc().gauge.cyc).toBe(5);
+  });
+
+  it('post-import of a "Describe a toy" project pre-fills when the model arrives after the panel opened', async () => {
+    const d = teddyProject({ id: 'p-late', model: null });
+    d.threeD!.origin = 'describe';
+    open(d);
+    render(<YarnSizePanel context="post-import" />);
+    expect(doc().gauge.cyc).toBe(4);
+    await act(async () => {
+      await projectStore.getState().commitModelRevision({ ...teddy(), yarn: { weightCYC: 3 } }, { source: 'import', label: 'Import', carry: 'none' });
+    });
+    expect(doc().gauge).toEqual({ cyc: 3, technique: 'amigurumi_sc' });
   });
 });

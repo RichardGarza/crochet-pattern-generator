@@ -9,13 +9,14 @@ import {
   attachBlockedReason,
   attachRootId,
   partName,
+  subtreeIds,
   type AddableType,
   type AttachMethod,
   type OpenEnd,
 } from '../../state/slices/model3d';
 import { useProjectStore } from '../../state/projectStore';
 import type { CrochetModelV1, Vec3 } from '../../types/model';
-import { Banner, Button, ConfirmDialog, Dialog, SegmentedControl, Select } from '../common';
+import { Banner, Button, ConfirmDialog, Dialog, SegmentedControl, Select, Switch } from '../common';
 import { TYPE_NAMES } from './dimSpecs';
 import { editorStore, useEditorStore } from './editorStore';
 import { ShapeGlyph } from './glyphs';
@@ -186,7 +187,7 @@ function AttachDialog({ model }: { model: CrochetModelV1 }) {
   );
   const close = () => editorStore.getState().closeAttach();
   if (!part) return <Dialog open={false} onClose={close} title="Attach" />;
-  const isRoot = !part.attach;
+  const isRoot = !part.attach && !!attachBlockedReason(model, part.id, model.parts.find((p) => p.id !== part.id)?.id ?? part.id)?.includes('main piece');
   const reason = isRoot ? null : to ? attachBlockedReason(model, part.id, to) : 'Choose a part';
   const save = () => {
     if (reason || isRoot) return;
@@ -252,21 +253,32 @@ function AttachDialog({ model }: { model: CrochetModelV1 }) {
 function DeleteDialog({ model }: { model: CrochetModelV1 }) {
   const ids = useEditorStore((s) => s.deleteRequest);
   const [busy, setBusy] = useState(false);
+  const [withAttached, setWithAttached] = useState(false);
+  const key = ids?.join(',') ?? '';
+  const [forKey, setForKey] = useState(key);
+  if (forKey !== key) {
+    // A new question starts with the attached parts kept.
+    setForKey(key);
+    setWithAttached(false);
+  }
   const parts = (ids ?? []).map((id) => model.parts.find((p) => p.id === id)).filter((p) => !!p);
+  const attached = ids ? [...new Set(ids.flatMap((id) => subtreeIds(model, id)))].filter((id) => !ids.includes(id)) : [];
+  const all = ids ? [...ids, ...attached] : [];
+  const everything = withAttached && all.length >= model.parts.length;
   const title = parts.length === 1 ? `Delete ${partName(parts[0])}?` : `Delete ${parts.length} parts?`;
-  const lines = ids ? deleteSummary(model, ids) : [];
+  const lines = ids && !withAttached ? deleteSummary(model, ids) : [];
   const cancel = () => editorStore.getState().requestDelete(null);
   return (
     <ConfirmDialog
       open={parts.length > 0}
       title={title}
-      confirmLabel={busy ? 'Deleting…' : 'Delete'}
+      confirmLabel={busy ? 'Deleting…' : withAttached && attached.length > 0 ? `Delete ${all.length} parts` : 'Delete'}
       tone="danger"
       onCancel={cancel}
       onConfirm={() => {
-        if (!ids || busy) return;
+        if (!ids || busy || everything) return;
         setBusy(true);
-        void deleteNow(ids).finally(() => {
+        void deleteNow(withAttached ? all : ids).finally(() => {
           setBusy(false);
           editorStore.getState().requestDelete(null);
         });
@@ -276,6 +288,15 @@ function DeleteDialog({ model }: { model: CrochetModelV1 }) {
       {lines.map((l) => (
         <p key={l}>{l}</p>
       ))}
+      {attached.length > 0 ? (
+        <Switch
+          label={`Also delete the ${attached.length === 1 ? 'part' : `${attached.length} parts`} attached to ${parts.length === 1 ? 'it' : 'them'}`}
+          description={withAttached ? attached.map((id) => partName(model.parts.find((p) => p.id === id) ?? { id })).join(', ') : 'Otherwise they stay where they are, attached to the next part up.'}
+          checked={withAttached}
+          onChange={setWithAttached}
+        />
+      ) : null}
+      {everything ? <Banner tone="warn">That would delete every part; a model needs at least one.</Banner> : null}
       <p className="shape-hint">You can undo this, and the model as it was is kept as a revision.</p>
     </ConfirmDialog>
   );
