@@ -1,5 +1,6 @@
 // Regression tests for the T4.2 review findings (docs/tracks/t4.md, T4.2 "Review").
 import { describe, expect, it } from 'vitest';
+import { budget, PERF } from '../../../test/timing';
 import type { Line, Op } from '../../../types/pattern';
 import { consumed, produced } from '../../pattern/ops';
 import { validateLines } from '../../pattern/validateLine';
@@ -50,14 +51,14 @@ describe('finding 1: an end that cannot be cut at the round start takes another 
 });
 
 describe('finding 2: an absurd nEnd is E_SANITY at once', () => {
-  it('nEnd 1e9 does not expand', () => {
+  it('nEnd 1e9 does not expand', { ...PERF }, () => {
     const lines: Line[] = [
       { kind: 'rnd', n: 1, ops: Array.from({ length: 6 }, () => ({ k: 'st', st: 'sc' }) as Op), prevCount: null, stated: 6, start: { k: 'mr', n: 6 } },
       { kind: 'rnd', n: 2, nEnd: 1e9, ops: Array.from({ length: 6 }, () => ({ k: 'st', st: 'sc' }) as Op), prevCount: 6, stated: 6 },
     ];
     const t = Date.now();
     expect(codes(validatePiece3d({ id: 'p', lines, style: 'exact', cell }))).toContain('E_SANITY');
-    expect(Date.now() - t).toBeLessThan(1000);
+    expect(Date.now() - t).toBeLessThan(budget(1000));
   });
 
   it('a non-piece input is one E_SANITY, never a throw', () => {

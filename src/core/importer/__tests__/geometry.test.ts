@@ -2,6 +2,7 @@
 // the tar and gzip readers with their limits, and the GLB ladder on small synthetic scenes — plus hostile inputs.
 import { gzipSync, strToU8 } from 'fflate';
 import { describe, expect, it } from 'vitest';
+import { budget, PERF } from '../../../test/timing';
 import type { ImportInput } from '../../../types/importer';
 import type { CrochetModelV1 } from '../../../types/model';
 import { HEAVY } from '../../model/__tests__/helpers/options';
@@ -617,11 +618,11 @@ describe('review regressions (T7.2)', HEAVY, () => {
     expect(r.model?.finishedSize.height).toBeCloseTo(10, 3);
   });
 
-  it('PLY: an element without properties cannot be "read" millions of times; NaN and a far unused vertex are harmless', async () => {
+  it('PLY: an element without properties cannot be "read" millions of times; NaN and a far unused vertex are harmless', { ...PERF }, async () => {
     const t = performance.now();
     const junk = await run([fileInput('j.ply', 'ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement junk 30000000\nend_header\n0 0 0\n1 0 0\n0 1 0\n')]);
     expect(junk.ok).toBe(false);
-    expect(performance.now() - t).toBeLessThan(1000);
+    expect(performance.now() - t).toBeLessThan(budget(1000));
     const b = box(0, 1, 0, 2, 2, 2);
     const head = (n: number) => ['ply', 'format ascii 1.0', `element vertex ${n}`, 'property float x', 'property float y', 'property float z', 'element face 12', 'property list uchar int vertex_indices', 'end_header'];
     const verts = Array.from({ length: 8 }, (_, v) => `${b.pos[3 * v]} ${b.pos[3 * v + 1]} ${b.pos[3 * v + 2]}`);
@@ -634,14 +635,14 @@ describe('review regressions (T7.2)', HEAVY, () => {
     for (const mesh of Object.values(nan.meshes ?? {})) expect(mesh.positions.every(Number.isFinite)).toBe(true);
   });
 
-  it('a gzip or zip entry that lies about its size small is refused without inflating it all', async () => {
+  it('a gzip or zip entry that lies about its size small is refused without inflating it all', { ...PERF }, async () => {
     const bomb = gzipSync(new Uint8Array(64 * 2 ** 20));
     new DataView(bomb.buffer).setUint32(bomb.length - 4, 1000, true);
     let t = performance.now();
     const r = await run([fileInput('x.tar.gz', bomb)]);
     expect(r.ok).toBe(false);
     expect(r.warnings[0].code).toBe('E_IMPORT_TOO_LARGE');
-    expect(performance.now() - t).toBeLessThan(1000);
+    expect(performance.now() - t).toBeLessThan(budget(1000));
     // a zip entry whose declared size is small: the 100:1 rule sees only that, the capped inflate stops at it
     const zip = makeZip({ 'big.json': new Uint8Array(32 * 2 ** 20) });
     const view = new DataView(zip.buffer);
@@ -651,10 +652,10 @@ describe('review regressions (T7.2)', HEAVY, () => {
     t = performance.now();
     const z = await run([fileInput('x.zip', zip)]);
     expect(z.ok).toBe(false);
-    expect(performance.now() - t).toBeLessThan(1000);
+    expect(performance.now() - t).toBeLessThan(budget(1000));
   });
 
-  it('GLB step 3 with thousands of materials stays linear', async () => {
+  it('GLB step 3 with thousands of materials stays linear', { ...PERF }, async () => {
     const n = 3000;
     const json = { asset: { version: '2.0' }, nodes: [] as unknown[], materials: [] as unknown[], accessors: [] as unknown[], meshes: [] as unknown[], bufferViews: [{ buffer: 0, byteLength: 12 }], buffers: [{ byteLength: 12 }] };
     for (let i = 0; i < n; i++) {
@@ -665,7 +666,7 @@ describe('review regressions (T7.2)', HEAVY, () => {
     }
     const t = performance.now();
     const r = await run([fileInput('many.glb', glb(json))]);
-    expect(performance.now() - t).toBeLessThan(5000);
+    expect(performance.now() - t).toBeLessThan(budget(5000));
     expect(r.ok).toBe(true);
     expect(r.model?.parts.length).toBe(60);
   });

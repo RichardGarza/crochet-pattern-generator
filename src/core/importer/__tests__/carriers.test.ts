@@ -2,6 +2,7 @@
 // sprints), robustness on damaged and random input, and the time budget.
 import { strToU8 } from 'fflate';
 import { describe, expect, it } from 'vitest';
+import { budget, PERF } from '../../../test/timing';
 import type { ImportInput } from '../../../types/importer';
 import type { CrochetModelV1 } from '../../../types/model';
 import { mulberry32, randomInt } from '../../kernel/prng';
@@ -139,13 +140,13 @@ describe('robustness', HEAVY, () => {
 });
 
 describe('time budget', HEAVY, () => {
-  it('the standalone page (625 KB) imports in well under 2 s', { retry: 2 }, async () => {
+  it('the standalone page (625 KB) imports in well under 2 s', { ...PERF, retry: 2 }, async () => {
     const input = fixtureInput('teddy-bear.standalone.html');
     await importInputs([input]);
     const t0 = performance.now();
     const r = await importInputs([input]);
     const ms = performance.now() - t0;
     expect(r.ok).toBe(true);
-    expect(ms).toBeLessThan(2000);
+    expect(ms).toBeLessThan(budget(2000));
   });
 });

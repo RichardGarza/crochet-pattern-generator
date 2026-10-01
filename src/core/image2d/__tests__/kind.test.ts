@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { budget, PERF } from '../../../test/timing';
 import { addNoise, checker, fillDisc, fromFn, gradient, solid, stripes, upscale } from '../../../test/rgba';
 import type { RgbaImage } from '../../../types/geometry';
 import { applyCrop } from '../crop';
@@ -186,11 +187,11 @@ describe('pixel art (§2.3.4)', () => {
     }
   });
 
-  it('stays fast on a long axis (coarse-to-fine period search)', { timeout: 60_000, retry: 2 }, () => {
+  it('stays fast on a long axis (coarse-to-fine period search)', { ...PERF, timeout: 60_000, retry: 2 }, () => {
     const img = upscale(randomSprite(1500, 5, 1), 8); // 12000 × 40
     const t = performance.now();
     analyzeImage(img);
-    expect(performance.now() - t).toBeLessThan(3000);
+    expect(performance.now() - t).toBeLessThan(budget(3000));
   });
 
   it('rejects heavy noise (blocks no longer uniform)', () => {

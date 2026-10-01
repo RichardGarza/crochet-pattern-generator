@@ -5,6 +5,7 @@
 // imports in under 3 s; STL in millimeters, PLY in meters and the handoff bundles round it off.
 import { gunzipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
+import { budget, PERF } from '../../../test/timing';
 import type { ImportContext, ImportInput, ImportResult } from '../../../types/importer';
 import type { CrochetModelV1, Part } from '../../../types/model';
 import { parseHex } from '../../kernel/color';
@@ -210,13 +211,13 @@ describe('G26: the observed teddy OBJ stays inches', HEAVY, () => {
     expect(r.units).toMatchObject({ chosen: 'in', reason: 'expected-height', confirm: false });
   });
 
-  it('the 9.5 MB OBJ imports in under 3 s (retried; the machine is shared)', { retry: 2, timeout: 60_000 }, () => {
+  it('the 9.5 MB OBJ imports in under 3 s (retried; the machine is shared)', { ...PERF, retry: 2, timeout: 60_000 }, () => {
     const inputs = observed();
     const t = performance.now();
     const r = importInputsSync(inputs);
     const ms = performance.now() - t;
     expect(r.ok).toBe(true);
-    expect(ms).toBeLessThan(3000);
+    expect(ms).toBeLessThan(budget(3000));
   });
 
   it('an OBJ dropped without its MTL: gray parts, and a warning naming the missing file', async () => {

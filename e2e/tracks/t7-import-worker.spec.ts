@@ -3,6 +3,7 @@
 // The fixtures are fetched from the dev server; nothing is written anywhere.
 import fs from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
+import { budget } from '../../src/test/timing';
 
 const DIR = new URL('../../fixtures/claude-design/teddy-bear/', import.meta.url);
 const FILES = [
@@ -140,7 +141,7 @@ test.describe('T7.2 import.worker (geometry carriers)', () => {
     }
     expect(by['captured GLB']).toMatchObject({ carrier: 'glb', dialect: 'cd-observed-2026-09', units: 'in/gltf-extras-ratio' });
     expect(by['teddy OBJ + MTL']).toMatchObject({ carrier: 'obj', dialect: 'geometry-only', units: 'in/spec', parts: 17 });
-    expect(by['teddy OBJ + MTL'].ms, 'the 9.5 MB OBJ in the worker').toBeLessThan(3000);
+    expect(by['teddy OBJ + MTL'].ms, 'the 9.5 MB OBJ in the worker').toBeLessThan(budget(3000)); // §5.8; strict under CPG_PERF=1, the node test g26 checks it strictly in npm run perf
     expect(by['builder-v1 GLB, per-node extras']).toMatchObject({ carrier: 'glb', dialect: 'canonical-1' });
     expect(by['handoff tar.gz']).toMatchObject({ carrier: 'tar' });
     console.log(out.map((r) => `${r.name}: ${r.ms.toFixed(0)} ms`).join('; '));

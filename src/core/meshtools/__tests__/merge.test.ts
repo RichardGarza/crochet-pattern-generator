@@ -8,6 +8,7 @@ import { convertPrimitive, recenterMesh } from '../convert';
 import { mergeParts, MERGE_MAX_GAP_IN } from '../merge';
 import { MeshToolError, volumeToSdf } from '../volume';
 import { bestOf, HEAVY } from './helpers';
+import { bestOfAsync, budget, PERF } from '../../../test/timing';
 import type { CrochetModelV1, Part } from '../../../types/model';
 
 const teddy = JSON.parse(readFileSync(new URL('../../../../fixtures/models/teddy.canonical.json', import.meta.url), 'utf8')) as CrochetModelV1;
@@ -123,20 +124,15 @@ describe('merge — G24 kernel half (§2.9.8, §2.13)', HEAVY, () => {
     await expect(mergeParts([{ part: body }, { part: meshPart }])).rejects.toThrow(/needs its mesh buffer/);
   });
 
-  it('is deterministic and runs within the 1 s budget (§5.8)', { retry: 2 }, async () => {
+  it('is deterministic and runs within the 1 s budget (§5.8)', { ...PERF, retry: 2 }, async () => {
     const a = await mergeParts([{ part: body }, { part: head }], { paletteIds: palette });
     const b = await mergeParts([{ part: body }, { part: head }], { paletteIds: palette });
     expect(Buffer.compare(Buffer.from(a.mesh.positions.buffer), Buffer.from(b.mesh.positions.buffer))).toBe(0);
     expect(Buffer.compare(Buffer.from(a.mesh.labels.buffer), Buffer.from(b.mesh.labels.buffer))).toBe(0);
     expect(Buffer.compare(Buffer.from(a.sdf.data.buffer), Buffer.from(b.sdf.data.buffer))).toBe(0);
-    let best = Infinity;
-    for (let i = 0; i < 3; i++) {
-      const t0 = performance.now();
-      await mergeParts([{ part: body }, { part: head }], { paletteIds: palette });
-      best = Math.min(best, performance.now() - t0);
-    }
-    expect(best).toBeLessThan(1000);
-    expect(bestOf(1, () => decodeSdfVolume(a.sdf))).toBeLessThan(1000);
+    const best = await bestOfAsync(3, () => mergeParts([{ part: body }, { part: head }], { paletteIds: palette }));
+    expect(best).toBeLessThan(budget(1000));
+    expect(bestOf(1, () => decodeSdfVolume(a.sdf))).toBeLessThan(budget(1000));
   });
 
   it('bridges small parts with a sharp contact (cone tip 0.05–0.099 in above a sphere)', async () => {

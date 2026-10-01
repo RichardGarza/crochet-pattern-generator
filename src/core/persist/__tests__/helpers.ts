@@ -54,10 +54,17 @@ export async function settle(rounds = 20): Promise<void> {
   for (let i = 0; i < rounds; i++) await yieldMacrotask();
 }
 
-/** Waits (in macrotasks) until `cond()` holds; fails after `rounds`. */
-export async function waitFor(cond: () => boolean, rounds = 500): Promise<void> {
-  for (let i = 0; i < rounds; i++) {
+/**
+ * Waits (in macrotasks) until `cond()` holds; fails only after BOTH `rounds` macrotasks and `minMs` of wall time
+ * (§6.1 rule 5). Counting macrotasks alone ran out under machine load while `crypto.subtle` or Blob work still
+ * waited for the busy thread pool; a condition that holds never waits for the clock.
+ */
+export async function waitFor(cond: () => boolean, rounds = 500, o: { minMs?: number } = {}): Promise<void> {
+  const minMs = o.minMs ?? 10_000;
+  const start = performance.now();
+  for (let i = 0; ; i++) {
     if (cond()) return;
+    if (i >= rounds && performance.now() - start >= minMs) break;
     await yieldMacrotask();
   }
   throw new Error('waitFor: condition never held');

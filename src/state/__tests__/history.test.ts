@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { Patch } from 'immer';
 import { describe, expect, it } from 'vitest';
+import { budget, PERF } from '../../test/timing';
 import { mulberry32, randomInt, type Rng } from '../../core/kernel/prng';
 import {
   applyPatches,
@@ -342,7 +343,7 @@ describe('coalescing', () => {
 });
 
 describe('cost', () => {
-  it('a long coalesced stroke on a large array stays cheap per update', { retry: 2, timeout: 60_000 }, () => {
+  it('a long coalesced stroke on a large array stays cheap per update', { ...PERF, retry: 2, timeout: 60_000 }, () => {
     // 2D hand edits: every pointer move appends to an array that already holds 20 000 overrides
     interface Chart {
       overrides: { cell: number; hex: string }[];
@@ -370,7 +371,7 @@ describe('cost', () => {
     // Measured 2.0 ms per update on the development machine, 1.1 ms of it immer's own produce on the
     // 20 000-element array (the diff 0.2 ms, re-deriving the entry 0.7 ms); 6.5 ms while other agents loaded
     // all 12 cores. The budget is one frame (16 ms): a drag must not stutter.
-    expect(perUpdateMs).toBeLessThan(16);
+    expect(perUpdateMs).toBeLessThan(budget(16));
   });
 });
 

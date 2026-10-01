@@ -194,7 +194,7 @@ test.describe('T8 library and folder mirror in a real browser', () => {
     await expect(a.getByText('Folder mirror on')).toBeVisible();
     // Mirrored 5 s after the save.
     const doc = path.join(FOLDER, id, 'project.json');
-    await expect.poll(() => fs.existsSync(doc) && JSON.parse(fs.readFileSync(doc, 'utf8')).name, { timeout: 15_000 }).toBe('Mirrored scarf');
+    await expect.poll(() => fs.existsSync(doc) && JSON.parse(fs.readFileSync(doc, 'utf8')).name, { timeout: 30_000 }).toBe('Mirrored scarf');
     await contextA.close();
 
     // Another browser: an empty IndexedDB on the same server.
@@ -228,7 +228,7 @@ test.describe('T8 library and folder mirror in a real browser', () => {
     const forGood = b.getByRole('dialog', { name: 'Delete “Mirrored scarf” for good?' });
     await expect(forGood.getByText(/The projects folder keeps a copy in Backups\/deleted/)).toBeVisible();
     await forGood.getByRole('button', { name: 'Delete for good' }).click();
-    await expect.poll(() => fs.existsSync(path.join(FOLDER, id)), { timeout: 10_000 }).toBe(false);
+    await expect.poll(() => fs.existsSync(path.join(FOLDER, id)), { timeout: 20_000 }).toBe(false);
     const deleted = fs.readdirSync(path.join(FOLDER, '_backups', 'deleted'));
     expect(deleted.some((n) => n.startsWith(`${id}-`))).toBe(true);
     // A deleted project never comes back as a restore offer.

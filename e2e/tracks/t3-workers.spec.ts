@@ -29,6 +29,8 @@ async function attachJson(info: TestInfo, name: string, value: unknown): Promise
 }
 
 test.describe('T3 workers under npm run dev', () => {
+  // Compiling the ORT wasm and building at N = 128 in a worker can take far longer than usual on a loaded machine.
+  test.describe.configure({ timeout: 180_000 });
   let seen: { errors: string[]; warnings: string[] };
 
   test.beforeEach(async ({ page }) => {

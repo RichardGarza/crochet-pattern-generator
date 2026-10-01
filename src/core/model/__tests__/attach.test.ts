@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { budget, PERF } from '../../../test/timing';
 import type { Repair } from '../../../types/importer';
 import type { CrochetModelV1, Part, Vec3 } from '../../../types/model';
 import { mulberry32, randomInt, randomRange } from '../../kernel/prng';
@@ -153,7 +154,7 @@ describe('inferAttach on the teddy (§3.7.3 golden, §3.7.6, D21)', HEAVY, () =>
     expect(model.palette).toBe(dialectTeddy.palette);
   });
 
-  it('runs within the §5.8 budget: ≤ 500 ms on the teddy (17 parts, grid overlaps)', { retry: 2 }, () => {
+  it('runs within the §5.8 budget: ≤ 500 ms on the teddy (17 parts, grid overlaps)', { ...PERF, retry: 2 }, () => {
     inferAttach(dialectTeddy); // warm up
     const t0 = performance.now();
     inferAttach(dialectTeddy);
@@ -162,8 +163,8 @@ describe('inferAttach on the teddy (§3.7.3 golden, §3.7.6, D21)', HEAVY, () =>
     const t1 = performance.now();
     inferAttach(bare);
     const fromNothing = performance.now() - t1;
-    expect(fromDialect).toBeLessThan(500);
-    expect(fromNothing).toBeLessThan(500);
+    expect(fromDialect).toBeLessThan(budget(500));
+    expect(fromNothing).toBeLessThan(budget(500));
   });
 });
 
@@ -377,7 +378,7 @@ describe('inferAttach: links (Prim’s rule on overlap, then the smallest gap)',
     expect(inferAttach(m, { meshSdf: { blob: cube } }).repairs).toEqual(withSdf.repairs);
   });
 
-  it('stays fast when every part overlaps every other: the overlap grids share one work budget', { retry: 2, timeout: 120_000 }, () => {
+  it('stays fast when every part overlaps every other: the overlap grids share one work budget', { ...PERF, retry: 2, timeout: 120_000 }, () => {
     // 40 large parts in one small region: 780 overlapping pairs. Unbounded, the grids alone took over a minute.
     const rng = mulberry32(77);
     const parts: Part[] = [];
@@ -389,7 +390,7 @@ describe('inferAttach: links (Prim’s rule on overlap, then the smallest gap)',
     const m = modelOf(parts);
     const t0 = performance.now();
     const { model, repairs } = inferAttach(m);
-    expect(performance.now() - t0).toBeLessThan(30_000); // 1–2 s on an idle machine; a generous bound for a loaded one
+    expect(performance.now() - t0).toBeLessThan(budget(30_000)); // 1–2 s on an idle machine; the strict bound is already generous
     expectOneTree(model);
     expect(repairs).toHaveLength(39);
     expect(JSON.stringify(inferAttach(m).model)).toBe(JSON.stringify(model));

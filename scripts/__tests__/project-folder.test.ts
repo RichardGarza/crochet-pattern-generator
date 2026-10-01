@@ -558,7 +558,18 @@ describe('POST /__convert', () => {
       expect(heic.subarray(4, 8).toString('latin1')).toBe('ftyp');
 
       served = await serve(null, { platform: 'darwin' });
-      const r = await fetch(`${served.url}/__convert`, { method: 'POST', body: heic });
+      // The conversion's own temp folder goes to a private TMPDIR (os.tmpdir() reads it per call), so another
+      // suite converting at the same moment on this machine cannot be mistaken for a leftover of this one.
+      const privateTmp = tempDir('cpg-tmp-');
+      const savedTmp = process.env.TMPDIR;
+      process.env.TMPDIR = privateTmp;
+      let r: Response;
+      try {
+        r = await fetch(`${served.url}/__convert`, { method: 'POST', body: heic });
+      } finally {
+        if (savedTmp === undefined) delete process.env.TMPDIR;
+        else process.env.TMPDIR = savedTmp;
+      }
       expect(r.status).toBe(200);
       expect(r.headers.get('content-type')).toBe('image/jpeg');
       const jpeg = Buffer.from(await r.arrayBuffer());
@@ -576,7 +587,7 @@ describe('POST /__convert', () => {
       expect(rb).toBeGreaterThan(150);
       expect(rr).toBeLessThan(100);
       // The temp folder of the conversion is gone.
-      expect(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('cpg-convert-')).every((n) => !fs.existsSync(path.join(os.tmpdir(), n, 'input.heic')))).toBe(true);
+      expect(fs.readdirSync(privateTmp).filter((n) => n.startsWith('cpg-convert-'))).toEqual([]);
     },
     60_000,
   );

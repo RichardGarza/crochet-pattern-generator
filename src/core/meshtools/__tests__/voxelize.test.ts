@@ -3,6 +3,7 @@ import { signedVolume } from '../../kernel/geom/meshMeasures';
 import { remeshVolume } from '../remesh';
 import { MAX_GRID_SIDE, voxelGridFor, voxelizeMesh, voxelizeMeshOnGrid } from '../voxelize';
 import { bestOf, bruteDistance, ellipsoidF, HEAVY, meshOf, sphereF, uvSphere, windingNumber, type Implicit } from './helpers';
+import { budget, PERF } from '../../../test/timing';
 import type { Vec3 } from '../../../types/geometry';
 
 // A blob with a convex and a concave region: a sphere with an ellipsoid lobe.
@@ -67,18 +68,18 @@ describe('voxelizeMesh — acceptance (§6.3 T5)', HEAVY, () => {
     expect(maxErr).toBeLessThan(0.5);
   });
 
-  it('runs N = 96 on a 40k-triangle mesh within 400 ms', { retry: 2 }, () => {
+  it('runs N = 96 on a 40k-triangle mesh within 400 ms', { ...PERF, retry: 2 }, () => {
     const mesh = uvSphere(1, 200, 101);
     expect(mesh.indices.length / 3).toBe(40_000);
     const ms = bestOf(3, () => voxelizeMesh(mesh, 96));
-    expect(ms).toBeLessThan(400);
+    expect(ms).toBeLessThan(budget(400));
   });
 
-  it('runs N = 96 on a 40k-triangle marching-cubes mesh within 400 ms', { retry: 2 }, () => {
+  it('runs N = 96 on a 40k-triangle marching-cubes mesh within 400 ms', { ...PERF, retry: 2 }, () => {
     const mesh = meshOf(blob, 90, 1.1);
     expect(mesh.indices.length / 3).toBeGreaterThan(38_000);
     const ms = bestOf(3, () => voxelizeMesh(mesh, 96));
-    expect(ms).toBeLessThan(400);
+    expect(ms).toBeLessThan(budget(400));
   });
 });
 

@@ -48,5 +48,9 @@ export default defineConfig({
     // v1.4, §6.1 rule 5). Heavy suites still name their own, longer timeouts.
     testTimeout: 30_000,
     hookTimeout: 30_000,
+    // Tests that assert a wall-clock duration carry this tag (src/test/timing.ts, §6.1 rule 5): `npm test` checks
+    // them against a loose sanity bound, `npm run perf` runs only them, serially, against the strict budget.
+    // A test's own `retry`/`timeout` win over these.
+    tags: [{ name: 'perf', description: 'wall-clock budget (§5.8, §6.1 rule 5): strict only under npm run perf', retry: 2, timeout: 180_000 }],
   },
 });
