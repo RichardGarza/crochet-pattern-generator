@@ -117,6 +117,10 @@ describe('carryOver: crochet hints', () => {
     const { model: out, report } = carryOver(prev, next);
     expect(part(out, 'body').crochet).toEqual({ make: 'applique', axis: 'x', start: 'bottom' });
     expect(report.crochet).toEqual(['body']);
+    // a hint the editor left undefined is no setting: it does not wipe the new model's value
+    const cleared = model([sphere('body', 1, { crochet: { make: 'applique', start: undefined } })]);
+    const brought = model([sphere('body', 1, { crochet: { start: 'top' } })]);
+    expect(part(carryOver(cleared, brought).model, 'body').crochet).toStrictEqual({ start: 'top', make: 'applique' });
   });
 
   it('reports nothing when there is nothing to carry or nothing would change', () => {

@@ -238,13 +238,18 @@ function sameHint(a: unknown, b: unknown): boolean {
   return a === b;
 }
 
-/** `prev`'s hints over `next`'s (the user's setting wins), or null when that changes nothing. */
+/**
+ * `prev`'s hints over `next`'s (the user's setting wins, key by key), or null when that changes nothing. Only the
+ * keys `prev` sets count: a hint an editor left `undefined` does not wipe the value the new model brings.
+ */
 function mergeHints(prev: PartCrochetHints | undefined, next: PartCrochetHints | undefined): PartCrochetHints | null {
   if (!prev) return null;
   const keys = (Object.keys(prev) as (keyof PartCrochetHints)[]).filter((k) => prev[k] !== undefined);
   if (keys.length === 0) return null;
   if (next && keys.every((k) => sameHint(prev[k], next[k]))) return null;
-  return { ...next, ...prev };
+  const merged: Record<string, unknown> = { ...next };
+  for (const key of keys) merged[key] = prev[key];
+  return merged as PartCrochetHints;
 }
 
 /**

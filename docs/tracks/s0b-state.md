@@ -403,7 +403,7 @@ sees the old tab go read-only first. The same scenario scripts gave identical lo
 | §5.2.1 `carryOver(prev, next)` has no `carryPaintAnyway`, `commitModelRevision` has | `carryOverWith(prev, next, { carryPaintAnyway })` in the same kernel; `carryOver` is that without options. |
 | §3.7.7 "paint only when … every dim is within 10%" | Each numeric dim against its previous value (`|next − prev| ≤ 0.1·|prev|`); a previous dim of 0 must stay 0. `open` (cylinder) and `sharp` (lathe) are not dims; a torus without `arcDeg` is 360°; a `flat` must keep its `shape`, a polygon its point count (points within 10% of the larger of w, h); a `mesh` part is compared by `bboxIn`; a lathe is compared as a curve — height and largest radius within 10%, and the radius at 33 heights within 10% of the largest radius — because a re-imported body rarely keeps its number of profile points. |
 | §3.5.1 `paint.data` holds palette INDICES, and an import may reorder or rename the palette | Carried paint is re-indexed by color identity: the same palette id, else the same hex, else the color is appended to the new palette (≤ 16), else the nearest color by ΔE00. A carried feature's `color` (a palette id) is mapped the same way. A field that cannot be decoded (not 64 × 64) is carried only when the palette indices did not move. |
-| §5.5.5 "`crochet` hints … carried over" when the new model has hints too | The previous value wins, key by key (the user's setting), and keys only the new model has are kept. The same for paint: the previous paint replaces paint the new model brought, when the shape matches. A caller that wants the new model's own paint (Apply photo colors) commits with `carry: 'none'`. |
+| §5.5.5 "`crochet` hints … carried over" when the new model has hints too | The previous value wins, key by key (the user's setting), and keys only the new model has are kept; a previous hint left `undefined` (an editor that cleared a field) is no setting and does not wipe the new model's value. The same for paint: the previous paint replaces paint the new model brought, when the shape matches. A caller that wants the new model's own paint (Apply photo colors) commits with `carry: 'none'`. |
 | §5.5.5 "features added in the editor" — nothing marks a feature as editor-made | Every feature of the previous model whose id the new model lacks is carried when its part still exists (to at most 60 features), and reported in `report.features`. See request 6. |
 | `CarryReport` for things that needed no change | A part is listed only when something was written onto it; a part whose new version already has the same hints or paint is in no list, and `paintDropped` lists only parts that still exist. |
 | §5.3 "keyed by input hash" | One slot per kind holding `{ inputHash, value }` (the latest), not a cache of many hashes. The caller computes the hash. |
@@ -481,9 +481,9 @@ session's.
   null-prototype objects; half of the pairs small edits of each other); the latest-wins group on 12 random
   request sequences over three channels; `carryOver` on 150 random model pairs (purity, idempotence, color
   identity of every carried paint cell); route round trips on 602 routes (300 random ids).
-- **Mutation checks** (not committed): 104 deliberate one-line breaks of the rules above — the 90 of the earlier
-  session's harness (its notes reported only the first 41, 39 caught) and 14 for the fixes of the finishing session
-  — each applied alone to the final code and followed by `npm test` on its folder; 99 were caught. The 5 survivors
+- **Mutation checks** (not committed): 105 deliberate one-line breaks of the rules above — the 90 of the earlier
+  session's harness (its notes reported only the first 41, 39 caught) and 15 for the fixes of the finishing session
+  — each applied alone to the final code and followed by `npm test` on its folder; 100 were caught. The 5 survivors
   are equivalent: `sameShapeWithin` without the type check (no other part type has those dims, so the comparison
   fails anyway); a suffix match in the array diff that may overlap the prefix (the overlapping elements are
   identical, so removing either index gives the same document and inverse); the client's "only the current instance
@@ -580,7 +580,9 @@ also part of the mutation run above).
 **Third check** (the finishing session): the browser comparison of the fakes with `navigator.locks` and
 `BroadcastChannel` described under "How it was verified". It found the two lock differences above (the order of
 the old holder's `AbortError` and the stealer's callback on `steal`; the hand-over of a released lock a task
-late), both fixed with tests that pin Chromium's order. The mutation run found the `derivedStore.reset` gap.
+late), both fixed with tests that pin Chromium's order. The mutation run found the `derivedStore.reset` gap. A
+read of `carryOver` found that a previous `crochet` hint left `undefined` overwrote the new model's value for that
+key (`{ ...next, ...prev }`), against its own rule; fixed, with a test.
 It also found the heavy property tests of this part running out of vitest's default 5 s under load (5.3 s);
 they now have explicit 60 s timeouts, and the per-update cost test uses the one-frame bound its comment names
 (16 ms; measured 2.0 ms idle, 6.5 ms with all cores loaded).
