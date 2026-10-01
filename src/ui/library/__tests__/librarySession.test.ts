@@ -122,6 +122,25 @@ describe('library session', () => {
     s2.session.stop();
   });
 
+  it('a preference changed just before a reload survives: the synchronous journal wins over the settings store', async () => {
+    const w = world();
+    const tab = w.tab();
+    const local = new Map<string, string>();
+    const journal = { getItem: (k: string) => local.get(k) ?? null, setItem: (k: string, v: string) => void local.set(k, v), removeItem: (k: string) => void local.delete(k), key: () => null, length: 0 };
+    // The settings store still holds "light" (the "dark" write never landed); the journal has "dark".
+    await tab.repo.putSetting('prefs', { ...DEFAULT_PREFS, theme: 'light' });
+    local.set('cpg.prefs.prefs', JSON.stringify({ ...DEFAULT_PREFS, theme: 'dark' }));
+    const app = createAppStore();
+    const s = start(tab.repo, { app, prefsKey: 'prefs', journal, timers: w.timers });
+    await settle();
+    expect(app.getState().prefs.theme).toBe('dark');
+    expect(await tab.repo.getSetting('prefs')).toMatchObject({ theme: 'dark' });
+    // A change is in the journal at once (before any IndexedDB write).
+    app.getState().setPrefs({ theme: 'system' });
+    expect(JSON.parse(local.get('cpg.prefs.prefs')!).theme).toBe('system');
+    s.session.stop();
+  });
+
   it('the folder mirror starts once the probe says on, and a failing folder warns once until it works again', async () => {
     const w = world();
     const tab = w.tab();

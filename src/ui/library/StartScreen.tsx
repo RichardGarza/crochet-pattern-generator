@@ -177,7 +177,18 @@ export function StartScreen() {
             onConfirm={() => {
               const target = deleting;
               setDeleting(null);
-              if (target && session) void session.deleteProject(target.id);
+              if (!target || !session) return;
+              // The card (and its Delete button, where focus would return) goes away: focus the next card.
+              const order = [...(summaries ?? [])].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((s) => s.id);
+              const at = order.indexOf(target.id);
+              const next = order[at + 1] ?? order[at - 1];
+              void session.deleteProject(target.id).then((done) => {
+                if (!done) return;
+                requestAnimationFrame(() => {
+                  const el = next ? document.querySelector<HTMLElement>(`.shell-project__open[data-project-id="${CSS.escape(next)}"]`) : null;
+                  (el ?? document.getElementById('library-title')?.closest('section')?.querySelector<HTMLElement>('button'))?.focus();
+                });
+              });
             }}
           >
             {deleting ? (

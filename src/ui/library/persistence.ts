@@ -785,17 +785,41 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
 
   // ---- preferences (the `settings` store; appStore.hydratePrefs)
 
+  // Every change is written synchronously to `localStorage` first (a journal, like the unload journal of
+  // documents: an IndexedDB write started just before a reload may never land), then to the `settings` store.
+  // At start the journal, when there is one, is the newest copy; otherwise the stored one; otherwise what the
+  // page started with (main.tsx read the theme back).
   const prefsKey = deps.prefsKey === undefined ? null : deps.prefsKey;
   if (prefsKey !== null) {
+    const journalKey = `${PREFS_JOURNAL_PREFIX}${prefsKey}`;
+    const readJournal = (): unknown => {
+      try {
+        const text = journal?.getItem(journalKey);
+        return text ? (JSON.parse(text) as unknown) : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    const writeJournal = (prefs: unknown): void => {
+      try {
+        journal?.setItem(journalKey, JSON.stringify(prefs));
+      } catch {
+        // storage refused: the settings store still gets it
+      }
+    };
     void (async () => {
       const stored = await repo.getSetting(prefsKey).catch(() => undefined);
       if (stopped) return;
-      // Nothing stored yet: keep what the page started with (the theme main.tsx read back) and store it.
-      app.getState().hydratePrefs(stored === undefined ? app.getState().prefs : stored);
-      if (stored === undefined) void repo.putSetting(prefsKey, app.getState().prefs).catch(() => {});
+      const latest = readJournal() ?? stored;
+      app.getState().hydratePrefs(latest === undefined ? app.getState().prefs : latest);
+      const hydrated = app.getState().prefs;
+      writeJournal(hydrated);
+      void repo.putSetting(prefsKey, hydrated).catch(() => {});
       cleanups.push(
         app.subscribe((s, prev) => {
-          if (s.prefsHydrated && s.prefs !== prev.prefs) void repo.putSetting(prefsKey, s.prefs).catch(() => {});
+          if (!s.prefsHydrated || s.prefs === prev.prefs) return;
+          writeJournal(s.prefs);
+          void repo.putSetting(prefsKey, s.prefs).catch(() => {});
         }),
       );
     })();
@@ -815,6 +839,8 @@ const messageOf = (error: unknown): string => (error instanceof Error ? error.me
 
 /** The `settings` key of the preferences. */
 export const PREFS_KEY = 'prefs';
+/** `localStorage` key prefix of the preferences' synchronous copy. */
+export const PREFS_JOURNAL_PREFIX = 'cpg.prefs.';
 
 /** A channel for browsers without BroadcastChannel: talks to nobody. */
 function silentChannel(): ChannelLike {

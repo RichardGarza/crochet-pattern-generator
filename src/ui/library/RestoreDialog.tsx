@@ -117,7 +117,8 @@ function FolderPanel({ mirror, onOpen }: { mirror: FolderMirror; onOpen(id: stri
       <div className="lib-folder">
         <Icon name="folder" size={18} className="lib-folder__icon" />
         <span className="lib-folder__path" title={folder?.folder}>
-          {folder?.folder ?? 'Projects folder'}
+          {/* An isolated left-to-right run: the right-to-left box only moves the ellipsis to the start. */}
+          <bdi dir="ltr">{folder?.folder ?? 'Projects folder'}</bdi>
         </span>
         <Button size="sm" variant="ghost" icon="refresh" loading={state.status === 'syncing'} onClick={() => void run('check', () => mirror.reconcile())}>
           Check again
