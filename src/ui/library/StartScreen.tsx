@@ -6,7 +6,7 @@
 //
 // Projects are told apart by id and last change, never by name (§5.5.2): two cards with the same name show a
 // short id after it.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { navigate } from '../../app/router';
 import { useAppStore } from '../../state/appStore';
 import { useLibrary } from '../../state/slices/library';
@@ -33,7 +33,8 @@ function withDistinctNames(list: readonly ProjectSummary[]): ProjectSummary[] {
   return list.map((s) => ((count.get(s.name) ?? 0) > 1 ? { ...s, name: `${s.name} · #${s.id.slice(0, 4)}` } : s));
 }
 
-function CardActions({ summary, onDelete }: { summary: ProjectSummary; onDelete(s: ProjectSummary): void }) {
+/** `label`: the name as the card shows it (with " · #abcd" when two projects share it), for distinct accessible names. */
+function CardActions({ summary, label, onDelete }: { summary: ProjectSummary; label: string; onDelete(s: ProjectSummary): void }) {
   const busy = useLibrary((s) => s.busy[summary.id]);
   const session = getPersistence();
   if (!session) return null;
@@ -46,9 +47,9 @@ function CardActions({ summary, onDelete }: { summary: ProjectSummary; onDelete(
     );
   return (
     <>
-      <IconButton icon="copy" size="sm" label={`Duplicate ${summary.name}`} tooltipPlacement="bottom" onClick={() => void session.duplicateProject(summary.id)} />
-      <IconButton icon="download" size="sm" label={`Export ${summary.name} as a file`} tooltipPlacement="bottom" onClick={() => void session.exportProject(summary.id)} />
-      <IconButton icon="trash" size="sm" label={`Delete ${summary.name}`} tooltipPlacement="bottom" onClick={() => onDelete(summary)} />
+      <IconButton icon="copy" size="sm" label={`Duplicate ${label}`} tooltipPlacement="bottom" onClick={() => void session.duplicateProject(summary.id)} />
+      <IconButton icon="download" size="sm" label={`Export ${label} as a file`} tooltipPlacement="bottom" onClick={() => void session.exportProject(summary.id)} />
+      <IconButton icon="trash" size="sm" label={`Delete ${label}`} tooltipPlacement="bottom" onClick={() => onDelete(summary)} />
     </>
   );
 }
@@ -112,6 +113,7 @@ export function StartScreen() {
   const session = getPersistence();
   const [deleting, setDeleting] = useState<ProjectSummary | null>(null);
   const [restore, setRestore] = useState<{ open: boolean; source: RestoreSource }>({ open: false, source: 'folder' });
+  const restoreButton = useRef<HTMLButtonElement>(null);
 
   // Thumbnails: loaded once per asset key (content-addressed, so a cached URL never goes stale).
   useEffect(() => {
@@ -130,6 +132,7 @@ export function StartScreen() {
       libraryNote={summaries && count > 0 ? <span className="lib-note-count">{count === 1 ? '1 project' : `${count} projects`}</span> : null}
       libraryActions={
         <Button
+          ref={restoreButton}
           variant="ghost"
           icon="refresh"
           size="sm"
@@ -147,7 +150,7 @@ export function StartScreen() {
               summaries={shown}
               onOpen={open}
               thumbnailUrl={(s) => (s.thumbnail ? thumbs[s.thumbnail.key] : undefined)}
-              renderActions={session ? (s) => <CardActions summary={original.get(s.id) ?? s} onDelete={setDeleting} /> : undefined}
+              renderActions={session ? (s) => <CardActions summary={original.get(s.id) ?? s} label={s.name} onDelete={setDeleting} /> : undefined}
               empty={
                 <EmptyState
                   icon="yarn"
@@ -202,7 +205,14 @@ export function StartScreen() {
             open={restore.open}
             source={restore.source}
             onSource={(source) => setRestore({ open: true, source })}
-            onClose={() => setRestore((r) => ({ ...r, open: false }))}
+            onClose={() => {
+              setRestore((r) => ({ ...r, open: false }));
+              // The dialog gives focus back to what opened it; when that is gone (a "Review" notice that went
+              // away with the last offer), focus the restore button instead of the page.
+              requestAnimationFrame(() => {
+                if (document.activeElement === document.body || document.activeElement === null) restoreButton.current?.focus();
+              });
+            }}
             mirror={mirrorOn ? (session?.mirror() ?? null) : null}
             importFile={session ? (file) => session.importFile(file) : null}
             onOpen={(id) => {

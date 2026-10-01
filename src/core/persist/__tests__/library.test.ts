@@ -3,7 +3,7 @@
 // duplicate, the `meta` store of the folder mirror, and start-up asset GC that skips while another tab edits.
 import { describe, expect, it } from 'vitest';
 import { lockName } from '../locks';
-import { SYNC_PREFIX, TRASH_KEEP_MS, TRASH_PREFIX, type RepositoryEvent } from '../repo';
+import { GONE_PREFIX, SYNC_PREFIX, TRASH_KEEP_MS, TRASH_PREFIX, type RepositoryEvent } from '../repo';
 import { blobOf, makeDoc, settle, world } from './helpers';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -161,5 +161,42 @@ describe('start-up asset GC', () => {
     w.clock.now = new Date(w.clock.now.getTime() + 8 * DAY);
     expect(await a.repo.gcAssets({ skipWhileEditing: true })).toEqual({ deleted: [], skipped: 'no-lock-query' });
     expect((await a.repo.gcAssets()).deleted).toHaveLength(1);
+  });
+});
+
+describe('an edit takes a project out of "Recently deleted" (never purged with new work)', () => {
+  it('a save of a trashed project restores it and says so', async () => {
+    const w = world();
+    const a = w.tab();
+    const b = w.tab();
+    const events: RepositoryEvent[] = [];
+    b.repo.subscribe((e) => events.push(e));
+    await a.repo.create(makeDoc('p1', 'picture', 'Heart'));
+    a.repo.release('p1');
+    await a.repo.trash('p1');
+    // A tab had it open read-only and pressed "Edit here instead" (or replayed a journal): it can save.
+    const opened = await a.repo.open('p1', 'edit');
+    expect(opened.readOnly).toBe(false);
+    w.clock.now = new Date(w.clock.now.getTime() + 29 * DAY);
+    expect((await a.repo.save({ ...opened.doc, name: 'Heart, new work' }, new Map(), { baseRev: opened.doc.rev })).ok).toBe(true);
+    expect(await a.repo.listTrash()).toEqual([]);
+    expect((await a.repo.list()).map((s) => s.id)).toEqual(['p1']);
+    w.clock.now = new Date(w.clock.now.getTime() + 2 * DAY);
+    expect(await a.repo.purgeTrash()).toEqual([]);
+    expect((await a.repo.peek('p1'))?.name).toBe('Heart, new work');
+    await settle();
+    expect(events).toContainEqual(expect.objectContaining({ type: 'restored', id: 'p1', remote: true }));
+  });
+
+  it('remove leaves a tombstone with the last synced hash for the folder mirror', async () => {
+    const w = world();
+    const a = w.tab();
+    await a.repo.create(makeDoc('synced'));
+    await a.repo.create(makeDoc('never-synced'));
+    await a.repo.putMeta(SYNC_PREFIX + 'synced', { lastSyncedRev: 1, lastSyncedHash: 'h'.repeat(64) });
+    await a.repo.remove('synced');
+    await a.repo.remove('never-synced');
+    expect(await a.repo.getMeta(GONE_PREFIX + 'synced')).toEqual({ deletedAt: w.clock.now.toISOString(), lastSyncedHash: 'h'.repeat(64) });
+    expect(await a.repo.getMeta(GONE_PREFIX + 'never-synced')).toBeUndefined();
   });
 });

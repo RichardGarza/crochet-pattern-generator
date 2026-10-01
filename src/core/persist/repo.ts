@@ -45,6 +45,8 @@ export const TRASH_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 export const TRASH_PREFIX = 'trash:';
 /** `meta` key of the folder mirror's sync base of a project (§5.5.1). */
 export const SYNC_PREFIX = 'sync:';
+/** `meta` key of a project deleted for good whose folder copy the mirror must still move away: `{ deletedAt, lastSyncedHash }`. */
+export const GONE_PREFIX = 'gone:';
 
 export interface Timers {
   setTimeout(fn: () => void, ms: number): unknown;
@@ -708,13 +710,18 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
     async save(doc, newAssets, o) {
       checkSavable(doc);
       const at = now();
-      const result = await inTransaction(['projects', 'assets', 'revisions'], async (tx) => {
+      const result = await inTransaction(['projects', 'assets', 'revisions', 'meta'], async (tx) => {
         const projects = tx.objectStore('projects');
         const stored = await projects.get(doc.id);
         const storedRev = stored?.rev ?? 0;
         if (storedRev > o.baseRev || (stored && isNewerVersion(stored.version))) {
           return { ok: false as const, conflict: { storedRev } };
         }
+        // An edit of a project in "Recently deleted" (a tab that had it open, "Edit here instead", a journal
+        // replay) takes it out again: new work is never purged with the deleted project (§5.5.5).
+        const meta = tx.objectStore('meta');
+        const untrashed = (await meta.getKey(TRASH_PREFIX + doc.id)) !== undefined;
+        if (untrashed) await meta.delete(TRASH_PREFIX + doc.id);
         const rev = Math.max(storedRev, o.baseRev) + 1;
         if (!Number.isSafeInteger(rev) || rev > MAX_REV) throw new RangeError(`The revision counter of this project is exhausted (${rev}).`);
         const assets = tx.objectStore('assets');
@@ -727,10 +734,15 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
         }
         const revisions = tx.objectStore('revisions');
         if (snapshotDue(await newestSnapshot(revisions, doc.id), rev, at)) await writeSnapshot(revisions, next, AUTOSAVE_LABEL, at);
-        return { ok: true as const, rev, next, missing };
+        return { ok: true as const, rev, next, missing, untrashed };
       });
       if (!result.ok) return result;
       announceSaved(result.next);
+      if (result.untrashed) {
+        const summary = summaryOfDoc(result.next);
+        emit({ type: 'restored', id: doc.id, summary, remote: false });
+        post({ type: 'restored', id: doc.id, summary, from: tabId });
+      }
       return { ok: true, rev: result.rev, ...(result.missing.length > 0 ? { missingAssets: result.missing } : {}) };
     },
 
@@ -857,8 +869,13 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
           await tx.objectStore('projects').delete(id);
           const revisions = tx.objectStore('revisions');
           for (const key of await revisions.getAllKeys(projectRange(id))) await revisions.delete(key);
-          await tx.objectStore('meta').delete(TRASH_PREFIX + id);
-          await tx.objectStore('meta').delete(SYNC_PREFIX + id);
+          const meta = tx.objectStore('meta');
+          await meta.delete(TRASH_PREFIX + id);
+          // A tombstone for the folder mirror: what it last synced of this project, so that its folder copy is
+          // moved to Backups/deleted even when the mirror starts after this delete (and never offered back).
+          const base = (await meta.get(SYNC_PREFIX + id)) as { lastSyncedHash?: unknown } | undefined;
+          if (base && typeof base.lastSyncedHash === 'string') await meta.put({ deletedAt: now().toISOString(), lastSyncedHash: base.lastSyncedHash }, GONE_PREFIX + id);
+          await meta.delete(SYNC_PREFIX + id);
         });
       } finally {
         release(id);

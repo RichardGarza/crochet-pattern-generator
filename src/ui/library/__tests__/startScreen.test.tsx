@@ -141,6 +141,8 @@ describe('StartScreen library', () => {
     expect(screen.getByText(/30 days left/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Restore Heart' }));
     await waitFor(() => expect(screen.getByRole('button', { name: /^Heart/ })).toBeTruthy());
+    // Focus goes to the restored card (the row it was on went away).
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Heart/ })));
     await waitFor(() => expect(screen.queryByRole('button', { name: /Recently deleted/ })).toBeNull());
   });
 
@@ -193,8 +195,10 @@ describe('StartScreen library', () => {
     expect(screen.getByText('Bear · #aaaa')).toBeTruthy();
     expect(screen.getByText('Bear · #bbbb')).toBeTruthy();
     expect(screen.getByText('Fox')).toBeTruthy();
-    // The actions name the project by its real name.
-    expect(screen.getAllByRole('button', { name: 'Delete Bear' })).toHaveLength(2);
+    // The actions are told apart too (distinct accessible names).
+    expect(screen.getByRole('button', { name: 'Delete Bear · #aaaa' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Duplicate Bear · #bbbb' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Delete Fox' })).toBeTruthy();
   });
 
   it('Restore without the folder: the file tab imports a .crochet.json; the folder tab explains', async () => {
@@ -235,14 +239,16 @@ describe('StartScreen library', () => {
     expect(within(dialog).getByRole('tab', { name: /Projects folder/ }).getAttribute('aria-selected')).toBe('true');
     expect(within(dialog).getByText('/tmp/cpg-test/projects')).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Restore Bunny' }));
-    await waitFor(() => expect(toastTexts()).toContain('Restored “Bunny”.'));
+    // The result shows inside the dialog (a toast would be under the modal backdrop) and takes the focus.
+    await waitFor(() => expect(within(dialog).getByText('Restored “Bunny”.')).toBeTruthy());
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('Open'));
     expect((await tab.repo.peek('elsewhere'))?.name).toBe('Bunny');
     await waitFor(() => expect(within(dialog).getByText('Every project in the folder is also in this browser.')).toBeTruthy());
 
     fireEvent.click(within(dialog).getByRole('tab', { name: /Backups/ }));
     await waitFor(() => expect(within(dialog).getByText('1 project')).toBeTruthy());
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Restore Old scarf from this backup' }));
-    await waitFor(() => expect(toastTexts()).toContain('Restored “Old scarf”.'));
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Restore Old scarf from the backup of / }));
+    await waitFor(() => expect(within(dialog).getByText('Restored “Old scarf”.')).toBeTruthy());
     expect((await tab.repo.peek('old'))?.name).toBe('Old scarf');
   });
 
@@ -259,8 +265,13 @@ describe('StartScreen library', () => {
     await waitFor(() => expect(screen.getByText('“Heart” changed in the projects folder')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Review' }));
     const dialog = await screen.findByRole('dialog');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Load folder version' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Load the folder version of Heart' }));
+    // It asks first.
+    expect(within(dialog).getByText(/Replace this browser’s version with the folder’s\?/)).toBeTruthy();
+    expect((await tab.repo.peek('p1'))?.name).toBe('Heart');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Load it' }));
     await waitFor(async () => expect((await tab.repo.peek('p1'))?.name).toBe('Heart (edited elsewhere)'));
+    await waitFor(() => expect(within(dialog).getByText(/Loaded the folder’s version of “Heart”/)).toBeTruthy());
     expect((await tab.repo.getRevision('p1', 1))?.doc.name).toBe('Heart');
     await waitFor(() => expect(screen.queryByText('“Heart” changed in the projects folder')).toBeNull());
   });

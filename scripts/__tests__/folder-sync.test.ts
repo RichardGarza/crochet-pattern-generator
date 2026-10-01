@@ -308,6 +308,50 @@ describe('folder mirror sync', () => {
     expect(await a.repo.peek('future')).toBeUndefined();
   });
 
+  it('a project deleted for good while no mirror ran is moved away at the next start, never offered back', async () => {
+    const f = await folder();
+    const w = world();
+    const a = w.tab();
+    const m = mirrorFor(w, a, f);
+    await a.repo.create(makeDoc('gone', 'picture', 'Deleted scarf'));
+    await a.repo.create(makeDoc('edited-elsewhere', 'picture', 'Shared'));
+    a.repo.release('gone');
+    a.repo.release('edited-elsewhere');
+    await m.reconcile();
+    m.dispose(); // the mirror is not running (the probe has not answered yet)
+    await a.repo.remove('gone');
+    await a.repo.remove('edited-elsewhere');
+    // Another browser changed this one in the folder meanwhile: it must be offered, not moved away.
+    fs.writeFileSync(path.join(f.projectsDir, 'edited-elsewhere', 'project.json'), JSON.stringify({ ...folderDoc(f, 'edited-elsewhere'), name: 'Shared, edited elsewhere' }));
+    const m2 = mirrorFor(w, a, f);
+    await m2.reconcile();
+    expect(fs.existsSync(path.join(f.projectsDir, 'gone'))).toBe(false);
+    expect(fs.readdirSync(path.join(f.backupsDir, 'deleted')).some((n) => n.startsWith('gone-'))).toBe(true);
+    expect(m2.state().restorable.map((p) => p.id)).toEqual(['edited-elsewhere']);
+    expect(await a.repo.getMeta('gone:gone')).toBeUndefined();
+  });
+
+  it('one bad folder doc does not stop the reconcile of the others; the folder losing a project gets it back', async () => {
+    const f = await folder();
+    const w = world();
+    const a = w.tab();
+    const m = mirrorFor(w, a, f);
+    await a.repo.create(makeDoc('aaa', 'picture', 'Future'));
+    await a.repo.create(makeDoc('lost', 'picture', 'Lost'));
+    await m.reconcile();
+    fs.writeFileSync(path.join(f.projectsDir, 'aaa', 'project.json'), JSON.stringify({ ...folderDoc(f, 'aaa'), version: 99 }));
+    await a.repo.save(makeDoc('aaa', 'picture', 'Future, edited'), new Map(), { baseRev: 1 });
+    fs.rmSync(path.join(f.projectsDir, 'lost'), { recursive: true }); // removed from the folder by hand
+    await f.store.writeDoc('zzz', Buffer.from(JSON.stringify({ ...makeDoc('zzz', 'picture', 'Other browser'), rev: 2 })), null);
+    await a.repo.create(makeDoc('mmm', 'picture', 'Never pushed'));
+    await expect(m.reconcile()).rejects.toThrow(/Future, edited.*newer version of the app/);
+    expect(m.state().status).toBe('error');
+    expect(m.state().restorable.map((p) => p.id)).toEqual(['zzz']);
+    expect(folderDoc(f, 'mmm').name).toBe('Never pushed');
+    expect(folderDoc(f, 'lost').name).toBe('Lost');
+    expect(folderDoc(f, 'aaa').version).toBe(99);
+  });
+
   it('a project id the folder cannot hold is not mirrored, and says so', async () => {
     const f = await folder();
     const w = world();

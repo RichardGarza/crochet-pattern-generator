@@ -42,7 +42,7 @@ import {
   type PutDocResult,
 } from './folderProtocol';
 import { migrateDoc } from './migrations';
-import { SYNC_PREFIX, realTimers, sameContent, type ImportOutcome, type PersistRepository, type Timers } from './repo';
+import { GONE_PREFIX, SYNC_PREFIX, realTimers, sameContent, type ImportOutcome, type PersistRepository, type Timers } from './repo';
 
 /** §5.5.4: the app mirrors every save, debounced 5 s. */
 export const MIRROR_DEBOUNCE_MS = 5000;
@@ -281,6 +281,15 @@ export function createFolderMirror(o: FolderMirrorOptions): FolderMirror {
     return assets;
   };
 
+  /** Fetches folder assets by sha, asking only for those the folder lists (a 404 is a console error in Chromium). */
+  const folderFetcher = (id: string) => {
+    let listed: Promise<Set<string>> | null = null;
+    return async (sha: string): Promise<Blob | null> => {
+      listed ??= api.listAssets(id).then((l) => new Set(l), () => new Set<string>());
+      return (await listed).has(sha) ? api.getAsset(id, sha) : null;
+    };
+  };
+
   /** Uploads what the folder lacks of `doc`'s assets (transitively through JSON assets). */
   const uploadAssets = async (id: string, doc: ProjectDoc): Promise<void> => {
     const have = new Set(await api.listAssets(id));
@@ -308,7 +317,7 @@ export function createFolderMirror(o: FolderMirrorOptions): FolderMirror {
     const folderDoc = readFolderDoc(folder.text);
     const copyId = newId();
     const copyName = `${folderDoc.name} (from folder)`;
-    const assets = await folderAssets(folderDoc, (sha) => api.getAsset(id, sha));
+    const assets = await folderAssets(folderDoc, folderFetcher(id));
     const imported = await importDoc({ ...folderDoc, id: copyId, name: copyName }, assets);
     // This browser's version goes to the folder in place of the one just kept as a copy.
     await uploadAssets(id, local);
@@ -322,7 +331,7 @@ export function createFolderMirror(o: FolderMirrorOptions): FolderMirror {
   };
 
   /** One push. Caller holds the mirror lock. */
-  const pushLocked = async (id: string): Promise<PushOutcome> => {
+  const pushLocked = async (id: string, o: { force?: boolean } = {}): Promise<PushOutcome> => {
     const doc = await repo.peek(id);
     if (!doc) return 'gone';
     if (!isFolderProjectId(id)) {
@@ -330,7 +339,8 @@ export function createFolderMirror(o: FolderMirrorOptions): FolderMirror {
       return 'unsupported';
     }
     const base = await syncBase(id);
-    if (base && base.lastSyncedRev === doc.rev) return 'up-to-date';
+    // `force`: the folder lost the project (deleted by another browser, moved by hand): put it back.
+    if (base && base.lastSyncedRev === doc.rev && !o.force) return 'up-to-date';
     await uploadAssets(id, doc);
     const text = JSON.stringify(doc);
     const r = await api.putDoc(id, text, base ? base.lastSyncedHash : null);
@@ -346,7 +356,7 @@ export function createFolderMirror(o: FolderMirrorOptions): FolderMirror {
       try {
         same = sameContent(readFolderDoc(folder.text), doc);
       } catch {
-        same = false; // a damaged folder doc: keep it as a copy is impossible; overwrite below would lose it
+        same = false; // a damaged or newer-format folder doc: keepBoth below refuses it, so it is never overwritten
       }
       if (same) {
         const again = await api.putDoc(id, text, folder.sha256);
@@ -394,7 +404,12 @@ export function createFolderMirror(o: FolderMirrorOptions): FolderMirror {
       const old = pending.get(e.id);
       if (old !== undefined) timers.clearTimeout(old);
       pending.delete(e.id);
-      void run(() => exclusive(() => api.remove(e.id))).catch(() => {});
+      void run(() =>
+        exclusive(async () => {
+          await api.remove(e.id);
+          await repo.deleteMeta(GONE_PREFIX + e.id);
+        }),
+      ).catch(() => {});
     }
   });
 
@@ -414,32 +429,55 @@ export function createFolderMirror(o: FolderMirrorOptions): FolderMirror {
           const restorable: FolderProjectEntry[] = [];
           const changedInFolder: FolderProjectEntry[] = [];
           const inFolder = new Set<string>();
+          const problems: string[] = [];
+          // One project's trouble (a damaged or newer-format folder doc) never stops the others.
+          const each = async (id: string, name: string, work: () => Promise<unknown>): Promise<void> => {
+            try {
+              await work();
+            } catch (error) {
+              problems.push(`“${name || id}”: ${errorText(error)}`);
+            }
+          };
           for (const f of listing.projects) {
             inFolder.add(f.id);
             const l = local.get(f.id);
-            if (!l) {
-              restorable.push(f);
-              continue;
-            }
-            const base = await syncBase(f.id);
-            if (!base) {
-              await pushLocked(f.id); // adopts the same content, or keeps both
-              continue;
-            }
-            const localNewer = l.rev > base.lastSyncedRev;
-            const localOlder = l.rev < base.lastSyncedRev;
-            const folderChanged = f.docSha256 !== base.lastSyncedHash;
-            if (localNewer && folderChanged) {
-              const doc = await repo.peek(f.id);
-              if (doc) await keepBothLocked(f.id, doc);
-            } else if (localNewer) {
-              await pushLocked(f.id);
-            } else if (folderChanged || localOlder) {
-              changedInFolder.push(f);
-            }
+            await each(f.id, l?.name ?? f.name, async () => {
+              if (!l) {
+                // Deleted for good here while the mirror was not running: move the folder copy away too —
+                // but only if nobody changed it since (else it is offered, never lost).
+                const gone = (await repo.getMeta(GONE_PREFIX + f.id)) as { lastSyncedHash?: unknown } | undefined;
+                if (gone) {
+                  await repo.deleteMeta(GONE_PREFIX + f.id);
+                  if (gone.lastSyncedHash === f.docSha256) {
+                    await api.remove(f.id);
+                    return;
+                  }
+                }
+                restorable.push(f);
+                return;
+              }
+              const base = await syncBase(f.id);
+              if (!base) {
+                await pushLocked(f.id); // adopts the same content, or keeps both
+                return;
+              }
+              const localNewer = l.rev > base.lastSyncedRev;
+              const localOlder = l.rev < base.lastSyncedRev;
+              const folderChanged = f.docSha256 !== base.lastSyncedHash;
+              if (localNewer && folderChanged) {
+                const doc = await repo.peek(f.id);
+                if (doc) await keepBothLocked(f.id, doc);
+              } else if (localNewer) {
+                await pushLocked(f.id);
+              } else if (folderChanged || localOlder) {
+                changedInFolder.push(f);
+              }
+            });
           }
-          for (const id of local.keys()) if (!inFolder.has(id)) await pushLocked(id);
+          for (const [id, l] of local) if (!inFolder.has(id)) await each(id, l.name, () => pushLocked(id, { force: true }));
+          for (const id of listing.damaged) problems.push(`the folder’s copy of ${id} can’t be read`);
           set({ folder: listing.status, restorable, changedInFolder });
+          if (problems.length > 0) throw new Error(problems.length === 1 ? problems[0] : `${problems[0]} (and ${problems.length - 1} more)`);
         }),
       );
       set({ status: 'idle' });
@@ -464,7 +502,7 @@ export function createFolderMirror(o: FolderMirrorOptions): FolderMirror {
           const folder = await api.getDoc(id);
           if (!folder) throw new FolderError(404, 'The project is no longer in the folder.');
           const doc = readFolderDoc(folder.text);
-          const outcome = await importDoc(doc, await folderAssets(doc, (sha) => api.getAsset(id, sha)));
+          const outcome = await importDoc(doc, await folderAssets(doc, folderFetcher(id)));
           if (outcome.status === 'imported') {
             const stored = await repo.peek(outcome.id);
             if (stored) await repo.putMeta(SYNC_PREFIX + id, { lastSyncedRev: stored.rev, lastSyncedHash: folder.sha256 } satisfies SyncBase);
@@ -482,7 +520,7 @@ export function createFolderMirror(o: FolderMirrorOptions): FolderMirror {
           const folder = await api.getDoc(id);
           if (!folder) throw new FolderError(404, 'The project is no longer in the folder.');
           const folderDoc = readFolderDoc(folder.text);
-          const assets = await folderAssets(folderDoc, (sha) => api.getAsset(id, sha));
+          const assets = await folderAssets(folderDoc, folderFetcher(id));
           for (const [key, blob] of assets) await repo.putAssetBlob(key, blob);
           const held = repo.holdsLock(id);
           const opened = await repo.open(id, 'edit');
@@ -515,7 +553,9 @@ export function createFolderMirror(o: FolderMirrorOptions): FolderMirror {
         const text = await api.getBackupDoc(backup, id);
         if (text === null) throw new FolderError(404, 'That project is not in the backup.');
         const doc = readFolderDoc(text);
-        return importDoc(doc, await folderAssets(doc, (sha) => api.getBackupAsset(sha)));
+        // Only what the backup names is asked for (a missing file would be a 404, a console error in Chromium).
+        const named = new Set((await api.listBackups()).backups.find((b) => b.name === backup)?.projects.find((p) => p.id === id)?.assets ?? []);
+        return importDoc(doc, await folderAssets(doc, async (sha) => (named.has(sha) ? api.getBackupAsset(sha) : null)));
       }),
 
     dispose() {

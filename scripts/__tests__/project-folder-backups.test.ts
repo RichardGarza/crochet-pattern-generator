@@ -6,7 +6,7 @@ import { createHash, randomFillSync } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { backupsDirFor, createFolderStore, type Logger } from '../project-folder.ts';
 
 const sha = (data: Buffer | string): string => createHash('sha256').update(data).digest('hex');
@@ -259,6 +259,45 @@ describe('backups', () => {
     t.disk.free = 40e9;
     expect((await t.store.backup()).status).toBe('created');
     expect((await t.store.list()).status).toMatchObject({ level: 'ok', message: null });
+  });
+
+  it('a project deleted while the backup copies it: the backup completes and names only what it copied', async () => {
+    const t = setup();
+    await t.store.writeDoc('p1', docJson('p1', 1), null);
+    const h = await t.putAsset('p1', Buffer.from('soon gone'));
+    await t.store.writeDoc('p2', docJson('p2', 1), null);
+    const keep = await t.putAsset('p2', Buffer.from('stays'));
+    // Remove p1's asset between the scan and the copy (as a DELETE would).
+    const real = fs.promises.copyFile;
+    const spy = vi.spyOn(fs.promises, 'copyFile').mockImplementation(async (src, dst, mode) => {
+      if (String(src).endsWith(h)) fs.rmSync(String(src));
+      return real(src, dst, mode);
+    });
+    let r;
+    try {
+      r = await t.store.backup();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(r?.status).toBe('created');
+    const name = backupNames(t.backupsDir)[0];
+    const m = JSON.parse(fs.readFileSync(path.join(t.backupsDir, name, 'manifest.json'), 'utf8'));
+    expect(m.projects.find((p: { id: string }) => p.id === 'p1').assets).toEqual([]);
+    expect(m.projects.find((p: { id: string }) => p.id === 'p2').assets).toEqual([keep]);
+  });
+
+  it('shared-asset GC waits while another backup is being written', async () => {
+    const t = setup({ cap: 0 });
+    await t.store.writeDoc('p1', docJson('p1', 1), null);
+    await t.store.backup();
+    const orphan = path.join(t.backupsDir, 'assets', sha('copied by a backup in progress'));
+    fs.writeFileSync(orphan, 'copied by a backup in progress');
+    fs.mkdirSync(path.join(t.backupsDir, '.2026-10-01-1300.partial-abcd'));
+    await t.store.prune();
+    expect(fs.existsSync(orphan)).toBe(true);
+    fs.rmSync(path.join(t.backupsDir, '.2026-10-01-1300.partial-abcd'), { recursive: true });
+    await t.store.prune();
+    expect(fs.existsSync(orphan)).toBe(false);
   });
 
   it('a failed backup leaves no partial folder and reports the failure', async () => {

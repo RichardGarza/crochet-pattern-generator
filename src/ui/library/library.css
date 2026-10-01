@@ -294,3 +294,8 @@
 .lib-backup__projects .lib-row {
   padding-left: var(--space-7);
 }
+
+.lib-restore__notice:focus-visible {
+  outline-offset: 2px;
+  border-radius: var(--radius-md);
+}

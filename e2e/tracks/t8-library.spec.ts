@@ -210,7 +210,9 @@ test.describe('T8 library and folder mirror in a real browser', () => {
     await expect(dialog.getByText(FOLDER)).toBeVisible();
     await shot(b, info, 't8-restore-folder');
     await dialog.getByRole('button', { name: 'Restore Mirrored scarf' }).click();
-    await expect(toast(b, 'Restored “Mirrored scarf”.')).toBeVisible();
+    await expect(dialog.getByText('Restored “Mirrored scarf”.')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Open' })).toBeFocused();
+    await shot(b, info, 't8-restore-done');
     await dialog.getByRole('tab', { name: /Backups/ }).click();
     await expect(dialog.getByText(/No backups yet|project/).first()).toBeVisible();
     await shot(b, info, 't8-restore-backups');

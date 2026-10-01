@@ -160,12 +160,27 @@ describe('isolation (§5.5.4): the default folder is refused for tests, agents, 
   });
 
   it('refuses the REAL default folder in this very process (VITEST is set) without touching it', () => {
-    const spy = vi.spyOn(fs, 'realpathSync');
-    const d = decideMirror({ env: process.env, root: process.cwd(), home: os.homedir() });
+    // Hermetic: whatever CPG_PROJECTS_DIR the shell exported, this asks about the default folder.
+    const env = { ...process.env, CPG_PROJECTS_DIR: undefined };
+    const realpath = vi.fn((dir: string) => dir);
+    const d = decideMirror({ env, root: process.cwd(), home: os.homedir(), realpath });
     expect(d.on).toBe(false);
     if (!d.on) expect(d.reason).toMatch(/VITEST|CPG_TEST|CLAUDE_CODE_CHILD_SESSION|PLAYWRIGHT|CI/);
-    expect(spy).not.toHaveBeenCalled();
-    spy.mockRestore();
+    // The string check refused it: no realpath (no file access) was needed.
+    expect(realpath).not.toHaveBeenCalled();
+  });
+
+  it('refuses the firmlink spelling (/System/Volumes/Data/…) and the account’s own home when $HOME points elsewhere', () => {
+    const home = fakeHome();
+    const real = defaultProjectsDir(home);
+    const firmlink = `/System/Volumes/Data${real}`;
+    expect(decideMirror({ env: { CPG_TEST: '1', CPG_PROJECTS_DIR: firmlink }, root: checkout('master'), home }).on).toBe(false);
+    expect(isProtectedFolder('/System/Volumes/Data', home)).toBe(true); // an ancestor of every home
+    // $HOME moved away: the account's home is still protected.
+    const other = fakeHome();
+    expect(decideMirror({ env: { CPG_TEST: '1', CPG_PROJECTS_DIR: real }, root: checkout('master'), home: other, otherHomes: [home] }).on).toBe(false);
+    expect(decideMirror({ env: { CPG_TEST: '1', CPG_PROJECTS_DIR: real }, root: checkout('master'), home: other }).on).toBe(true);
+    expect(documentsTouched(home)).toBe(false);
   });
 
   it('refuses CPG_PROJECTS_DIR pointing at the protected folder by any spelling, ancestor, iCloud path or symlink', () => {

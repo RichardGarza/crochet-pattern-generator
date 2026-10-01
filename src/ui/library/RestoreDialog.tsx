@@ -1,15 +1,19 @@
 // Track T8 — "Restore from folder or backup" (DESIGN.md §5.7, §5.5.4, F7): one dialog with three sources —
 // the projects folder (projects this browser does not have, and ones changed in the folder), the dated backups
 // next to it, and a `.crochet.json` file. Nothing here overwrites a project: restores import (an id that exists
-// becomes a copy), "Load the folder version" snapshots the browser's version first.
-import { useEffect, useState, type ReactNode } from 'react';
-import { formatGB } from '../../core/persist/backups';
-import type { BackupSummary, FolderProjectEntry } from '../../core/persist/folderProtocol';
+// becomes a copy), "Load folder version" asks first and snapshots the browser's version.
+//
+// Results are shown inside the dialog (a toast would sit under the modal backdrop), and focus moves to them, so
+// it never falls out of the dialog when a row goes away.
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { formatGB, parseBackupFolderName } from '../../core/persist/backups';
+import type { BackupSummary, FolderProjectEntry, FolderStatus } from '../../core/persist/folderProtocol';
 import type { FolderMirror } from '../../core/persist/folderClient';
 import type { ImportOutcome } from '../../core/persist/repo';
+import { useAppStore } from '../../state/appStore';
 import { useLibrary } from '../../state/slices/library';
-import { notify } from '../../app/toasts';
 import { Badge } from '../common/Badge';
+import { Banner } from '../common/Banner';
 import { Button } from '../common/Button';
 import { Dialog } from '../common/Dialog';
 import { DropZone } from '../common/DropZone';
@@ -36,31 +40,47 @@ export interface RestoreDialogProps {
 
 const ID_BASE = 'lib-restore';
 
-const whenOf = (iso: string): string => {
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
+/** What the dialog says after an action. */
+interface Notice {
+  tone: 'success' | 'info' | 'danger';
+  text: string;
+  /** A project to offer "Open" for. */
+  openId?: string;
+}
+type Report = (n: Notice) => void;
+
+const whenOf = (at: Date | string): string => {
+  const d = typeof at === 'string' ? new Date(at) : at;
+  if (!Number.isFinite(d.getTime())) return String(at);
   return d.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
 const modeLabel = (mode: '2d' | '3d'): string => (mode === '2d' ? '2D chart' : '3D toy');
+const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
-function outcomeToast(o: ImportOutcome, open: (id: string) => void): void {
-  const action = { label: 'Open', run: () => open(o.id) };
-  if (o.status === 'already-present') notify.info(`“${o.name}” is already in your library.`, { key: 'library-restore', action });
-  else if (o.status === 'imported-as-copy') notify.success(`Restored as “${o.name}”, next to the project you already have.`, { key: 'library-restore', action });
-  else notify.success(`Restored “${o.name}”.`, { key: 'library-restore', action });
+function outcomeNotice(o: ImportOutcome): Notice {
+  if (o.status === 'already-present') return { tone: 'info', text: `“${o.name}” is already in your library.`, openId: o.id };
+  if (o.status === 'imported-as-copy') return { tone: 'success', text: `Restored as “${o.name}”, next to the project you already have.`, openId: o.id };
+  return { tone: 'success', text: `Restored “${o.name}”.`, openId: o.id };
 }
 
 function NotConnected() {
   return (
     <EmptyState icon="folder" title="The projects folder isn’t connected here" variant="panel" size="sm">
-      Projects are copied to a folder on this computer — with dated backups — only when the app runs from its own project folder. Here they are saved in this browser.
-      You can still restore a project from a <strong>.crochet.json</strong> file.
+      This copy of the app doesn’t copy projects to a folder on your computer, so there are no folder copies or backups to restore from here. Your projects are saved in this
+      browser, and you can still restore one from a <strong>.crochet.json</strong> project file.
     </EmptyState>
   );
 }
 
-function ProjectRow({ entry, actions }: { entry: { id: string; name: string; mode: '2d' | '3d'; updatedAt: string }; actions: ReactNode }) {
+interface RowEntry {
+  id: string;
+  name: string;
+  mode: '2d' | '3d';
+  updatedAt: string;
+}
+
+function ProjectRow({ entry, actions, note }: { entry: RowEntry; actions: ReactNode; note?: ReactNode }) {
   return (
     <li className="lib-row" data-project-id={entry.id}>
       <span className="lib-row__icon" aria-hidden="true">
@@ -71,8 +91,12 @@ function ProjectRow({ entry, actions }: { entry: { id: string; name: string; mod
           {entry.name || 'Untitled project'}
         </span>
         <span className="lib-row__meta">
-          {modeLabel(entry.mode)}
-          {entry.updatedAt ? ` · Edited ${formatRelativeTime(entry.updatedAt)}` : ''}
+          {note ?? (
+            <>
+              {modeLabel(entry.mode)}
+              {entry.updatedAt ? ` · Edited ${formatRelativeTime(entry.updatedAt)}` : ''}
+            </>
+          )}
         </span>
       </span>
       <span className="lib-row__actions">{actions}</span>
@@ -80,36 +104,50 @@ function ProjectRow({ entry, actions }: { entry: { id: string; name: string; mod
   );
 }
 
-function FolderPanel({ mirror, onOpen }: { mirror: FolderMirror; onOpen(id: string): void }) {
+function lastBackupText(folder: FolderStatus | null): string | null {
+  const run = folder?.lastBackup;
+  if (!run) return null;
+  switch (run.status) {
+    case 'created':
+      return `Backed up ${formatRelativeTime(run.at)}`;
+    case 'unchanged': {
+      const at = parseBackupFolderName(run.newest);
+      return at ? `Last backup ${whenOf(at)} — nothing changed since` : 'Nothing changed since the last backup';
+    }
+    case 'skipped-low-space':
+      return 'Backups paused: the disk is nearly full';
+    case 'failed':
+      return 'The last backup failed — see the server’s console';
+    case 'empty':
+      return null;
+  }
+}
+
+function FolderPanel({ mirror, report }: { mirror: FolderMirror; report: Report }) {
   const state = useLibrary((s) => s.mirror);
+  const library = useAppStore((s) => s.library);
   const [working, setWorking] = useState<string | null>(null);
-  const run = async (key: string, action: () => Promise<void>) => {
+  const [confirmLoad, setConfirmLoad] = useState<string | null>(null);
+  const localName = (p: FolderProjectEntry): string => library?.find((s) => s.id === p.id)?.name ?? p.name;
+  const run = async (key: string, action: () => Promise<Notice | null>) => {
     setWorking(key);
     try {
-      await action();
+      const n = await action();
+      if (n) report(n);
     } catch (error) {
-      notify.error(error instanceof Error ? error.message : String(error));
+      report({ tone: 'danger', text: messageOf(error) });
     } finally {
       setWorking(null);
     }
   };
   const folder = state.folder;
-  const last = folder?.lastBackup;
-  const lastText =
-    !last || last.status === 'empty'
-      ? 'No backups yet'
-      : last.status === 'created'
-        ? `Backed up ${formatRelativeTime(last.at)}`
-        : last.status === 'unchanged'
-          ? 'Backed up — nothing changed since the last backup'
-          : last.status === 'skipped-low-space'
-            ? 'Backups paused: the disk is nearly full'
-            : 'The last backup failed';
-  const rows = (list: FolderProjectEntry[], render: (p: FolderProjectEntry) => ReactNode) => (
+  const lastText = lastBackupText(folder);
+  const rows = (list: FolderProjectEntry[], render: (p: FolderProjectEntry) => { actions: ReactNode; note?: ReactNode }, named?: (p: FolderProjectEntry) => string) => (
     <ul className="lib-box lib-rows">
-      {list.map((p) => (
-        <ProjectRow key={p.id} entry={p} actions={render(p)} />
-      ))}
+      {list.map((p) => {
+        const r = render(p);
+        return <ProjectRow key={p.id} entry={{ ...p, name: named ? named(p) : p.name }} actions={r.actions} note={r.note} />;
+      })}
     </ul>
   );
   return (
@@ -120,32 +158,77 @@ function FolderPanel({ mirror, onOpen }: { mirror: FolderMirror; onOpen(id: stri
           {/* An isolated left-to-right run: the right-to-left box only moves the ellipsis to the start. */}
           <bdi dir="ltr">{folder?.folder ?? 'Projects folder'}</bdi>
         </span>
-        <Button size="sm" variant="ghost" icon="refresh" loading={state.status === 'syncing'} onClick={() => void run('check', () => mirror.reconcile())}>
+        <Button size="sm" variant="ghost" icon="refresh" loading={state.status === 'syncing'} onClick={() => void run('check', async () => (await mirror.reconcile(), null))}>
           Check again
         </Button>
-        <span className="lib-folder__meta">
-          {folder?.freeBytes != null ? `${formatGB(folder.freeBytes)} free · ` : ''}
-          {lastText}
-        </span>
+        <span className="lib-folder__meta">{[folder?.freeBytes != null ? `${formatGB(folder.freeBytes)} free` : null, lastText].filter(Boolean).join(' · ')}</span>
       </div>
       {folder?.message ? (
-        <Badge tone={folder.level === 'critical' ? 'danger' : 'warn'} size="md">
+        <Banner tone={folder.level === 'critical' ? 'danger' : 'warn'} title={folder.level === 'critical' ? 'Backups are paused' : 'The disk is getting full'}>
           {folder.message}
-        </Badge>
+        </Banner>
+      ) : null}
+      {state.status === 'error' && state.lastError ? (
+        <Banner tone="warn" title="Some projects couldn’t be compared with the folder">
+          {state.lastError}
+        </Banner>
       ) : null}
       {state.changedInFolder.length > 0 ? (
         <section className="lib-stack" aria-label="Changed in the projects folder">
           <h3 className="lib-section-title">Changed in the folder</h3>
-          {rows(state.changedInFolder, (p) => (
-            <>
-              <Button size="sm" loading={working === `load:${p.id}`} onClick={() => void run(`load:${p.id}`, () => mirror.loadFolderVersion(p.id))}>
-                Load folder version
-              </Button>
-              <Button size="sm" variant="ghost" loading={working === `both:${p.id}`} onClick={() => void run(`both:${p.id}`, async () => void (await mirror.keepBoth(p.id)))}>
-                Keep both
-              </Button>
-            </>
-          ))}
+          {rows(
+            state.changedInFolder,
+            (p) =>
+              confirmLoad === p.id
+                ? {
+                    note: 'Replace this browser’s version with the folder’s? This browser’s version is kept as a snapshot.',
+                    actions: (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          loading={working === `load:${p.id}`}
+                          onClick={() =>
+                            void run(`load:${p.id}`, async () => {
+                              await mirror.loadFolderVersion(p.id);
+                              setConfirmLoad(null);
+                              return { tone: 'success', text: `Loaded the folder’s version of “${localName(p)}”. This browser’s version is kept as a snapshot.`, openId: p.id };
+                            })
+                          }
+                        >
+                          Load it
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setConfirmLoad(null)}>
+                          Cancel
+                        </Button>
+                      </>
+                    ),
+                  }
+                : {
+                    actions: (
+                      <>
+                        <Button size="sm" aria-label={`Load the folder version of ${localName(p)}`} onClick={() => setConfirmLoad(p.id)}>
+                          Load folder version
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Keep both versions of ${localName(p)}`}
+                          loading={working === `both:${p.id}`}
+                          onClick={() =>
+                            void run(`both:${p.id}`, async () => {
+                              const kept = await mirror.keepBoth(p.id);
+                              return { tone: 'success', text: `Kept both: the folder’s version is now “${kept.copyName}”.`, openId: kept.copyId };
+                            })
+                          }
+                        >
+                          Keep both
+                        </Button>
+                      </>
+                    ),
+                  },
+            localName,
+          )}
         </section>
       ) : null}
       <section className="lib-stack" aria-label="Only in the projects folder">
@@ -157,28 +240,26 @@ function FolderPanel({ mirror, onOpen }: { mirror: FolderMirror; onOpen(id: stri
         ) : state.restorable.length === 0 ? (
           <p className="lib-box lib-box__empty">Every project in the folder is also in this browser.</p>
         ) : (
-          rows(state.restorable, (p) => (
-            <Button
-              size="sm"
-              icon="download"
-              loading={working === `restore:${p.id}`}
-              aria-label={`Restore ${p.name}`}
-              onClick={() =>
-                void run(`restore:${p.id}`, async () => {
-                  outcomeToast(await mirror.restoreFromFolder(p.id), onOpen);
-                })
-              }
-            >
-              Restore
-            </Button>
-          ))
+          rows(state.restorable, (p) => ({
+            actions: (
+              <Button
+                size="sm"
+                icon="download"
+                loading={working === `restore:${p.id}`}
+                aria-label={`Restore ${p.name}`}
+                onClick={() => void run(`restore:${p.id}`, async () => outcomeNotice(await mirror.restoreFromFolder(p.id)))}
+              >
+                Restore
+              </Button>
+            ),
+          }))
         )}
       </section>
     </div>
   );
 }
 
-function BackupsPanel({ mirror, onOpen }: { mirror: FolderMirror; onOpen(id: string): void }) {
+function BackupsPanel({ mirror, report }: { mirror: FolderMirror; report: Report }) {
   const [backups, setBackups] = useState<BackupSummary[] | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -191,7 +272,7 @@ function BackupsPanel({ mirror, onOpen }: { mirror: FolderMirror; onOpen(id: str
         setBackups(r.backups);
         setExpanded((e) => e ?? r.backups[0]?.name ?? null);
       },
-      (error: unknown) => live && setFailed(error instanceof Error ? error.message : String(error)),
+      (error: unknown) => live && setFailed(messageOf(error)),
     );
     return () => {
       live = false;
@@ -238,13 +319,13 @@ function BackupsPanel({ mirror, onOpen }: { mirror: FolderMirror; onOpen(id: str
                           size="sm"
                           icon="download"
                           loading={working === `${b.name}/${p.id}`}
-                          aria-label={`Restore ${p.name} from this backup`}
+                          aria-label={`Restore ${p.name} from the backup of ${whenOf(b.at)}`}
                           onClick={async () => {
                             setWorking(`${b.name}/${p.id}`);
                             try {
-                              outcomeToast(await mirror.restoreFromBackup(b.name, p.id), onOpen);
+                              report(outcomeNotice(await mirror.restoreFromBackup(b.name, p.id)));
                             } catch (error) {
-                              notify.error(`Couldn’t restore it: ${error instanceof Error ? error.message : String(error)}`);
+                              report({ tone: 'danger', text: `Couldn’t restore it: ${messageOf(error)}` });
                             } finally {
                               setWorking(null);
                             }
@@ -265,7 +346,7 @@ function BackupsPanel({ mirror, onOpen }: { mirror: FolderMirror; onOpen(id: str
   );
 }
 
-function FilePanel({ importFile, onOpen }: { importFile: RestoreDialogProps['importFile']; onOpen(id: string): void }) {
+function FilePanel({ importFile, onOpen, report }: { importFile: RestoreDialogProps['importFile']; onOpen(id: string): void; report: Report }) {
   const [busy, setBusy] = useState(false);
   return (
     <div className="lib-restore__panel">
@@ -275,7 +356,7 @@ function FilePanel({ importFile, onOpen }: { importFile: RestoreDialogProps['imp
         hint="Made with Export on a project or a card. It is added next to your projects; nothing is replaced."
         icon="file"
         disabled={!importFile || busy}
-        onReject={() => notify.error('That isn’t a project file. Project files end in .crochet.json.')}
+        onReject={() => report({ tone: 'danger', text: 'That isn’t a project file. Project files end in .crochet.json.' })}
         onFiles={async ([file]) => {
           if (!importFile) return;
           setBusy(true);
@@ -295,35 +376,91 @@ function FilePanel({ importFile, onOpen }: { importFile: RestoreDialogProps['imp
 
 export function RestoreDialog({ open, onClose, source, onSource, mirror, importFile, onOpen }: RestoreDialogProps) {
   const restorable = useLibrary((s) => s.mirror.restorable.length + s.mirror.changedInFolder.length);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const noticeRef = useRef<HTMLDivElement>(null);
+  // A new result takes the focus (its row may have gone away), so focus never leaves the dialog.
+  useEffect(() => {
+    if (!notice) return;
+    const el = noticeRef.current;
+    (el?.querySelector<HTMLElement>('button') ?? el)?.focus();
+  }, [notice]);
+  // A result belongs to this visit of the dialog.
+  const close = (): void => {
+    setNotice(null);
+    onClose();
+  };
+  const openProject = (id: string): void => {
+    setNotice(null);
+    onOpen(id);
+  };
   const items = [
-    { id: 'folder' as const, label: 'Projects folder', icon: 'folder' as const, ...(restorable > 0 ? { badge: <Badge tone="accent" size="sm" icon={null}>{restorable}</Badge> } : {}) },
+    {
+      id: 'folder' as const,
+      label: 'Projects folder',
+      icon: 'folder' as const,
+      ...(restorable > 0
+        ? {
+            badge: (
+              <Badge tone="accent" size="sm" icon={null}>
+                {restorable}
+              </Badge>
+            ),
+          }
+        : {}),
+    },
     { id: 'backups' as const, label: 'Backups', icon: 'clock' as const },
     { id: 'file' as const, label: 'Project file', icon: 'file' as const },
   ];
   return (
     <Dialog
       open={open}
-      onClose={onClose}
+      onClose={close}
       size="lg"
       title="Restore a project"
       description="Bring back a project from the projects folder on this computer, from one of its backups, or from a project file."
       footer={
-        <Button variant="secondary" onClick={onClose}>
+        <Button variant="secondary" onClick={close}>
           Done
         </Button>
       }
     >
       <div className="lib-restore">
-        <Tabs ariaLabel="Where to restore from" items={items} value={source} onChange={onSource} idBase={ID_BASE} />
+        <Tabs
+          ariaLabel="Where to restore from"
+          items={items}
+          value={source}
+          onChange={(s) => {
+            setNotice(null);
+            onSource(s);
+          }}
+          idBase={ID_BASE}
+        />
+        {notice ? (
+          <div ref={noticeRef} tabIndex={-1} className="lib-restore__notice">
+            <Banner
+              tone={notice.tone}
+              actions={
+                notice.openId ? (
+                  <Button size="sm" onClick={() => openProject(notice.openId as string)}>
+                    Open
+                  </Button>
+                ) : undefined
+              }
+              onDismiss={() => setNotice(null)}
+            >
+              {notice.text}
+            </Banner>
+          </div>
+        ) : null}
         <TabPanel idBase={ID_BASE} id={source} className="lib-restore__panel">
           {source === 'file' ? (
-            <FilePanel importFile={importFile} onOpen={onOpen} />
+            <FilePanel importFile={importFile} onOpen={openProject} report={setNotice} />
           ) : !mirror ? (
             <NotConnected />
           ) : source === 'folder' ? (
-            <FolderPanel mirror={mirror} onOpen={onOpen} />
+            <FolderPanel mirror={mirror} report={setNotice} />
           ) : (
-            <BackupsPanel mirror={mirror} onOpen={onOpen} />
+            <BackupsPanel mirror={mirror} report={setNotice} />
           )}
         </TabPanel>
       </div>

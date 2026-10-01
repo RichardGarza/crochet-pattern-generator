@@ -379,10 +379,21 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
       case 'trashed':
         app.getState().removeSummary(e.id);
         void session.refreshTrash();
+        if (openId() === e.id) {
+          banners.show({
+            id: BANNER.removed,
+            kind: 'info',
+            tone: 'warn',
+            title: 'This project was deleted in another tab',
+            message: 'It is in Recently deleted. Any change you make here brings it back.',
+            dismissible: true,
+          });
+        }
         return;
       case 'restored':
         app.getState().upsertSummary(e.summary);
         void session.refreshTrash();
+        if (openId() === e.id) banners.dismiss(BANNER.removed);
         return;
       case 'removed':
         app.getState().removeSummary(e.id);

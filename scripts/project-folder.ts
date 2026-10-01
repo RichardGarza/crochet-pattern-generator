@@ -87,9 +87,16 @@ export function protectedFolders(home: string): string[] {
   return [path.join(home, 'Documents', APP_FOLDER), path.join(home, 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'Documents', APP_FOLDER)];
 }
 
-// APFS ignores case and Unicode normalization, so compare folded paths.
-const fold = (p: string): string => path.resolve(p).normalize('NFC').toLowerCase().replace(/[\\/]+$/, '');
-const sameOrInside = (p: string, root: string): boolean => p === root || p.startsWith(root + path.sep);
+// APFS ignores case and Unicode normalization, so compare folded paths. `/System/Volumes/Data/…` is the same
+// folder as `/…` (a firmlink, which realpath does not resolve).
+const fold = (p: string): string =>
+  path
+    .resolve(p)
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/[\\/]+$/, '')
+    .replace(/^\/system\/volumes\/data(?=\/|$)/, '') || '/';
+const sameOrInside = (p: string, root: string): boolean => p === root || root === '/' || p.startsWith(root + path.sep);
 
 /**
  * True when `dir` is a protected folder, lies inside one, or contains one (`~/Documents`, the home folder):
@@ -188,16 +195,25 @@ const expandHome = (p: string, home: string): string => (p === '~' ? home : p.st
  * (by its path, or by where its symlinks lead) is refused while any isolation rule holds. The protected check
  * runs on the path string first, so a refused folder is never touched.
  */
-export function decideMirror(o: { env: PortEnv; root: string; home: string; readBranch?: (root: string) => string | null; realpath?: (dir: string) => string }): MirrorDecision {
+export function decideMirror(o: {
+  env: PortEnv;
+  root: string;
+  home: string;
+  /** More home folders to protect (the plugin adds the account's own, which `$HOME` cannot change). */
+  otherHomes?: readonly string[];
+  readBranch?: (root: string) => string | null;
+  realpath?: (dir: string) => string;
+}): MirrorDecision {
   const configured = o.env.CPG_PROJECTS_DIR?.trim();
   const projectsDir = configured ? path.resolve(expandHome(configured, o.home)) : defaultProjectsDir(o.home);
-  // The string check first: a refused folder is never touched. Then where symlinks lead, against the home
+  const homes = [o.home, ...(o.otherHomes ?? [])];
+  // The string check first: a refused folder is never touched. Then where symlinks lead, against each home
   // folder by its own path and by its real path.
   const guarded =
-    isProtectedFolder(projectsDir, o.home) ||
+    homes.some((h) => isProtectedFolder(projectsDir, h)) ||
     (() => {
       const real = (o.realpath ?? nearestRealpath)(projectsDir);
-      return isProtectedFolder(real, o.home) || isProtectedFolder(real, realHome(o.home));
+      return homes.some((h) => isProtectedFolder(real, h) || isProtectedFolder(real, realHome(h)));
     })();
   if (guarded) {
     const reason = isolationReason(o.env, o.root, o.readBranch);
@@ -700,7 +716,14 @@ export function createFolderStore(o: FolderStoreOptions): FolderStore {
               if (await exists(dst)) continue;
               const tmp = path.join(sharedAssets, tempName(sha));
               // An APFS clone: no extra space while the original exists; a plain copy elsewhere.
-              await fsp.copyFile(path.join(assetsDir(p.id), sha), tmp, fs.constants.COPYFILE_FICLONE);
+              try {
+                await fsp.copyFile(path.join(assetsDir(p.id), sha), tmp, fs.constants.COPYFILE_FICLONE);
+              } catch (error) {
+                // Gone since the scan (the project was deleted meanwhile): the manifest must not name it.
+                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+                p.assets = p.assets.filter((a) => a !== sha);
+                continue;
+              }
               try {
                 await fsp.link(tmp, dst);
                 newAssets++;
@@ -755,7 +778,11 @@ export function createFolderStore(o: FolderStoreOptions): FolderStore {
       for (const name of plan.drop) await fsp.rm(path.join(backupsDir, name), { recursive: true, force: true });
       // Shared assets no kept backup names. Skipped while a folder that looks like a backup has no readable
       // manifest: its assets are unknown, and deleting them could break it.
-      if (unreadable === 0) {
+      // A backup being written (`.<name>.partial-*`) names assets no finished backup does yet.
+      const writing = (await fsp.readdir(backupsDir).catch(() => [] as string[])).some((n) => n.includes('.partial-'));
+      if (unreadable > 0) {
+        log.warn(`[cpg folder] ${unreadable} folder${unreadable === 1 ? '' : 's'} in ${backupsDir} look like backups but have no readable manifest.json; unused backup files are kept until that is fixed.`);
+      } else if (!writing) {
         const kept = backups.filter((b) => plan.keep.includes(b.name));
         for (const sha of unreferencedAssets(stored, kept)) await fsp.rm(path.join(sharedAssets, sha), { force: true });
       }
@@ -1064,19 +1091,41 @@ export interface ProjectFolderOptions {
   statfs?: (dir: string) => Promise<number>;
 }
 
+/** The account's own home folder (`$HOME` may point elsewhere). */
+function accountHome(): string[] {
+  try {
+    return [os.userInfo().homedir];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Start-up runs (backup + prune) per backups folder, kept on globalThis: a Vite restart re-evaluates this module
+ * and makes a new store while the old one may still be backing up — the second waits for the first.
+ */
+const RUNS_KEY = '__cpgFolderStartRuns';
+const startRuns = ((globalThis as Record<string, unknown>)[RUNS_KEY] ??= new Map<string, Promise<unknown>>()) as Map<string, Promise<unknown>>;
+
 /** The Vite plugin (dev and preview servers). */
 export function projectFolder(options: ProjectFolderOptions = {}): Plugin {
   let routes: Connect.NextHandleFunction | null = null;
   const setup = (root: string, logger: { info(m: string): void; warn(m: string): void; error(m: string): void }): Connect.NextHandleFunction => {
     if (routes) return routes;
     const log: Logger = { info: (m) => logger.info(m), warn: (m) => logger.warn(m), error: (m) => logger.error(m) };
-    const decision = decideMirror({ env: options.env ?? process.env, root, home: options.home ?? os.homedir() });
+    const decision = decideMirror({ env: options.env ?? process.env, root, home: options.home ?? os.homedir(), otherHomes: options.home ? [] : accountHome() });
     let store: FolderStore | null = null;
     if (decision.on) {
       store = createFolderStore({ projectsDir: decision.projectsDir, backupsDir: decision.backupsDir, now: options.now, statfs: options.statfs, log });
       log.info(`[cpg folder] Folder mirror on: ${decision.projectsDir} (backups in ${decision.backupsDir}).`);
       // Back up in the background: the server answers at once, and the first write creates the folder anyway.
-      void store.start().catch((error: unknown) => log.error(`[cpg folder] Start-up failed: ${error instanceof Error ? error.message : String(error)}`));
+      const s = store;
+      const before = startRuns.get(decision.backupsDir) ?? Promise.resolve();
+      const run = before
+        .catch(() => {})
+        .then(() => s.start())
+        .catch((error: unknown) => log.error(`[cpg folder] Start-up failed: ${error instanceof Error ? error.message : String(error)}`));
+      startRuns.set(decision.backupsDir, run);
     } else {
       log.warn(`[cpg folder] Folder mirror off: ${decision.reason}. ${decision.hint}`);
     }
