@@ -5,3 +5,4 @@ export { createMemoryBackend, projectBackend, setProjectBackend, summaryOf, type
 export { StartLayout, type StartLayoutProps } from './start/StartLayout';
 export { ProjectGrid, type ProjectGridProps } from './start/ProjectGrid';
 export { formatRelativeTime } from './relativeTime';
+export { registerShortcutGroup, useShortcutGroup, type ShortcutGroup, type ShortcutRow } from './shortcuts';

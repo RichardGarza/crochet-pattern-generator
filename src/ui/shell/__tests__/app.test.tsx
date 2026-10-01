@@ -84,6 +84,32 @@ describe('app shell', () => {
     expect(screen.getByTestId('save-chip').textContent).toContain('Read-only');
   });
 
+  it('a project that cannot be left stays open, and the toast says why', async () => {
+    const memory = createMemoryBackend();
+    let refuse = false;
+    setProjectBackend({
+      ...memory,
+      leave: async (doc, assets) => {
+        if (refuse) throw new Error('Your latest changes aren’t saved yet.');
+        return memory.leave(doc, assets);
+      },
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'New pattern from a picture' }));
+    await screen.findByTestId('workspace');
+    const a = projectStore.getState().doc!.id;
+    fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'New 3D toy from photos' }));
+    await waitFor(() => expect(projectStore.getState().doc?.id).not.toBe(a));
+    const b = projectStore.getState().doc!.id;
+    refuse = true;
+    act(() => navigate({ screen: 'project', projectId: a }));
+    await waitFor(() => expect(appStore.getState().toasts.map((t) => t.message).join()).toMatch(/Couldn’t open the project\. Your latest changes aren’t saved yet/));
+    await waitFor(() => expect(window.location.hash).toMatch(new RegExp(`^#/p/${b}`)));
+    expect(projectStore.getState().doc?.id).toBe(b);
+    expect(screen.queryByText('This project isn’t here')).toBeNull();
+  });
+
   it('an unknown project shows a way back', async () => {
     render(<App />);
     act(() => navigate({ screen: 'project', projectId: 'missing', tab: 'shape' }));

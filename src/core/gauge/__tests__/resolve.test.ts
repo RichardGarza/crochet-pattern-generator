@@ -22,6 +22,7 @@ import {
   yardageBandFor,
 } from '../resolve';
 import { cmToIn } from '../tables';
+import { yardageBand } from '../yarnPerStitch';
 
 // Expected values are typed from the printed tables (DESIGN.md §2.2.1–2.2.4, research 01 §8 Tables C and D) or
 // worked by hand in the comments; none is read back from the implementation's tables.
@@ -82,7 +83,8 @@ const KEYS: readonly (keyof ResolvedGauge)[] = ['cell', 'wSc', 'hSc', 'lscIn', '
 const SWEEP_TIMEOUT_MS = 30_000;
 
 function expectFiniteGauge(g: ResolvedGauge): void {
-  expect(Object.keys(g).sort()).toEqual([...KEYS].sort());
+  // `lscCalibrated` is present (and true) only when a calibration set lscIn
+  expect(Object.keys(g).sort()).toEqual([...KEYS, ...(g.lscCalibrated === true ? (['lscCalibrated'] as const) : [])].sort());
   for (const v of [g.cell.w, g.cell.h, g.wSc, g.hSc, g.lscIn, g.hookMm, g.stretch, g.tol]) {
     expect(Number.isFinite(v)).toBe(true);
     expect(v).toBeGreaterThan(0);
@@ -122,7 +124,7 @@ describe('resolveGauge — defaults for each CYC weight × technique (§2.2.5 st
       expect(g.cell.h).toBeCloseTo(e.w / 1.05, 14);
       expect(g.hookMm).toBe(e.hook);
       expect(g.stretch).toBe(1.05);
-      expect(g.tol).toBe(TABLE_A[cyc].tol);
+      expect(g.tol).toBe(cyc === 4 ? 0.1 : 0.2); // Table E's own tolerance (design v1.4)
       expect(g.source).toBe('default');
       // wSc, hSc: Table A × (Table E hook / Table A hook)^0.75 — the flat sc cell at the amigurumi hook
       expect(g.wSc).toBeCloseTo(e.wSc, 6);
@@ -358,14 +360,17 @@ describe('resolveGauge — a measured swatch wins (§2.2.5 step 1; research 01 �
     expect(g.stretch).toBe(1);
   });
 
-  it('mode d, amigurumi test ball "max N sts, circumference C": w·s = C / N with s := 1', () => {
+  it('mode d, amigurumi test ball "max N sts, circumference C": w·s = C / N, stored as w = C/N / 1.05 with s = 1.05 (design v1.4)', () => {
     // PlanetJune's 42-st ball, 2.75 in across: C = 2.75π = 8.639 in
     const C = 2.75 * Math.PI;
     const g = resolveGauge({ cyc: 4, technique: 'amigurumi_sc', testBall: { maxSts: 42, circumferenceIn: C } });
-    expect(g.cell.w).toBeCloseTo(C / 42, 14);
-    expect(g.cell.w).toBeCloseTo(0.2057, 4); // 8.6394 / 42
-    expect(g.cell.h).toBeCloseTo(C / 42 / 1.05, 14);
-    expect(g.stretch).toBe(1);
+    expect(g.cell.w * g.stretch).toBeCloseTo(C / 42, 14); // the firmly stuffed ball is what was measured
+    expect(g.cell.w * g.stretch).toBeCloseTo(0.2057, 4); // 8.6394 / 42
+    expect(g.cell.w).toBeCloseTo(C / 42 / 1.05, 14); // a lightly stuffed or unstuffed piece: 5% narrower
+    expect(g.cell.h * g.stretch).toBeCloseTo(C / 42 / 1.05, 14); // the stuffed round height, as before
+    expect(g.stretch).toBe(1.05);
+    expect(stuffedCell(g, 'firm').wS).toBeCloseTo(C / 42, 14);
+    expect(stuffedCell(g, 'none').wS).toBeCloseTo(C / 42 / 1.05, 14);
     expect(g.tol).toBe(0.04);
     expect(g.source).toBe('swatch');
     expect(g.hookMm).toBe(3.5);
@@ -379,7 +384,7 @@ describe('resolveGauge — a measured swatch wins (§2.2.5 step 1; research 01 �
     // yarn under changes only the round height
     const under = resolveGauge({ cyc: 4, technique: 'amigurumi_sc', yarnUnder: true, testBall: { maxSts: 42, circumferenceIn: C } });
     expect(under.cell.w).toBe(g.cell.w);
-    expect(under.cell.h).toBeCloseTo(C / 42 / 1.11, 14);
+    expect(under.cell.h * under.stretch).toBeCloseTo(C / 42 / 1.11, 14);
   });
 
   it('a test ball that measures exactly the table gauge gives the same stuffed stitch as the default', () => {
@@ -394,7 +399,9 @@ describe('resolveGauge — a measured swatch wins (§2.2.5 step 1; research 01 �
       const plain = resolveGauge({ cyc: 4, technique });
       const cal = resolveGauge({ cyc: 4, technique, lscCalibratedIn: 1.8 });
       expect(cal.lscIn).toBe(1.8);
-      expect({ ...cal, lscIn: plain.lscIn }).toEqual(plain);
+      expect(cal.lscCalibrated).toBe(true);
+      expect(plain.lscCalibrated).toBeUndefined();
+      expect({ ...cal, lscIn: plain.lscIn, lscCalibrated: undefined }).toEqual(plain);
     }
     const both = resolveGauge({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 14, rows: 17, spanIn: 4 }, lscCalibratedIn: 2.1 });
     expect(both.lscIn).toBe(2.1);
@@ -427,7 +434,7 @@ describe('resolveGauge — a measured swatch wins (§2.2.5 step 1; research 01 �
     const all = { swatch, c2cSwatch, testBall };
     expect(resolveGauge({ cyc: 4, technique: 'sc_graphgan', ...all }).cell).toEqual({ w: 0.2, h: 0.2 });
     expect(resolveGauge({ cyc: 4, technique: 'c2c', ...all }).cell).toEqual({ w: 4 / 9, h: 4 / 9 });
-    expect(resolveGauge({ cyc: 4, technique: 'amigurumi_sc', ...all }).cell.w).toBe(0.25);
+    expect(resolveGauge({ cyc: 4, technique: 'amigurumi_sc', ...all }).cell.w).toBe(0.25 / 1.05); // 0.25 stuffed
   });
 
   it('uncertainty: the Table A tolerance by default, ±4% once measured', () => {
@@ -709,10 +716,13 @@ describe('reading a resolved gauge', () => {
     expect(light.hS).toBeCloseTo(0.186, 3);
     // stretch is isotropic: the aspect does not change
     expect(firm.wS / firm.hS).toBeCloseTo(light.wS / light.hS, 12);
-    // a test ball measured the stuffed fabric: no second stretch
+    // a test ball measured the firmly stuffed fabric: firm and medium pieces get exactly C/N, light and unstuffed
+    // pieces the stitch before stuffing (design v1.4; it was C/N for every piece, 5% too wide for ears)
     const ball = resolveGauge({ cyc: 4, technique: 'amigurumi_sc', testBall: { maxSts: 36, circumferenceIn: 7.371 } });
-    for (const s of ['firm', 'medium', 'light', 'none'] as const) expect(stuffingStretch(ball, s)).toBe(1);
+    for (const s of ['firm', 'medium'] as const) expect(stuffingStretch(ball, s)).toBe(1.05);
+    for (const s of ['light', 'none'] as const) expect(stuffingStretch(ball, s)).toBe(1);
     expect(stuffedCell(ball, 'firm').wS).toBeCloseTo(0.20475, 12);
+    expect(stuffedCell(ball, 'light').wS).toBeCloseTo(0.195, 12);
     // a missing or unknown stuffing is an error, never a silent "unstuffed"
     for (const bad of [undefined, null, 'stuffed', 'FIRM', 'constructor', 1]) {
       expect(() => stuffingStretch(g, bad as unknown as 'firm')).toThrow(RangeError);
@@ -756,12 +766,13 @@ describe('reading a resolved gauge', () => {
     expect(() => yardageBandFor({ cyc: 4, technique: 'tss' as TechniqueId })).toThrow(RangeError);
   });
 
-  it('the calibrated band cannot be read off a ResolvedGauge: it does not record the calibration', () => {
-    // the gap behind request 1 of docs/tracks/s0b-gauge.md
+  it('the calibrated band can be read off a ResolvedGauge: lscCalibrated (design v1.4, s0b-gauge request 1)', () => {
     const spec: GaugeSpec = { cyc: 4, technique: 'sc_graphgan', lscCalibratedIn: 1.8 };
     const resolved = resolveGauge(spec);
     expect(resolved.source).toBe('default');
+    expect(resolved.lscCalibrated).toBe(true);
     expect(yardageBandFor(spec)).toBe(0.05);
-    expect(Object.keys(resolved)).not.toContain('lscCalibrated');
+    expect(yardageBand({ technique: spec.technique, source: resolved.source, calibrated: resolved.lscCalibrated })).toBe(0.05);
+    expect(yardageBand({ technique: 'sc_graphgan', source: 'default', calibrated: resolveGauge({ cyc: 4, technique: 'sc_graphgan' }).lscCalibrated })).toBe(0.25);
   });
 });

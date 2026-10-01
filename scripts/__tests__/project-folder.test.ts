@@ -68,11 +68,14 @@ describe('projectFolder (Step 0 stub of the T8 plugin)', () => {
     }
   });
 
-  it('answers 501 on /__convert so HEIC photos keep the "export it as JPEG" message', () => {
+  it('answers POST /__convert with 200 JSON "no converter" (not an image), so HEIC photos keep the "export it as JPEG" message without a console error', () => {
     const post = request('POST', '/__convert');
-    expect(post.status).toBe(501);
-    expect(JSON.parse(post.body ?? '')).toEqual({ error: 'HEIC conversion: not implemented yet (track T8)' });
+    expect(post.status).toBe(200);
+    expect(post.headers['x-cpg-convert']).toBe('off');
+    expect(post.headers['content-type']).toMatch(/^application\/json/);
+    expect(JSON.parse(post.body ?? '')).toEqual({ converted: false, reason: 'no-converter' });
     expect(post.passedOn).toBe(false);
+    expect(request('GET', '/__convert').status).toBe(405);
   });
 
   it('passes every other request on untouched', () => {

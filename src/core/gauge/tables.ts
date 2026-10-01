@@ -273,17 +273,19 @@ export interface TableERow {
   hookMm: number;
   /** Stitch width before stuffing, inches. */
   wIn: Inches;
+  /** Size tolerance of the defaults (research 01 §5.4: worsted is calibrated; the other weights are not). */
+  tol: number;
 }
 
 /** Table E (§2.2.3). Calibrated against published sizes for worsted only (§7.2 Q2). */
 export const TABLE_E: Readonly<Record<AmiCyc, Readonly<TableERow>>> = freeze({
-  1: freeze({ hookMm: 2.25, wIn: 0.13 }),
-  2: freeze({ hookMm: 2.5, wIn: 0.155 }),
-  3: freeze({ hookMm: 2.75, wIn: 0.17 }),
-  4: freeze({ hookMm: 3.5, wIn: 0.195 }),
-  5: freeze({ hookMm: 4.5, wIn: 0.26 }),
-  6: freeze({ hookMm: 6.0, wIn: 0.33 }),
-  7: freeze({ hookMm: 9, wIn: 0.5 }),
+  1: freeze({ hookMm: 2.25, wIn: 0.13, tol: 0.2 }),
+  2: freeze({ hookMm: 2.5, wIn: 0.155, tol: 0.2 }),
+  3: freeze({ hookMm: 2.75, wIn: 0.17, tol: 0.2 }),
+  4: freeze({ hookMm: 3.5, wIn: 0.195, tol: 0.1 }),
+  5: freeze({ hookMm: 4.5, wIn: 0.26, tol: 0.2 }),
+  6: freeze({ hookMm: 6.0, wIn: 0.33, tol: 0.2 }),
+  7: freeze({ hookMm: 9, wIn: 0.5, tol: 0.2 }),
 });
 
 /** Amigurumi stitch aspect w/h: `h = w / 1.05` (yarn over, default) or `w / 1.11` (yarn under) (§2.2.3, D17). */

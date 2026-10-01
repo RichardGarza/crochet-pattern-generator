@@ -26,6 +26,8 @@ function watchErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on('console', (m: ConsoleMessage) => {
     if (m.type() === 'error') errors.push(`console: ${m.text()}`);
+    // The start-up probe no longer asks WebGPU for an adapter (design v1.4): headless Chromium has none and warns.
+    else if (m.type() === 'warning' && /No available adapters/.test(m.text())) errors.push(`console warning: ${m.text()}`);
   });
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   return errors;

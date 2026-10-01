@@ -290,6 +290,7 @@ describe('decodeBlob with a fake browser', () => {
       ['404: a static build has no such route', async () => response(404, 'text/html')],
       ['405: a static host refuses POST', async () => response(405, null)],
       ['200 with the index page: a static host with an SPA fallback', async () => response(200, 'text/html; charset=utf-8')],
+      ['200 JSON "no converter": the dev/preview answer without sips (design v1.4, no console error)', async () => response(200, 'application/json; charset=utf-8')],
       ['200 without a content type', async () => response(200, null)],
       [
         'the request fails: offline or timed out',

@@ -6,8 +6,9 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { ErrorBoundary } from '../../app/ErrorBoundary';
 import { navigate } from '../../app/router';
 import { TABS_2D, TABS_3D, defaultRouteTab, qaWizard, visibleTabs } from '../../app/tabs';
+import { notify } from '../../app/toasts';
 import type { ProjectRoute } from '../../state/appStore';
-import { useProjectStore } from '../../state/projectStore';
+import { projectStore, useProjectStore } from '../../state/projectStore';
 import { Button } from '../common/Button';
 import { EmptyState } from '../common/EmptyState';
 import { Icon } from '../common/Icon';
@@ -36,8 +37,14 @@ function useRouteProject(projectId: string): LoadState {
       (found) => {
         if (!cancelled && !found) setMissing(projectId);
       },
-      () => {
-        if (!cancelled) setMissing(projectId);
+      (error: unknown) => {
+        if (cancelled) return;
+        // Not a missing project: the current one could not be left (unsaved changes) or the backend failed.
+        // Say why, and go back to the project that is still open, if any.
+        notify.error(`Couldn’t open the project. ${error instanceof Error ? error.message : String(error)}`, { key: 'open-project' });
+        const still = projectStore.getState().doc;
+        if (still && still.id !== projectId) navigate({ screen: 'project', projectId: still.id }, { replace: true });
+        else setMissing(projectId);
       },
     );
     return () => {

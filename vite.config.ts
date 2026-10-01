@@ -44,5 +44,9 @@ export default defineConfig({
     // worktree still collects that worktree's own tests.
     exclude: [...configDefaults.exclude, '.claude/**', 'e2e/**'],
     setupFiles: ['./src/test/setup.ts'],
+    // Eight agents share this machine: a cold or loaded run took heavy tests past vitest's 5 s default (design
+    // v1.4, §6.1 rule 5). Heavy suites still name their own, longer timeouts.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
   },
 });

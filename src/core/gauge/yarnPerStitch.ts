@@ -202,8 +202,8 @@ export const YARDAGE_BAND = freeze({ default2d: 0.25, default3d: 0.2, measured: 
 
 /**
  * The yardage band of a gauge (§2.8). `source` is `ResolvedGauge.source`; `calibrated` says whether
- * `GaugeSpec.lscCalibratedIn` was set. A `ResolvedGauge` does not record that, so code that has only the
- * resolved gauge cannot reach ±5%; `yardageBandFor` in resolve.ts takes the `GaugeSpec` and can.
+ * `GaugeSpec.lscCalibratedIn` was set: pass `ResolvedGauge.lscCalibrated` (design v1.4), so code that has only
+ * the resolved gauge reaches ±5% too. `yardageBandFor` in resolve.ts takes the `GaugeSpec`.
  */
 export function yardageBand(o: { technique: TechniqueId; source: 'default' | 'swatch'; calibrated?: boolean }): number {
   if (!isObject(o)) throw new RangeError('yardageBand: the gauge is missing');

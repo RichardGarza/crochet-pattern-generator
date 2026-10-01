@@ -7,7 +7,10 @@
 //                                          when it refuses the default folder under the isolation rules of §5.5.4.
 //                                          Not 503: Chromium logs a console error for every answer ≥ 400)
 //   any other /__projects/**     → 503   (nothing should call these while the mirror is off)
-//   /__convert                   → 501   (no converter; §2.3.1 keeps the "export it as JPEG" message)
+//   POST /__convert              → 200 + `x-cpg-convert: off`, JSON `{ "converted": false, "reason": "no-converter" }`
+//                                          (no converter; §2.3.1 keeps the "export it as JPEG" message: any answer that
+//                                          is not an image means "unavailable". Not 501, for the same console reason)
+//   any other method on /__convert → 405
 //
 // T8 replaces the body of this file. The ports are not T8's: they live in scripts/ports.ts (Step 0).
 
@@ -17,6 +20,8 @@ const STUB_MESSAGE = 'not implemented yet (track T8)';
 
 /** Response header of the mirror probe (`HEAD /__projects`): `on` or `off` (§5.5.4). */
 export const MIRROR_HEADER = 'x-cpg-mirror';
+/** Response header of `POST /__convert` when no converter runs here (§2.3.1, §5.5.4). */
+export const CONVERT_HEADER = 'x-cpg-convert';
 
 function answer(res: Parameters<Connect.NextHandleFunction>[1], method: string | undefined, status: number, feature: string): void {
   res.statusCode = status;
@@ -40,7 +45,15 @@ export const stubRoutes: Connect.NextHandleFunction = (req, res, next) => {
     return;
   }
   if (pathname === '/__convert') {
-    answer(res, req.method, 501, 'HEIC conversion');
+    if (req.method !== 'POST') {
+      answer(res, req.method, 405, 'HEIC conversion');
+      return;
+    }
+    res.statusCode = 200;
+    res.setHeader(CONVERT_HEADER, 'off');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(JSON.stringify({ converted: false, reason: 'no-converter' }));
     return;
   }
   next();

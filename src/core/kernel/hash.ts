@@ -7,7 +7,7 @@
  * Version of the generating code. It is part of every seed and output hash, so "same input bytes + same settings
  * + same code version ⇒ byte-identical outputs" (§0.1) stays true when an algorithm changes: bump it then.
  */
-export const CODE_VERSION = '0.1.0';
+export const CODE_VERSION = '0.2.0';
 
 /**
  * What the hashers accept. The hash is always over BYTES:

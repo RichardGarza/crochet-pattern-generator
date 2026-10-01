@@ -41,7 +41,7 @@ export type { Item };
 export type EncodeMode = 'ops' | 'runs';
 
 /** The exact search runs up to this many tokens; longer lines use the linear fallback (§2.6.1, D8). */
-export const EXACT_MAX_TOKENS = 120;
+export const EXACT_MAX_TOKENS = 250;
 /** The fallback looks for repeats of blocks of at most this many runs. */
 export const FALLBACK_MAX_PERIOD = 8;
 /** Entries kept by the memo (least recently used are dropped first). */
