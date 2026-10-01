@@ -78,6 +78,9 @@ const AMI: Record<Exclude<Cyc, 0>, { hook: number; w: number; lAmi: number; wSc:
 
 const KEYS: readonly (keyof ResolvedGauge)[] = ['cell', 'wSc', 'hSc', 'lscIn', 'hookMm', 'stretch', 'tol', 'source'];
 
+/** A sweep over thousands of specs (about 0.5 s alone): a generous timeout, because other runs share the machine. */
+const SWEEP_TIMEOUT_MS = 30_000;
+
 function expectFiniteGauge(g: ResolvedGauge): void {
   expect(Object.keys(g).sort()).toEqual([...KEYS].sort());
   for (const v of [g.cell.w, g.cell.h, g.wSc, g.hSc, g.lscIn, g.hookMm, g.stretch, g.tol]) {
@@ -596,7 +599,7 @@ describe('resolveGauge — invalid input is rejected (§2.2.5)', () => {
     }
     expect(accepted).toBeGreaterThan(1000);
     expect(rejected).toBeGreaterThan(1000);
-  });
+  }, SWEEP_TIMEOUT_MS);
 
   it('answers a broken value with a RangeError that says what it got, never a TypeError', () => {
     expect(() => resolveGauge({ cyc: '4' as unknown as Cyc, technique: 'sc_graphgan' })).toThrow(

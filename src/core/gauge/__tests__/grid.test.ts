@@ -23,6 +23,9 @@ const EVEN: Mult = { m: 2, plus: 0 };
 const SIXES: Mult = { m: 6, plus: 0 };
 const MOSAIC: Mult = { m: 12, plus: 3 };
 
+/** The random sweeps below size thousands of charts: a generous timeout, because other runs share the machine. */
+const SWEEP_TIMEOUT_MS = 30_000;
+
 describe('G2 — grid sizing, worsted 40 × 50 in (§2.3.3, §2.13)', () => {
   it('40 × 50 in, image 1200 × 1500 ⇒ 135 cols × 200 rows', () => {
     const size = grid(WORSTED, { wIn: 40, hIn: 50, ...IMG });
@@ -122,7 +125,7 @@ describe('grid — conformance with the normative code block of §2.3.3', () => 
       same++;
     }
     expect(same).toBeGreaterThan(4000);
-  });
+  }, SWEEP_TIMEOUT_MS);
 
   it('differs only where the notes say: a tie lost to binary noise, a count of 0, the cap', () => {
     // a tie lost to binary noise (super bulky hdc, 35 in): the normative code gives 62, exact arithmetic 63
@@ -585,7 +588,7 @@ describe('grid — degenerate input (§2.3.3 limits)', () => {
       const codes = gridIssues(c, req).map((issue) => issue.code);
       expect(new Set(codes).size).toBe(codes.length);
     }
-  });
+  }, SWEEP_TIMEOUT_MS);
 
   it('rejects what it cannot answer, with a clear error', () => {
     expect(() => grid(WORSTED, { ...IMG })).toThrow('grid: give a finished width (wIn), a finished height (hIn) or both');
@@ -661,7 +664,7 @@ describe('grid — monotonicity', () => {
       last = s;
     }
     expect(last.cols).toBe(999);
-  });
+  }, SWEEP_TIMEOUT_MS);
 
   it('with both sizes given, each axis follows its own size, below the cap and above it', () => {
     const rng = mulberry32(8086);

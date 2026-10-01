@@ -9,6 +9,9 @@ const W = 0.195;
 const WORSTED: Cell = { w: W, h: W / 1.05 };
 const S = 1.05;
 
+/** The random sweeps below run thousands of balls: a generous timeout, because other runs share the machine. */
+const SWEEP_TIMEOUT_MS = 30_000;
+
 /** Table E widths (§2.2.3), CYC 1–6, in the column order of research 01 §5.4. */
 const WIDTHS = [0.13, 0.155, 0.17, 0.195, 0.26, 0.33];
 
@@ -209,7 +212,7 @@ describe('sphereSizing — conformance with the formulas of §2.2.6, written out
       const d = randomRange(rng, 0.05, 40);
       expect(sphereSizing(d, { w, h }, s)).toEqual(sphereSpec(d, w, h, s));
     }
-  });
+  }, SWEEP_TIMEOUT_MS);
 });
 
 describe('sphere size table (research 01 §5.4: D = N · w · 1.05 / π)', () => {
@@ -284,7 +287,7 @@ describe('sphere — round trip and monotonicity', () => {
       // sizing the ball it returned gives the same ball
       expect(sphereSizing(s.dActualIn, cell, stretch)).toEqual(s);
     }
-  });
+  }, SWEEP_TIMEOUT_MS);
 
   it('a larger diameter never gives fewer stitches, rounds or plain rounds', () => {
     const rng = mulberry32(2737);
@@ -303,7 +306,7 @@ describe('sphere — round trip and monotonicity', () => {
         prev = s;
       }
     }
-  });
+  }, SWEEP_TIMEOUT_MS);
 
   it('a thinner yarn needs more stitches for the same ball', () => {
     let prev = Number.POSITIVE_INFINITY;

@@ -6,6 +6,9 @@ import { mulberry32, randomRange } from '../../kernel/prng';
 import * as gauge from '../index';
 import { ceilTolerant, roundHalfUp } from '../round';
 
+/** The random sweeps below check tens of thousands of values: a generous timeout, because other runs share the machine. */
+const SWEEP_TIMEOUT_MS = 30_000;
+
 describe('roundHalfUp — "Math.round = JS half-up rounding everywhere" (§2.10.5), decided as in exact arithmetic', () => {
   it('is Math.round for ordinary values, ties included', () => {
     for (const x of [0, 0.2, 0.49, 0.5, 0.51, 1, 1.5, 2.5, 3.4999, 99.5, 134.6, 1000.5, 123456.5]) {
@@ -18,7 +21,7 @@ describe('roundHalfUp — "Math.round = JS half-up rounding everywhere" (§2.10.
       const x = randomRange(rng, -2000, 2000);
       expect(roundHalfUp(x)).toBe(Math.round(x) + 0);
     }
-  });
+  }, SWEEP_TIMEOUT_MS);
 
   it('never returns −0: a count of zero is plain 0', () => {
     expect(Object.is(Math.round(-0.2), -0)).toBe(true);
@@ -62,7 +65,7 @@ describe('roundHalfUp — "Math.round = JS half-up rounding everywhere" (§2.10.
       expect(r).toBeGreaterThanOrEqual(prev);
       prev = r;
     }
-  });
+  }, SWEEP_TIMEOUT_MS);
 
   it('passes NaN and infinities through', () => {
     expect(roundHalfUp(Number.NaN)).toBeNaN();
@@ -93,7 +96,7 @@ describe('roundHalfUp — "Math.round = JS half-up rounding everywhere" (§2.10.
     expect(ceilTolerant(1e12)).toBe(1e12);
     expect(ceilTolerant(3e12 + 0.5)).toBe(3e12 + 1);
     expect(ceilTolerant(Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER);
-  });
+  }, SWEEP_TIMEOUT_MS);
 });
 
 describe('ceilTolerant — whole skeins', () => {
