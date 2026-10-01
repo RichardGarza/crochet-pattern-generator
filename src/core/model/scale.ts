@@ -14,10 +14,11 @@ import { groundCenter, roundCoord } from './transforms';
  * included, a mesh part's `bboxIn`), region lengths (`widthIn`, `radiusIn`, `scaleIn`) and `crochet.seed`.
  * `position`, the rotation, angles, fractions and the paint field are unchanged. Lengths are rounded to 1e-6 in.
  *
- * A dimension that would fall below the schema minimum (0.05 in, §3.5.2) stays at that minimum, and a capsule
- * stays at least as long as its two caps, so a valid model is still valid after it was scaled down. Nothing is
- * limited at the upper end: a caller that scales up keeps the result within 48 in per dimension and 60 in of
- * height.
+ * A dimension that would fall below the schema minimum (0.05 in, §3.5.2) stays at that minimum, a capsule stays
+ * at least as long as its two caps, and a lathe profile whose largest radius or height would fall below it is
+ * scaled by the smallest larger factor that keeps both (its shape is kept), so a valid model is still valid after
+ * it was scaled down. Polygon points are scaled freely (the schema bounds them only at ±48 in). Nothing is limited
+ * at the upper end: a caller that scales up keeps the result within 48 in per dimension and 60 in of height.
  */
 export function scalePartDims<P extends Part>(part: P, factor: number): P {
   const s = (x: number): number => roundCoord(x * factor);
@@ -50,7 +51,7 @@ export function scalePartDims<P extends Part>(part: P, factor: number): P {
       out = { ...part, dims: { ...part.dims, R: d(part.dims.R), r: d(part.dims.r) } };
       break;
     case 'lathe':
-      out = { ...part, dims: { ...part.dims, profile: part.dims.profile.map(([r, y]): [number, number] => [s(r), s(y)]) } };
+      out = { ...part, dims: { ...part.dims, profile: scaleProfile(part.dims.profile, factor) } };
       break;
     case 'flat': {
       const dims = { ...part.dims, w: d(part.dims.w), h: d(part.dims.h), thickness: d(part.dims.thickness) };
@@ -82,6 +83,29 @@ export function scalePartDims<P extends Part>(part: P, factor: number): P {
     out.crochet = { ...part.crochet, seed: [s(seed[0]), s(seed[1]), s(seed[2])] };
   }
   return out as P;
+}
+
+type Profile = readonly (readonly [number, number])[];
+
+const largestRadius = (profile: Profile): number => profile.reduce((m, [r]) => (r > m ? r : m), 0);
+const profileHeight = (profile: Profile): number => (profile.length > 1 ? profile[profile.length - 1][1] - profile[0][1] : 0);
+
+/**
+ * A lathe profile scaled by `factor` about the local origin (lengths rounded to 1e-6 in) — unless that would take
+ * its largest radius or its height (last y − first y) below the schema minimum of 0.05 in (§3.5.2) when it was not
+ * below it already: then by the smallest larger factor that keeps both, so the profile keeps its shape. The
+ * height's two ends are rounded separately, so it gets a margin of 2e-6 in.
+ */
+function scaleProfile(profile: Profile, factor: number): [number, number][] {
+  const at = (f: number): [number, number][] => profile.map(([r, y]): [number, number] => [roundCoord(r * f), roundCoord(y * f)]);
+  const min = MODEL_LIMITS.minDimIn;
+  const scaled = at(factor);
+  let f = factor;
+  const r0 = largestRadius(profile);
+  if (r0 >= min && largestRadius(scaled) < min) f = Math.max(f, min / r0);
+  const h0 = profileHeight(profile);
+  if (h0 >= min && profileHeight(scaled) < min) f = Math.max(f, (min + 2e-6) / h0);
+  return f === factor ? scaled : at(f);
 }
 
 /** A mesh with every vertex multiplied by `factor` (part-local, about the local origin). Indices and labels are shared, not copied. */

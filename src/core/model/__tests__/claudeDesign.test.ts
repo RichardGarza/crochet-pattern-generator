@@ -11,14 +11,15 @@ import { buildModel } from '../builder';
 import { partSdf } from '../sdf';
 import { composeMat4, decomposeMat4, modelBounds, multiplyMat4, worldBounds } from '../transforms';
 import { readEveryType } from './helpers/everyType';
-import { readSpecExample } from './helpers/geometry';
+import { modelOf, part, readSpecExample } from './helpers/geometry';
+import { HEAVY } from './helpers/options';
 import { buildCanonicalTeddy, CANONICAL_TEDDY_URL, FIXTURES_DIR } from './helpers/teddy';
 
 const TEDDY_DIR = new URL('claude-design/teddy-bear/', FIXTURES_DIR);
 /** The teddy after dialect normalization, before grounding: the coordinates Claude Design's page used. */
 const normalized = buildCanonicalTeddy().normalized;
 
-describe('the GLB export (three.js GLTFExporter r184)', () => {
+describe('the GLB export (three.js GLTFExporter r184)', HEAVY, () => {
   interface GltfNode {
     name?: string;
     matrix?: number[];
@@ -73,7 +74,7 @@ describe('the GLB export (three.js GLTFExporter r184)', () => {
   });
 });
 
-describe('the OBJ export (world-space vertices, one object per part)', () => {
+describe('the OBJ export (world-space vertices, one object per part)', HEAVY, () => {
   // 9.5 MB of text: one pass, keeping each object's box and every seventh vertex.
   const text = new TextDecoder().decode(gunzipSync(readFileSync(new URL('amigurumi-teddy-bear.obj.gz', TEDDY_DIR))));
   interface Shape {
@@ -154,7 +155,7 @@ describe('the OBJ export (world-space vertices, one object per part)', () => {
   });
 });
 
-describe('buildModel is the normative builder of §3.4.1', () => {
+describe('buildModel is the normative builder of §3.4.1', HEAVY, () => {
   // The code block of DESIGN.md, evaluated as written (its import and export removed).
   const spec = readFileSync(new URL('../../../../docs/DESIGN.md', import.meta.url), 'utf8');
   const heading = spec.indexOf('#### 3.4.1 Shared reference builder');
@@ -179,10 +180,23 @@ describe('buildModel is the normative builder of §3.4.1', () => {
       }),
   };
 
+  // A model as an import may hold it before validation: regions without the `from` / `to` the schema requires.
+  // The normative code reads an absent `from` as 0 and an absent `to` as 1.
+  const loose = (region: Record<string, unknown>): Part['regions'] => [region as unknown as NonNullable<Part['regions']>[number]];
+  const unvalidated = modelOf([
+    part('sphere', { r: 1 }, { id: 'band_all', regions: loose({ kind: 'band', color: 'c2' }) }),
+    part('ellipsoid', { rx: 1, ry: 2, rz: 1 }, { id: 'patch_all', position: [3, 0, 0], regions: loose({ kind: 'patch', azimuthDeg: 0, spanDeg: 90, color: 'c2' }) }),
+    part('capsule', { r: 0.5, length: 2 }, { id: 'band_from', position: [6, 0, 0], regions: loose({ kind: 'band', from: 0.5, color: 'c2' }) }),
+    part('torus', { R: 1, r: 0.3 }, { id: 'band_to', position: [9, 0, 0], regions: loose({ kind: 'band', to: 0.3, color: 'c2' }) }),
+    part('sphere', { r: 0.8 }, { id: 'patch_to', position: [12, 0, 0], regions: loose({ kind: 'patch', azimuthDeg: 90, spanDeg: 120, to: 0.6, color: 'c2' }) }),
+    part('cylinder', { rTop: 0.5, rBottom: 0.7, h: 1.5 }, { id: 'stripes', position: [15, 0, 0], regions: loose({ kind: 'stripes', colors: ['c1', 'c2'], widthIn: 0.3 }) }),
+  ]);
+
   it.each([
     ['the §3.6 example', readSpecExample()],
     ['teddy.canonical.json', teddy],
     ['every-type.json without its mesh part and paint field', primitives],
+    ['regions without from / to (an unvalidated model)', unvalidated],
   ])('gives the same scene, number for number: %s', (_name, model) => {
     for (const unitScale of [undefined, 1]) {
       const expected = unitScale === undefined ? normative(model) : normative(model, unitScale);

@@ -326,7 +326,13 @@
         "to": "body",
         "method": "sewn"
       },
-      "stuffing": "medium"
+      "stuffing": "medium",
+      "crochet": {
+        "make": "piece",
+        "start": "top",
+        "axis": "x",
+        "style": "classic"
+      }
     },
     {
       "id": "ear_l",
@@ -473,6 +479,9 @@
       "attach": {
         "to": "body",
         "method": "sewn"
+      },
+      "crochet": {
+        "make": "safety_eye"
       }
     },
     {

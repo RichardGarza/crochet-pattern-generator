@@ -266,6 +266,7 @@ export function buildEveryType(): CrochetModelV1 {
         color: 'c4',
         stuffing: 'medium',
         attach: sewn('body'),
+        crochet: { make: 'piece', start: 'top', axis: 'x', style: 'classic' },
       },
     },
     {
@@ -368,6 +369,7 @@ export function buildEveryType(): CrochetModelV1 {
         rotationDeg: [0, 49, 0],
         color: 'c4',
         attach: sewn('body'),
+        crochet: { make: 'safety_eye' }, // a shank button, set like a safety eye
       },
     },
     {

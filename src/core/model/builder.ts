@@ -243,14 +243,15 @@ export function vertexColorIds(
     const az = (Math.atan2(dx, dz) * 180) / Math.PI;
     let id = p.color;
     for (const r of regions) {
+      // As the normative code reads them: an absent `from` / `to` is 0 / 1 (the schema requires them on bands and
+      // patches, but the builder also draws models that have not been validated yet).
+      const loose = r as { from?: number; to?: number };
+      const inT = t >= (loose.from ?? 0) && t <= (loose.to ?? 1);
       if (r.kind === 'band') {
-        if (t >= r.from && t <= r.to) id = r.color;
+        if (inT) id = r.color;
       } else if (r.kind === 'stripes') {
-        if (t >= (r.from ?? 0) && t <= (r.to ?? 1)) {
-          id = r.colors[Math.floor((v.y - bb.min.y) / (r.widthIn * S)) % r.colors.length] ?? id;
-        }
+        if (inT) id = r.colors[Math.floor((v.y - bb.min.y) / (r.widthIn * S)) % r.colors.length] ?? id;
       } else if (r.kind === 'patch') {
-        const inT = t >= r.from && t <= r.to;
         if (inT && Math.abs(((((az - r.azimuthDeg) % 360) + 540) % 360) - 180) <= r.spanDeg / 2) id = r.color;
       } else if (r.kind === 'spot') {
         const a = D2R(r.azimuthDeg);

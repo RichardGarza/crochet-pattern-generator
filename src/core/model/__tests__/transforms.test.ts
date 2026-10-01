@@ -38,6 +38,7 @@ import {
 } from '../transforms';
 import { readEveryType, readEveryTypeMeshes } from './helpers/everyType';
 import { localMesh, meshBounds, modelOf, part, samplePrimitives, worldMesh } from './helpers/geometry';
+import { HEAVY } from './helpers/options';
 import { buildCanonicalTeddy } from './helpers/teddy';
 
 /** The upper-left 3×3 of a three.js Matrix4 (column-major) as our row-major Mat3. */
@@ -265,7 +266,7 @@ describe('part frames', () => {
   });
 });
 
-describe('bounding boxes come from the builder geometry (§0.1, §3.4.1)', () => {
+describe('bounding boxes come from the builder geometry (§0.1, §3.4.1)', HEAVY, () => {
   // Tessellation: a vertex of the builder mesh can be short of the true extreme by r·(1 − cos(π/segments)).
   const slack = (p: Part): number => {
     const size = Math.max(...boundsSize(localBounds(p)));
@@ -423,7 +424,7 @@ describe('bounding boxes come from the builder geometry (§0.1, §3.4.1)', () =>
   });
 });
 
-describe('grounding (§0.1: the lowest point is at y = 0)', () => {
+describe('grounding (§0.1: the lowest point is at y = 0)', HEAVY, () => {
   it('translates every part by the same dy so the lowest point of the geometry is at y = 0', () => {
     const lathe = part('lathe', { profile: [[0, -0.4], [1, 0], [0, 2]] }, { id: 'body', position: [0, 1, 0] });
     const ball = part('sphere', { r: 0.5 }, { id: 'ball', position: [0, 0.2, 2] });

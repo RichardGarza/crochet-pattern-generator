@@ -18,6 +18,7 @@ import { partSdf, surfaceGap } from '../sdf';
 import { boundsSize, localBounds, partAxis, partCenter, worldToLocal } from '../transforms';
 import { readEveryType, readEveryTypeMeshes } from './helpers/everyType';
 import { modelOf, part, rayHits, samplePrimitives, worldMesh } from './helpers/geometry';
+import { HEAVY } from './helpers/options';
 import { buildCanonicalTeddy } from './helpers/teddy';
 
 const DIRECTIONS: Record<string, Vec3> = {
@@ -47,7 +48,7 @@ const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const len = (a: Vec3): number => Math.hypot(a[0], a[1], a[2]);
 
-describe('placeChildOnSurface with { dir } (§3.3 step 3)', () => {
+describe('placeChildOnSurface with { dir } (§3.3 step 3)', HEAVY, () => {
   // Every parent type, unrotated and rotated. The mesh measurement is as fine as the tessellation: 0.012 in for
   // these sizes; a flat parent's mesh is grown by the builder bevel, which the SDFs ignore (§3.7.6).
   const parents: Part[] = [];
@@ -208,7 +209,7 @@ describe('placeChildOnSurface with { dir } (§3.3 step 3)', () => {
   });
 });
 
-describe('placeChildOnSurface with { hit, normal } (the editor’s Add part, §4.2)', () => {
+describe('placeChildOnSurface with { hit, normal } (the editor’s Add part, §4.2)', HEAVY, () => {
   it('puts the child 0.10 in into the clicked point, along the clicked normal', () => {
     const parent = part('box', { w: 2, h: 2, d: 2 }, { id: 'body' });
     const ball = part('sphere', { r: 0.5 }, { id: 'c' });
@@ -242,7 +243,7 @@ describe('placeChildOnSurface with { hit, normal } (the editor’s Add part, §4
   });
 });
 
-describe('surfaceExit and overlapAlongRay', () => {
+describe('surfaceExit and overlapAlongRay', HEAVY, () => {
   it('surfaceExit is the distance to the outermost surface point on a ray', () => {
     const ball = part('sphere', { r: 2 }, { position: [1, 1, 1] });
     expect(surfaceExit(ball, [1, 1, 1], [0, 0, 5])).toBeCloseTo(2, 6);
@@ -273,7 +274,7 @@ describe('surfaceExit and overlapAlongRay', () => {
   });
 });
 
-describe('re-anchoring children (§4.2)', () => {
+describe('re-anchoring children (§4.2)', HEAVY, () => {
   const teddy = buildCanonicalTeddy().model;
   const by = (m: CrochetModelV1): Record<string, Part> => Object.fromEntries(m.parts.map((p) => [p.id, p]));
   const scaledHead = (k: number): CrochetModelV1 => ({ ...teddy, parts: teddy.parts.map((p) => (p.id === 'head' ? scalePartDims(p, k) : p)) });

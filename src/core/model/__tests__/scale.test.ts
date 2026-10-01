@@ -7,6 +7,7 @@ import { validateModel } from '../schema';
 import { boundsSize, groundCenter, modelBounds, modelHeight, worldBounds } from '../transforms';
 import { readEveryType, readEveryTypeMeshes } from './helpers/everyType';
 import { modelOf, part, readSpecExample } from './helpers/geometry';
+import { HEAVY } from './helpers/options';
 import { buildCanonicalTeddy } from './helpers/teddy';
 
 const teddy = buildCanonicalTeddy().model;
@@ -20,7 +21,7 @@ function numbers(value: unknown): number[] {
   return [];
 }
 
-describe('scaleModel (§4.2 "Scale model to height": uniform, about the ground center)', () => {
+describe('scaleModel (§4.2 "Scale model to height": uniform, about the ground center)', HEAVY, () => {
   it('the height scales by the factor; so do the width, the depth and finishedSize', () => {
     for (const factor of [0.5, 1.5, 2, 1.2345]) {
       const { model } = scaleModel(teddy, factor);
@@ -187,8 +188,37 @@ describe('scaleModel (§4.2 "Scale model to height": uniform, about the ground c
     // what was already below the minimum is scaled like everything else, and nothing is limited at the top
     expect(scalePartDims(part('sphere', { r: 0.04 }), 0.5).dims).toEqual({ r: 0.02 });
     expect(scalePartDims(part('sphere', { r: 30 }), 2).dims).toEqual({ r: 60 });
-    // profile points and polygon points are free (a profile radius may be 0)
-    expect(scalePartDims(part('lathe', { profile: [[0, 0], [0.06, 0.03], [0, 0.06]] }), 0.5).dims.profile).toEqual([[0, 0], [0.03, 0.015], [0, 0.03]]);
+    // polygon points are free: the schema bounds them only at ±48 in
+    const star = part('flat', { shape: 'polygon', w: 1, h: 1, thickness: 0.2, points: [[0, 0.5], [0.4, -0.3], [-0.4, -0.3]] });
+    expect(scalePartDims(star, 0.1).dims.points).toEqual([[0, 0.05], [0.04, -0.03], [-0.04, -0.03]]);
+  });
+
+  it('a lathe keeps its shape and stays valid: its profile is scaled by the smallest factor that keeps r_max and the height ≥ 0.05 in', () => {
+    // r_max 0.06 and height 0.08, scaled by 0.5: the radius binds (0.05 / 0.06), the height follows (0.0667)
+    const nub = part('lathe', { profile: [[0, 0], [0.06, 0.03], [0.04, 0.06], [0, 0.08]] }, { id: 'nub', position: [1, 2, 3] });
+    const small = scalePartDims(nub, 0.5);
+    expect(small.position).toEqual([1, 2, 3]);
+    expect(small.dims.profile).toEqual([[0, 0], [0.05, 0.025], [0.033333, 0.05], [0, 0.066667]]);
+    // a flat cap: r_max 1, height 0.06, scaled by 0.1 — the height binds (with 2e-6 for the rounding of its two ends)
+    const cap = part('lathe', { profile: [[0, 0], [1, 0.02], [0.8, 0.06]] }, { id: 'cap' });
+    const flatter = scalePartDims(cap, 0.1).dims.profile;
+    expect(flatter[2][1] - flatter[0][1]).toBeGreaterThanOrEqual(0.05);
+    expect(flatter[2][1]).toBeCloseTo(0.050002, 6);
+    expect(flatter[1][0]).toBeCloseTo(0.833367, 6); // the same factor for every point: the shape is kept
+    // both stay valid; an ordinary factor is applied as it is
+    for (const p of [nub, cap]) {
+      expect(validateModel(modelOf([p])).ok).toBe(true);
+      expect(validateModel(modelOf([scalePartDims(p, 0.1)])).ok).toBe(true);
+    }
+    expect(scalePartDims(cap, 0.9).dims.profile).toEqual([[0, 0], [0.9, 0.018], [0.72, 0.054]]);
+    // a profile that was below the minimum already is scaled like everything else
+    const tiny = part('lathe', { profile: [[0, 0], [0.04, 0.02], [0, 0.04]] });
+    expect(scalePartDims(tiny, 0.5).dims.profile).toEqual([[0, 0], [0.02, 0.01], [0, 0.02]]);
+    // a whole model with a small lathe part, scaled to a keychain, still validates
+    const bunny = readSpecExample();
+    const withNub = { ...bunny, parts: [...bunny.parts, { ...nub, id: 'button', color: 'c4', attach: { to: 'body' } }] };
+    expect(validateModel(withNub).ok).toBe(true);
+    expect(validateModel(scaleModel(withNub, 0.2).model).ok).toBe(true);
   });
 
   it('a factor of 1 returns the model itself; a bad factor throws', () => {

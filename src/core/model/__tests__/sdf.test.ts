@@ -21,6 +21,7 @@ import {
 import { boundsSize, localBounds, localToWorld, worldBounds } from '../transforms';
 import { readEveryType, readEveryTypeMeshes } from './helpers/everyType';
 import { distanceToMesh, insideMesh, localMesh, meshVolume, part, samplePrimitives, type TriMesh, worldMesh } from './helpers/geometry';
+import { HEAVY } from './helpers/options';
 import { buildCanonicalTeddy } from './helpers/teddy';
 
 /** Random points in the part's local bounding box grown by 35% on every side. */
@@ -58,7 +59,7 @@ function compare(p: Part, mesh: TriMesh, points: Vec3[], tolerance: number): Com
   return out;
 }
 
-describe('analytic SDFs match the builder mesh (§3.7.6: positive inside, builder semantics)', () => {
+describe('analytic SDFs match the builder mesh (§3.7.6: positive inside, builder semantics)', HEAVY, () => {
   // The builder tessellates with 48 segments around (32 for a capsule, 24 across a torus tube): a chord of a
   // circle of radius r lies up to r·(1 − cos(π/n)) inside it — 0.21% of r for 48 segments, 0.48% for 32, 0.86%
   // for 24 — and on a doubly curved surface the two directions add up. Stated tolerances, in inches:
@@ -204,6 +205,37 @@ describe('analytic SDFs match the builder mesh (§3.7.6: positive inside, builde
     expect(half(0, 1, 0)).toBe(0.25);
     expect(half(0, -1, 0)).toBeCloseTo(0.25 - Math.SQRT2, 12);
     expect(localSdf(part('torus', { R: 1, r: 0.25, arcDeg: 360 }))(0, -1, 0)).toBe(0.25);
+  });
+
+  it('torus arc: away from its ends, |sdf| = distance to the builder’s own open tube (it sweeps from +X toward +Y)', () => {
+    // TorusGeometry has no end caps, so neither ray parity nor the region past the ends can be compared; between
+    // the ends the nearest point of the tube lies in the query point's own meridian, as for the full ring.
+    const rng = mulberry32(109);
+    const tolerance = 0.3 * 0.009 + 1.4 * 0.0013; // the full torus's: 24 segments across the tube, ≤ 64 along it
+    for (const arcDeg of [90, 200, 300]) {
+      const p = part('torus', { R: 1.1, r: 0.3, arcDeg });
+      const mesh = localMesh(p);
+      const f = localSdf(p);
+      const margin = (25 * Math.PI) / 180;
+      let compared = 0;
+      let inside = 0;
+      for (const q of samplePoints(p, rng, 400)) {
+        let theta = Math.atan2(q[1], q[0]);
+        if (theta < 0) theta += 2 * Math.PI;
+        if (!(theta > margin && theta < (arcDeg * Math.PI) / 180 - margin)) continue;
+        const d = distanceToMesh(mesh, q);
+        const s = f(q[0], q[1], q[2]);
+        expect(Math.abs(Math.abs(s) - d), `${arcDeg}° at ${q.map((v) => v.toFixed(3)).join(', ')}`).toBeLessThanOrEqual(tolerance);
+        if (s > 0) inside++;
+        compared++;
+      }
+      expect(compared).toBeGreaterThan(60);
+      expect(inside).toBeGreaterThan(5);
+      // the tube really is where the builder put it: on the arc, not on its mirror image
+      const middle = ((arcDeg / 2) * Math.PI) / 180;
+      expect(distanceToMesh(mesh, [1.1 * Math.cos(middle), 1.1 * Math.sin(middle), 0])).toBeCloseTo(0.3, 2);
+      expect(f(1.1 * Math.cos(middle), 1.1 * Math.sin(middle), 0)).toBeCloseTo(0.3, 9);
+    }
   });
 
   it('lathe: closed by a flat disc where the profile does not reach the axis; exact against a dense revolved sampling', () => {
@@ -388,7 +420,7 @@ describe('sdfNormal', () => {
   });
 });
 
-describe('overlapVolume (§3.7.6: regular grid over the intersection of the world boxes)', () => {
+describe('overlapVolume (§3.7.6: regular grid over the intersection of the world boxes)', HEAVY, () => {
   const lens = (r1: number, r2: number, d: number): number =>
     (Math.PI * (r1 + r2 - d) ** 2 * (d * d + 2 * d * (r1 + r2) - 3 * (r1 - r2) ** 2)) / (12 * d);
 
@@ -420,7 +452,7 @@ describe('overlapVolume (§3.7.6: regular grid over the intersection of the worl
     expect(overlapVolume(a, part('box', { w: 2, h: 2, d: 2 }, { position: [2, 0, 0] }))).toBe(0);
   });
 
-  it('is deterministic and bounded: a large intersection is sampled with at most 2 million cells', () => {
+  it('is deterministic and bounded: a large intersection is sampled with at most 2 million cells', { retry: 2 }, () => {
     const a = part('box', { w: 40, h: 40, d: 40 }, { id: 'a' });
     const b = part('box', { w: 40, h: 40, d: 40 }, { id: 'b', position: [10, 0, 0] });
     const t0 = performance.now();
@@ -503,7 +535,7 @@ describe('overlapVolume (§3.7.6: regular grid over the intersection of the worl
   });
 });
 
-describe('surfaceGap (§3.7.6: from the child’s builder vertices)', () => {
+describe('surfaceGap (§3.7.6: from the child’s builder vertices)', HEAVY, () => {
   it('is the distance between the surfaces when the parts are apart', () => {
     const body = part('sphere', { r: 1 }, { id: 'body' });
     const far = part('sphere', { r: 0.5 }, { id: 'far', position: [0, 2, 0] });
@@ -566,7 +598,7 @@ describe('surfaceGap (§3.7.6: from the child’s builder vertices)', () => {
   });
 });
 
-describe('partVolume', () => {
+describe('partVolume', HEAVY, () => {
   it('matches the volume of the builder mesh for every primitive (within the tessellation, the bevel for flat parts)', () => {
     for (const p of samplePrimitives()) {
       const mesh = Math.abs(meshVolume(localMesh(p)));

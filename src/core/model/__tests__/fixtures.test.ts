@@ -10,6 +10,7 @@ import { overlapAlongRay } from '../place';
 import { crochetModelSchema, stringifyModel } from '../schema';
 import { boundsSize, modelBounds } from '../transforms';
 import { buildEveryType, buildEveryTypeMeshes, EVERY_TYPE_MESH_REF, meshFromJson, readEveryTypeMeshes, stringifyMeshes } from './helpers/everyType';
+import { HEAVY } from './helpers/options';
 import { buildCanonicalTeddy, CANONICAL_TEDDY_URL, EVERY_TYPE_MESH_URL, EVERY_TYPE_URL, readObservedTeddy } from './helpers/teddy';
 
 const UPDATE = process.env.UPDATE_FIXTURES === '1';
@@ -21,7 +22,7 @@ function expectFile(url: URL, text: string): void {
 
 const byId = (m: CrochetModelV1): Record<string, Part> => Object.fromEntries(m.parts.map((p) => [p.id, p]));
 
-describe('fixtures/models/teddy.canonical.json', () => {
+describe('fixtures/models/teddy.canonical.json', HEAVY, () => {
   const teddy = buildCanonicalTeddy();
 
   it('is reproduced byte for byte from the observed Claude Design teddy (§6.2 item 6, G12)', () => {
@@ -145,7 +146,7 @@ describe('fixtures/models/teddy.canonical.json', () => {
   });
 });
 
-describe('fixtures/models/every-type.json', () => {
+describe('fixtures/models/every-type.json', HEAVY, () => {
   const model = buildEveryType();
   const meshes = buildEveryTypeMeshes();
 
@@ -154,7 +155,7 @@ describe('fixtures/models/every-type.json', () => {
     expectFile(EVERY_TYPE_MESH_URL, stringifyMeshes(meshes));
   });
 
-  it('holds one part of every type, every flat shape, every region kind and every feature kind, and x-* keys', () => {
+  it('holds one part of every type, every flat shape, every region and feature kind, every value of attach, stuffing and the crochet hints, and x-* keys', () => {
     expect(new Set(model.parts.map((p) => p.type))).toEqual(
       new Set(['sphere', 'ellipsoid', 'capsule', 'cylinder', 'cone', 'torus', 'lathe', 'flat', 'box', 'mesh']),
     );
@@ -171,8 +172,13 @@ describe('fixtures/models/every-type.json', () => {
     expect(new Set(model.parts.map((p) => p.attach?.openEnd).filter(Boolean))).toEqual(new Set(['top', 'bottom', 'none']));
     expect(new Set(model.parts.map((p) => p.stuffing).filter(Boolean))).toEqual(new Set(['firm', 'medium', 'light', 'none']));
     expect(new Set(model.parts.map((p) => p.crochet?.make).filter(Boolean))).toEqual(
-      new Set(['auto', 'piece', 'applique', 'embroidery', 'region', 'skip']),
+      new Set(['auto', 'piece', 'applique', 'embroidery', 'safety_eye', 'region', 'skip']),
     );
+    expect(new Set(model.parts.map((p) => p.crochet?.start).filter(Boolean))).toEqual(new Set(['auto', 'bottom', 'top']));
+    expect(new Set(model.parts.map((p) => p.crochet?.axis).filter(Boolean))).toEqual(new Set(['auto', 'x', 'y', 'z']));
+    expect(new Set(model.parts.map((p) => p.crochet?.style).filter(Boolean))).toEqual(new Set(['classic', 'exact']));
+    expect(model.parts.some((p) => p.crochet?.seed !== undefined)).toBe(true);
+    expect(model.parts.some((p) => p.crochet?.seamAzimuthDeg !== undefined)).toBe(true);
     expect(model['x-cpg']).toEqual({ project: 'every-type', seedRev: 0 });
     expect(model.parts.some((p) => Object.keys(p).some((k) => k.startsWith('x-')))).toBe(true);
     expect(model.parts.some((p) => p.paint?.kind === 'uv64')).toBe(true);

@@ -10,6 +10,7 @@ import { partSdf, surfaceGap } from '../sdf';
 import { boundsSize, localBounds, modelBounds, modelHeight, partAxis, partCenter, worldBounds } from '../transforms';
 import { meshFromJson, uvEllipsoid } from './helpers/everyType';
 import { modelOf, part, readSpecExample } from './helpers/geometry';
+import { HEAVY } from './helpers/options';
 import { buildCanonicalTeddy } from './helpers/teddy';
 
 const teddy = buildCanonicalTeddy().model;
@@ -54,7 +55,7 @@ describe('LIMB_TEMPLATE and the chips (§4.2, shared with the seed templates of 
   });
 });
 
-describe('readProportions (§4.2)', () => {
+describe('readProportions (§4.2)', HEAVY, () => {
   it('G23: the untouched teddy reports head : body 1 : 1.3 and arms closest to "short"', () => {
     const reading = readProportions(teddy);
     expect(reading.disabled).toEqual({});
@@ -111,7 +112,7 @@ describe('readProportions (§4.2)', () => {
   });
 });
 
-describe('applyProportions: head : body (§4.2, G23)', () => {
+describe('applyProportions: head : body (§4.2, G23)', HEAVY, () => {
   it.each([
     [1, 0.5],
     [3, 0.25],
@@ -283,7 +284,7 @@ describe('applyProportions: head : body (§4.2, G23)', () => {
   });
 });
 
-describe('applyProportions: limb length (§4.2, G23)', () => {
+describe('applyProportions: limb length (§4.2, G23)', HEAVY, () => {
   it('G23: limbs "long" ⇒ arm length = 0.55·H (± 1%), legs 0.44·H; the finished height unchanged', () => {
     const { model } = applyProportions(teddy, { limbs: 'long' });
     const m = by(model);
@@ -415,7 +416,7 @@ describe('applyProportions: limb length (§4.2, G23)', () => {
   });
 });
 
-describe('applyProportions: both controls, and housekeeping', () => {
+describe('applyProportions: both controls, and housekeeping', HEAVY, () => {
   it('head and limbs together: both ratios hold after one call, the height is unchanged and the model stays grounded', () => {
     const { model } = applyProportions(teddy, { headBody: 1, limbs: 'long' });
     const m = by(model);

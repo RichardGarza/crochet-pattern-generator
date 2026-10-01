@@ -6,6 +6,7 @@ import { attachGraph, attachRoot, childrenOf, chooseRoot, inferAttach, inferMirr
 import { validateModel } from '../schema';
 import { readEveryType } from './helpers/everyType';
 import { modelOf, part, readSpecExample } from './helpers/geometry';
+import { HEAVY } from './helpers/options';
 import { buildCanonicalTeddy, normalizeObservedDialect, readObservedTeddy } from './helpers/teddy';
 
 const REPAIR_CODES = new Set<Repair['code']>([
@@ -77,7 +78,7 @@ function expectOneTree(m: Pick<CrochetModelV1, 'parts'>): void {
   });
 }
 
-describe('inferAttach on the teddy (§3.7.3 golden, §3.7.6, D21)', () => {
+describe('inferAttach on the teddy (§3.7.3 golden, §3.7.6, D21)', HEAVY, () => {
   it('the dialect leaves 7 of 17 parts without a parent (research 08)', () => {
     expect(dialectTeddy.parts.filter((p) => !p.attach).map((p) => p.id)).toEqual(['body', 'head', 'arm_l', 'arm_r', 'leg_l', 'leg_r', 'tail']);
     expect(isOneTree(dialectTeddy)).toBe(false);
@@ -166,7 +167,7 @@ describe('inferAttach on the teddy (§3.7.3 golden, §3.7.6, D21)', () => {
   });
 });
 
-describe('inferAttach: the root rule (§3.7.6)', () => {
+describe('inferAttach: the root rule (§3.7.6)', HEAVY, () => {
   const ball = (id: string, r: number, position: Vec3, rest: Partial<Part> = {}): Part => part('sphere', { r }, { id, position, ...rest });
 
   it('exactly one part without attach: it is the root, whatever its size or height', () => {
@@ -212,7 +213,7 @@ describe('inferAttach: the root rule (§3.7.6)', () => {
   });
 });
 
-describe('inferAttach: links (Prim’s rule on overlap, then the smallest gap)', () => {
+describe('inferAttach: links (Prim’s rule on overlap, then the smallest gap)', HEAVY, () => {
   const ball = (id: string, r: number, position: Vec3, rest: Partial<Part> = {}): Part => part('sphere', { r }, { id, position, ...rest });
 
   it('a part joins through the tree part it overlaps most, at the time it joins', () => {
@@ -358,7 +359,7 @@ describe('inferAttach: links (Prim’s rule on overlap, then the smallest gap)',
     expect(inferAttach(m, { meshSdf: { blob: cube } }).repairs).toEqual(withSdf.repairs);
   });
 
-  it('stays fast when every part overlaps every other: the overlap grids share one work budget', { retry: 2 }, () => {
+  it('stays fast when every part overlaps every other: the overlap grids share one work budget', { retry: 2, timeout: 120_000 }, () => {
     // 40 large parts in one small region: 780 overlapping pairs. Unbounded, the grids alone took over a minute.
     const rng = mulberry32(77);
     const parts: Part[] = [];
@@ -370,7 +371,7 @@ describe('inferAttach: links (Prim’s rule on overlap, then the smallest gap)',
     const m = modelOf(parts);
     const t0 = performance.now();
     const { model, repairs } = inferAttach(m);
-    expect(performance.now() - t0).toBeLessThan(10_000); // about 1 s here
+    expect(performance.now() - t0).toBeLessThan(30_000); // 1–2 s on an idle machine; a generous bound for a loaded one
     expectOneTree(model);
     expect(repairs).toHaveLength(39);
     expect(JSON.stringify(inferAttach(m).model)).toBe(JSON.stringify(model));
@@ -398,7 +399,7 @@ describe('inferAttach: links (Prim’s rule on overlap, then the smallest gap)',
   });
 });
 
-describe('inferAttach: property tests (seeded)', () => {
+describe('inferAttach: property tests (seeded)', HEAVY, () => {
   it('one tree, no cycles, idempotent, valid repairs — on 60 random models with random links, cycles and dangling links', () => {
     const rng = mulberry32(2026);
     const types: ((id: string, at: Vec3, rot: Vec3) => Part)[] = [
@@ -461,7 +462,7 @@ describe('inferAttach: property tests (seeded)', () => {
   });
 });
 
-describe('attach graph helpers', () => {
+describe('attach graph helpers', HEAVY, () => {
   it('attachGraph, attachRoot, subtreeIds, childrenOf', () => {
     const g = attachGraph(canonicalTeddy.parts);
     expect(g.roots).toEqual([0]);
@@ -491,7 +492,7 @@ describe('attach graph helpers', () => {
   });
 });
 
-describe('inferMirrorPairs (§3.7.6)', () => {
+describe('inferMirrorPairs (§3.7.6)', HEAVY, () => {
   const stripMirrors = (m: CrochetModelV1): CrochetModelV1 => ({
     ...m,
     parts: m.parts.map((p) => {

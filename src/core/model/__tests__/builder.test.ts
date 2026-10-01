@@ -19,6 +19,7 @@ import {
 } from '../builder';
 import { readEveryType, readEveryTypeMeshes } from './helpers/everyType';
 import { meshVolume, modelOf, part, readSpecExample, samplePrimitives } from './helpers/geometry';
+import { HEAVY } from './helpers/options';
 import { CANONICAL_TEDDY_URL } from './helpers/teddy';
 
 const example = readSpecExample();
@@ -44,7 +45,7 @@ function expectFinite(g: BufferGeometry, label: string): void {
   expect(box && Number.isFinite(box.min.x + box.min.y + box.min.z + box.max.x + box.max.y + box.max.z), `${label}: bbox`).toBe(true);
 }
 
-describe('buildModel = builder-v1 (§3.4.1)', () => {
+describe('buildModel = builder-v1 (§3.4.1)', HEAVY, () => {
   it.each([
     ['the §3.6 example', example],
     ['teddy.canonical.json', teddy],
@@ -238,7 +239,7 @@ describe('buildModel = builder-v1 (§3.4.1)', () => {
   });
 });
 
-describe('region painting (§3.4.1 paint, §3.5.2 semantics)', () => {
+describe('region painting (§3.4.1 paint, §3.5.2 semantics)', HEAVY, () => {
   const ids = (p: Part): { ids: string[]; g: BufferGeometry } => {
     const g = partGeometry(p);
     const out = vertexColorIds(g, p);

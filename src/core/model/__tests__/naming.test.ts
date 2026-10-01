@@ -4,6 +4,7 @@ import { inferAttach, inferMirrorPairs, isOneTree } from '../attach';
 import { nameParts } from '../naming';
 import { validateModel } from '../schema';
 import { modelOf, part } from './helpers/geometry';
+import { HEAVY } from './helpers/options';
 import { buildCanonicalTeddy } from './helpers/teddy';
 
 const teddy = buildCanonicalTeddy().model;
@@ -27,7 +28,7 @@ const ids = (m: CrochetModelV1): string[] => m.parts.map((p) => p.id);
 const ball = (id: string, r: number, position: Vec3, rest: Partial<Part> = {}): Part => part('sphere', { r }, { id, position, ...rest });
 const child = (id: string, r: number, position: Vec3, to: string, rest: Partial<Part> = {}): Part => ball(id, r, position, { attach: { to }, ...rest });
 
-describe('nameParts (§2.9.7 step 6: template ids by geometry)', () => {
+describe('nameParts (§2.9.7 step 6: template ids by geometry)', HEAVY, () => {
   it('names the anonymous teddy: body, head, leg, arm, ear, muzzle, tail, and part_n by decreasing volume', () => {
     const tree = inferAttach(anonymousTeddy()).model;
     expect(isOneTree(tree)).toBe(true);
