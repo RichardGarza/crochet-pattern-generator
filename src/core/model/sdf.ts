@@ -17,6 +17,7 @@ import type { OverlapVolumeFn, PartSdfFn, SurfaceGapFn } from '../../types/entry
 import type { Part, Vec3 } from '../../types/model';
 import { DEG2RAD } from '../kernel/vec';
 import { flatLayout, tessellatePart } from './builder';
+import { sanePart } from './dims';
 import { eulerXYZToMat3, worldBounds } from './transforms';
 
 /** A signed distance in a part's local frame, positive inside. */
@@ -200,7 +201,8 @@ function prismSdf(outline: ArrayLike<number>, halfThickness: number): LocalSdf {
  * The signed distance of a part in its own local frame, positive inside. `mesh` is the caller's SDF of a mesh
  * part (part-local); it is ignored for primitives.
  */
-export function localSdf(part: Part, mesh?: MeshSdf): LocalSdf {
+export function localSdf(given: Part, mesh?: MeshSdf): LocalSdf {
+  const part = sanePart(given);
   switch (part.type) {
     case 'sphere':
       return sphereSdf(part.dims.r);
@@ -273,11 +275,17 @@ export function meshSdfOf(part: Part, meshSdf?: Record<string, MeshSdf>): MeshSd
 }
 
 /**
- * The volume shared by two parts, in³ (§3.7.6): cell centers of a regular grid over the intersection of the two
- * world bounding boxes, spacing min(0.025 in, smallest extent / 8), counted when inside both. Deterministic; 0
- * when the boxes do not intersect. `o.meshSdf` holds the part-local SDFs of mesh parts, keyed by meshRef.
+ * `overlapVolume` with its knobs. `maxSamples` caps the number of grid cells (default `OVERLAP_MAX_SAMPLES`;
+ * `inferAttach` lowers it when a model has very many overlapping pairs). `skip: false` evaluates every cell —
+ * the reference the tests compare the default against.
+ *
+ * The default walks each grid row and jumps over cells that cannot be inside: a cell is at least |f| away from
+ * a solid whose signed distance there is f < 0, so the next ⌈|f| / cell⌉ − 1 cells are outside it too. The
+ * count is exactly the one of the full grid, because every analytic SDF here is a lower bound of the distance
+ * outside its solid (exact, or the ellipsoid bound). A caller-supplied mesh SDF is not trusted that far: rows
+ * are never skipped on its account.
  */
-export const overlapVolume: OverlapVolumeFn = (a, b, o) => {
+export function overlapVolumeWith(a: Part, b: Part, o?: { meshSdf?: Record<string, MeshSdf>; maxSamples?: number; skip?: boolean }): number {
   const ba = worldBounds(a);
   const bb = worldBounds(b);
   const lo: Vec3 = [Math.max(ba.min[0], bb.min[0]), Math.max(ba.min[1], bb.min[1]), Math.max(ba.min[2], bb.min[2])];
@@ -286,30 +294,61 @@ export const overlapVolume: OverlapVolumeFn = (a, b, o) => {
   if (!(ext[0] > 0 && ext[1] > 0 && ext[2] > 0)) return 0;
   if (!Number.isFinite(ext[0] + ext[1] + ext[2])) return 0;
 
+  const maxSamples = Math.max(1, Math.floor(o?.maxSamples ?? OVERLAP_MAX_SAMPLES));
   const h = Math.min(OVERLAP_SPACING_IN, Math.min(ext[0], ext[1], ext[2]) / 8);
   const n = ext.map((e) => Math.min(4096, Math.max(1, Math.ceil(e / h - 1e-9))));
   const total = n[0] * n[1] * n[2];
-  if (total > OVERLAP_MAX_SAMPLES) {
-    const s = Math.cbrt(OVERLAP_MAX_SAMPLES / total);
+  if (total > maxSamples) {
+    const s = Math.cbrt(maxSamples / total);
     for (let k = 0; k < 3; k++) n[k] = Math.max(1, Math.floor(n[k] * s));
   }
   const cell: Vec3 = [ext[0] / n[0], ext[1] / n[1], ext[2] / n[2]];
 
-  const fa = worldSdf(a, meshSdfOf(a, o?.meshSdf));
-  const fb = worldSdf(b, meshSdfOf(b, o?.meshSdf));
+  const sdfA = meshSdfOf(a, o?.meshSdf);
+  const sdfB = meshSdfOf(b, o?.meshSdf);
+  const fa = worldSdf(a, sdfA);
+  const fb = worldSdf(b, sdfB);
+  const skip = o?.skip !== false;
+  const skipA = skip && sdfA === undefined;
+  const skipB = skip && sdfB === undefined;
+  // Cells to advance after a sample that is `d` outside: those nearer than d are outside too.
+  const jump = (d: number): number => {
+    const cells = Math.ceil((d / cell[0]) * (1 - 1e-9));
+    return cells > 1 ? cells : 1;
+  };
   let count = 0;
   for (let k = 0; k < n[2]; k++) {
     const z = lo[2] + (k + 0.5) * cell[2];
     for (let j = 0; j < n[1]; j++) {
       const y = lo[1] + (j + 0.5) * cell[1];
-      for (let i = 0; i < n[0]; i++) {
+      let i = 0;
+      while (i < n[0]) {
         const x = lo[0] + (i + 0.5) * cell[0];
-        if (fa(x, y, z) >= 0 && fb(x, y, z) >= 0) count++;
+        const va = fa(x, y, z);
+        if (!(va >= 0)) {
+          i += skipA && va < 0 ? jump(-va) : 1;
+          continue;
+        }
+        const vb = fb(x, y, z);
+        if (!(vb >= 0)) {
+          i += skipB && vb < 0 ? jump(-vb) : 1;
+          continue;
+        }
+        count++;
+        i++;
       }
     }
   }
   return count * cell[0] * cell[1] * cell[2];
-};
+}
+
+/**
+ * The volume shared by two parts, in³ (§3.7.6): cell centers of a regular grid over the intersection of the two
+ * world bounding boxes, spacing min(0.025 in, smallest extent / 8), counted when inside both. Deterministic; 0
+ * when the boxes do not intersect. At most `OVERLAP_MAX_SAMPLES` cells are used: a larger intersection gets
+ * proportionally larger cells. `o.meshSdf` holds the part-local SDFs of mesh parts, keyed by meshRef.
+ */
+export const overlapVolume: OverlapVolumeFn = (a, b, o) => overlapVolumeWith(a, b, o);
 
 /** The builder vertices of a part in model space, [x, y, z, …] (a flat part: without duplicates). */
 export function partWorldVertices(part: Part): Float64Array<ArrayBuffer> {
@@ -328,23 +367,31 @@ export function partWorldVertices(part: Part): Float64Array<ArrayBuffer> {
   return out;
 }
 
-/**
- * `surfaceGap` with the SDFs of mesh parts. The child's builder vertices are measured against the parent's SDF;
- * a mesh child (whose own vertices are not at hand) is measured the other way round, with the parent's
- * vertices against the child's SDF.
- */
-export function surfaceGapWith(child: Part, parent: Part, meshSdf?: Record<string, MeshSdf>): number {
-  const swap = child.type === 'mesh' && parent.type !== 'mesh';
-  const probe = swap ? parent : child;
-  const solid = swap ? child : parent;
-  const f = worldSdf(solid, meshSdfOf(solid, meshSdf));
-  const v = partWorldVertices(probe);
+/** Minus the largest signed distance over a list of points [x, y, z, …]: how far the nearest one is from the solid. */
+export function gapOfVertices(vertices: ArrayLike<number>, solid: WorldSdf): number {
   let deepest = -Infinity;
-  for (let i = 0; i + 2 < v.length; i += 3) {
-    const d = f(v[i], v[i + 1], v[i + 2]);
+  for (let i = 0; i + 2 < vertices.length; i += 3) {
+    const d = solid(vertices[i], vertices[i + 1], vertices[i + 2]);
     if (d > deepest) deepest = d;
   }
   return deepest === -Infinity ? Infinity : -deepest;
+}
+
+/**
+ * Which of the two parts lends its builder vertices to the gap measurement: the child — except a mesh child
+ * (whose own vertices are not at hand) on a primitive parent, which is measured the other way round, with the
+ * parent's vertices against the child's SDF.
+ */
+export function gapProbe(child: Part, parent: Part): 'child' | 'parent' {
+  return child.type === 'mesh' && parent.type !== 'mesh' ? 'parent' : 'child';
+}
+
+/** `surfaceGap` with the SDFs of mesh parts (part-local, keyed by meshRef). */
+export function surfaceGapWith(child: Part, parent: Part, meshSdf?: Record<string, MeshSdf>): number {
+  const swap = gapProbe(child, parent) === 'parent';
+  const probe = swap ? parent : child;
+  const solid = swap ? child : parent;
+  return gapOfVertices(partWorldVertices(probe), worldSdf(solid, meshSdfOf(solid, meshSdf)));
 }
 
 /**
@@ -373,7 +420,8 @@ export function sdfNormal(f: WorldSdf, p: Vec3, h = 1e-4): Vec3 {
  * outline area times its thickness; a torus arc its tube without end caps; a mesh part is estimated as the
  * ellipsoid inscribed in its bounding box.
  */
-export function partVolume(part: Part): number {
+export function partVolume(given: Part): number {
+  const part = sanePart(given);
   switch (part.type) {
     case 'sphere':
       return (4 / 3) * Math.PI * part.dims.r ** 3;

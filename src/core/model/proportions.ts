@@ -119,9 +119,9 @@ const heightOf = (p: Part, meshes?: Record<string, ColoredMesh>): number => {
 // ---- reading
 
 /**
- * The model's current proportions (§4.2). `headBody` is b of "head : body = 1 : b" (the untouched teddy: 1.3;
- * it is not clamped to the slider's 1…3); `limbs` is the chip nearest to the arms' length (the legs' when the
- * model has no arms). A control that cannot work has its reason in `disabled` and no value.
+ * The model's current proportions (§4.2). `headBody` is b of "head : body = 1 : b", to two decimals (the
+ * untouched teddy: 1.3); it is not clamped to the slider's 1…3. `limbs` is the chip nearest to the arms' length
+ * (the legs' when the model has no arms). A control that cannot work has its reason in `disabled` and no value.
  */
 export const readProportions: ReadProportionsFn = (m) => {
   const disabled: { headBody?: string; limbs?: string } = {};
@@ -134,7 +134,7 @@ export const readProportions: ReadProportionsFn = (m) => {
     disabled.headBody = NO_HEAD_REASON;
   } else {
     const fraction = heightOf(m.parts[head]) / total;
-    if (fraction > 0) reading.headBody = roundCoord(Math.max(0, 1 / fraction - 1), 4);
+    if (fraction > 0) reading.headBody = roundCoord(Math.max(0, 1 / fraction - 1), 2);
     else disabled.headBody = NO_HEAD_REASON;
   }
 

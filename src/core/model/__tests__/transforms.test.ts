@@ -461,8 +461,14 @@ describe('grounding (§0.1: the lowest point is at y = 0)', () => {
   });
 
   it('never returns NaN positions for a model with broken numbers', () => {
+    // a dimension that is not a number counts as 0: the part is a point at its position
     const broken = modelOf([part('sphere', { r: Number.NaN }, { position: [0, 1, 0] })]);
-    expect(groundModel(broken).dy).toBe(0);
+    expect(groundModel(broken).dy).toBe(-1);
+    expect(worldBounds(part('sphere', { r: -2 }))).toEqual({ min: [-2, -2, -2], max: [2, 2, 2] }); // as the builder draws it
+    // a position that is not a number: the model is left where it is
+    const nowhere = modelOf([part('sphere', { r: 1 }, { position: [0, Number.NaN, 0] }), part('sphere', { r: 1 }, { id: 'b', position: [0, 3, 0] })]);
+    expect(groundModel(nowhere).dy).toBe(0);
+    expect(groundModel(nowhere).model).toBe(nowhere);
   });
 
   it('the ground center is on the mirror plane, under the origin, at the lowest point', () => {

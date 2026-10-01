@@ -6,46 +6,60 @@
 import type { ScaleModelFn } from '../../types/entryPoints';
 import type { ColoredMesh } from '../../types/geometry';
 import type { Part, Region, Vec3 } from '../../types/model';
+import { MODEL_LIMITS } from './limits';
 import { groundCenter, roundCoord } from './transforms';
 
 /**
  * The part with every length multiplied by `factor` about its LOCAL ORIGIN: dims (profile and polygon points
  * included, a mesh part's `bboxIn`), region lengths (`widthIn`, `radiusIn`, `scaleIn`) and `crochet.seed`.
  * `position`, the rotation, angles, fractions and the paint field are unchanged. Lengths are rounded to 1e-6 in.
+ *
+ * A dimension that would fall below the schema minimum (0.05 in, §3.5.2) stays at that minimum, and a capsule
+ * stays at least as long as its two caps, so a valid model is still valid after it was scaled down. Nothing is
+ * limited at the upper end: a caller that scales up keeps the result within 48 in per dimension and 60 in of
+ * height.
  */
 export function scalePartDims<P extends Part>(part: P, factor: number): P {
   const s = (x: number): number => roundCoord(x * factor);
+  /** A dimension the schema keeps at 0.05 in or more. */
+  const d = (x: number): number => {
+    const scaled = s(x);
+    return x >= MODEL_LIMITS.minDimIn && scaled < MODEL_LIMITS.minDimIn ? MODEL_LIMITS.minDimIn : scaled;
+  };
   let out: Part;
   switch (part.type) {
     case 'sphere':
-      out = { ...part, dims: { ...part.dims, r: s(part.dims.r) } };
+      out = { ...part, dims: { ...part.dims, r: d(part.dims.r) } };
       break;
     case 'ellipsoid':
-      out = { ...part, dims: { ...part.dims, rx: s(part.dims.rx), ry: s(part.dims.ry), rz: s(part.dims.rz) } };
+      out = { ...part, dims: { ...part.dims, rx: d(part.dims.rx), ry: d(part.dims.ry), rz: d(part.dims.rz) } };
       break;
-    case 'capsule':
-      out = { ...part, dims: { ...part.dims, r: s(part.dims.r), length: s(part.dims.length) } };
+    case 'capsule': {
+      const r = d(part.dims.r);
+      const length = d(part.dims.length);
+      out = { ...part, dims: { ...part.dims, r, length: part.dims.length >= 2 * part.dims.r && length < 2 * r ? roundCoord(2 * r) : length } };
       break;
+    }
     case 'cylinder':
-      out = { ...part, dims: { ...part.dims, rTop: s(part.dims.rTop), rBottom: s(part.dims.rBottom), h: s(part.dims.h) } };
+      out = { ...part, dims: { ...part.dims, rTop: d(part.dims.rTop), rBottom: d(part.dims.rBottom), h: d(part.dims.h) } };
       break;
     case 'cone':
-      out = { ...part, dims: { ...part.dims, r: s(part.dims.r), h: s(part.dims.h) } };
+      out = { ...part, dims: { ...part.dims, r: d(part.dims.r), h: d(part.dims.h) } };
       break;
     case 'torus':
-      out = { ...part, dims: { ...part.dims, R: s(part.dims.R), r: s(part.dims.r) } };
+      out = { ...part, dims: { ...part.dims, R: d(part.dims.R), r: d(part.dims.r) } };
       break;
     case 'lathe':
       out = { ...part, dims: { ...part.dims, profile: part.dims.profile.map(([r, y]): [number, number] => [s(r), s(y)]) } };
       break;
     case 'flat': {
-      const dims = { ...part.dims, w: s(part.dims.w), h: s(part.dims.h), thickness: s(part.dims.thickness) };
+      const dims = { ...part.dims, w: d(part.dims.w), h: d(part.dims.h), thickness: d(part.dims.thickness) };
       if (part.dims.points) dims.points = part.dims.points.map(([x, y]): [number, number] => [s(x), s(y)]);
       out = { ...part, dims };
       break;
     }
     case 'box':
-      out = { ...part, dims: { ...part.dims, w: s(part.dims.w), h: s(part.dims.h), d: s(part.dims.d) } };
+      out = { ...part, dims: { ...part.dims, w: d(part.dims.w), h: d(part.dims.h), d: d(part.dims.d) } };
       break;
     case 'mesh': {
       const b = part.dims.bboxIn;

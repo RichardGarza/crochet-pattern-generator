@@ -3,10 +3,13 @@ import type { Part, Vec3 } from '../../../types/model';
 import { mulberry32, randomRange, type Rng } from '../../kernel/prng';
 import { flatBevelSize } from '../builder';
 import {
+  gapOfVertices,
+  gapProbe,
   localSdf,
   meshSdfOf,
   OVERLAP_MAX_SAMPLES,
   overlapVolume,
+  overlapVolumeWith,
   partSdf,
   partVolume,
   partWorldVertices,
@@ -325,6 +328,25 @@ describe('analytic SDFs match the builder mesh (§3.7.6: positive inside, builde
     }
   });
 
+  it('broken dims are read as the builder would draw them: a negative length by its size, a non-finite number as 0', () => {
+    expect(partSdf(part('sphere', { r: -1 }))([0, 0, 0])).toBe(1);
+    expect(partVolume(part('sphere', { r: -1 }))).toBeCloseTo((4 / 3) * Math.PI, 12);
+    expect(partSdf(part('box', { w: -2, h: 2, d: 2 }))([0.5, 0, 0])).toBe(0.5);
+    expect(partSdf(part('ellipsoid', { rx: 1, ry: Number.NaN, rz: 1 }))([0, 0.1, 0])).toBeLessThan(0);
+    expect(partSdf(part('lathe', { profile: [[-1, 0], [-1, 2]] }))([0.5, 1, 0])).toBe(0.5);
+    expect(partVolume(part('cylinder', { rTop: 1, rBottom: 1, h: Number.POSITIVE_INFINITY }))).toBe(0);
+    // a part without dims, or with dims of the wrong shape, is a point
+    const noDims = { id: 'x', type: 'sphere', position: [0, 0, 0], color: 'c1' } as unknown as Part;
+    expect(partSdf(noDims)([0, 0, 0])).toBe(0);
+    expect(partVolume(noDims)).toBe(0);
+    expect(partSdf({ ...noDims, type: 'lathe', dims: { profile: 'round' } } as unknown as Part)([0, 0, 0])).toBe(Number.NEGATIVE_INFINITY);
+    // an unknown type is never inside and has no volume
+    const unknown = { ...noDims, type: 'egg', dims: { r: 1 } } as unknown as Part;
+    expect(partSdf(unknown)([0, 0, 0])).toBe(Number.NEGATIVE_INFINITY);
+    expect(partVolume(unknown)).toBe(0);
+    expect(partWorldVertices(unknown)).toHaveLength(0);
+  });
+
   it('a part with broken dims never throws and is never "inside"', () => {
     const cases: Part[] = [
       part('sphere', { r: 0 }),
@@ -414,13 +436,45 @@ describe('overlapVolume (§3.7.6: regular grid over the intersection of the worl
     expect(performance.now() - t1).toBeLessThan(2000);
   });
 
+  it('row skipping changes nothing: the count is the one of the full grid, for every pair of part types', () => {
+    const rng = mulberry32(108);
+    const shapes = samplePrimitives();
+    let overlapping = 0;
+    for (let trial = 0; trial < 60; trial++) {
+      const place = (p: Part, id: string): Part => ({
+        ...p,
+        id,
+        position: [randomRange(rng, -0.8, 0.8), randomRange(rng, -0.8, 0.8), randomRange(rng, -0.8, 0.8)],
+        rotationDeg: [randomRange(rng, -180, 180), randomRange(rng, -180, 180), randomRange(rng, -180, 180)],
+      });
+      const a = place(shapes[trial % shapes.length], 'a');
+      const b = place(shapes[Math.floor(rng() * shapes.length)], 'b');
+      const fast = overlapVolumeWith(a, b, { maxSamples: 60_000 });
+      const full = overlapVolumeWith(a, b, { maxSamples: 60_000, skip: false });
+      expect(fast, `${a.type} × ${b.type}`).toBe(full);
+      if (full > 0) overlapping++;
+    }
+    expect(overlapping).toBeGreaterThan(30);
+    // the default is the skipping grid with the default cap
+    const a = part('ellipsoid', { rx: 2.1, ry: 2.6, rz: 1.9 }, { id: 'a' });
+    const b = part('capsule', { r: 0.75, length: 3.1 }, { id: 'b', position: [1.15, -1.8, 1.25], rotationDeg: [82, 0, -12] });
+    expect(overlapVolume(a, b)).toBe(overlapVolumeWith(a, b, { skip: false }));
+    // fewer samples: a coarser estimate of the same volume
+    expect(Math.abs(overlapVolumeWith(a, b, { maxSamples: 4000 }) / overlapVolume(a, b) - 1)).toBeLessThan(0.1);
+    // a supplied mesh SDF is never used to skip: a function that lies about distances still gives the full count
+    const blob = part('mesh', { meshRef: 'm', bboxIn: [2, 2, 2] }, { id: 'blob', position: [0.5, 0, 0] });
+    const liar = (q: Vec3): number => (Math.hypot(q[0], q[1], q[2]) < 0.9 ? 1 : -1000);
+    expect(overlapVolumeWith(a, blob, { meshSdf: { m: liar } })).toBe(overlapVolumeWith(a, blob, { meshSdf: { m: liar }, skip: false }));
+  });
+
   it('never returns NaN, whatever the numbers', () => {
     const a = part('sphere', { r: 1 });
     expect(overlapVolume(a, part('sphere', { r: Number.NaN }))).toBe(0);
     expect(overlapVolume(a, part('sphere', { r: 1 }, { position: [Number.NaN, 0, 0] }))).toBe(0);
-    // an infinite part contains everything: the overlap is the finite part
-    expect(overlapVolume(a, part('sphere', { r: Number.POSITIVE_INFINITY }))).toBeCloseTo(partVolume(a), 1);
+    // a dimension that is not a finite number counts as 0
+    expect(overlapVolume(a, part('sphere', { r: Number.POSITIVE_INFINITY }))).toBe(0);
     expect(overlapVolume(part('sphere', { r: Number.POSITIVE_INFINITY }), part('box', { w: Number.POSITIVE_INFINITY, h: 1, d: 1 }))).toBe(0);
+    expect(overlapVolume(a, { ...a, rotationDeg: [Number.NaN, 0, 0] })).toBe(0);
   });
 
   it('§3.7.3 golden: teddy overlap volumes ≈ head 0.07, legs 1.34, arms 0.64, tail 0.11 in³ (±15%); head–muzzle 1.43', () => {
@@ -482,6 +536,18 @@ describe('surfaceGap (§3.7.6: from the child’s builder vertices)', () => {
     expect(surfaceGapWith(blob, body, meshSdf)).toBeCloseTo(0.5, 6);
     expect(surfaceGapWith(body, blob, meshSdf)).toBeCloseTo(0.5, 6);
     expect(surfaceGap(blob, body)).toBeCloseTo(0.5, 2); // the inscribed ellipsoid of a unit box is the same sphere
+  });
+
+  it('gapOfVertices and gapProbe: the pieces inferAttach reuses across many pairs', () => {
+    const body = worldSdf(part('sphere', { r: 1 }));
+    expect(gapOfVertices([0, 3, 0, 2, 0, 0, 0, 0, -1.5], body)).toBe(0.5);
+    expect(gapOfVertices([0, 0.5, 0], body)).toBe(-0.5);
+    expect(gapOfVertices([], body)).toBe(Number.POSITIVE_INFINITY);
+    const mesh = part('mesh', { meshRef: 'm', bboxIn: [1, 1, 1] });
+    expect(gapProbe(part('sphere', { r: 1 }), part('box', { w: 1, h: 1, d: 1 }))).toBe('child');
+    expect(gapProbe(mesh, part('sphere', { r: 1 }))).toBe('parent');
+    expect(gapProbe(part('sphere', { r: 1 }), mesh)).toBe('child');
+    expect(gapProbe(mesh, mesh)).toBe('child');
   });
 
   it('partWorldVertices are the builder vertices in model space', () => {

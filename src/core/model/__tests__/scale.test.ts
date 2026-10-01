@@ -170,6 +170,27 @@ describe('scaleModel (§4.2 "Scale model to height": uniform, about the ground c
     expect(modelHeight(result.model, result.meshes)).toBeCloseTo(2 * modelHeight(everyType, meshes), 5);
   });
 
+  it('a model scaled down stays valid: no dimension falls below the schema minimum of 0.05 in (§3.5.2)', () => {
+    // the teddy as a 3 in keychain: its inner ears (0.12 in thick) would be 0.036 in
+    const factor = 3 / modelHeight(teddy);
+    const { model } = scaleModel(teddy, factor);
+    expect(validateModel(model).ok).toBe(true);
+    const inner = model.parts.find((p) => p.id === 'ear_l_inner') as Extract<Part, { type: 'ellipsoid' }>;
+    expect(inner.dims.rz).toBe(0.05);
+    expect(inner.dims.rx).toBeCloseTo(0.55 * factor, 6);
+    expect(modelHeight(model)).toBeCloseTo(3, 5); // the clamped parts are far too small to change the height
+    // a capsule stays at least as long as its two caps
+    const stub = scalePartDims(part('capsule', { r: 0.06, length: 0.13 }), 0.5);
+    expect(stub.dims).toEqual({ r: 0.05, length: 0.1 });
+    expect(scalePartDims(part('sphere', { r: 0.06 }), 0.1).dims).toEqual({ r: 0.05 });
+    expect(scalePartDims(part('flat', { shape: 'rect', w: 1, h: 0.4, thickness: 0.08 }), 0.5).dims).toEqual({ shape: 'rect', w: 0.5, h: 0.2, thickness: 0.05 });
+    // what was already below the minimum is scaled like everything else, and nothing is limited at the top
+    expect(scalePartDims(part('sphere', { r: 0.04 }), 0.5).dims).toEqual({ r: 0.02 });
+    expect(scalePartDims(part('sphere', { r: 30 }), 2).dims).toEqual({ r: 60 });
+    // profile points and polygon points are free (a profile radius may be 0)
+    expect(scalePartDims(part('lathe', { profile: [[0, 0], [0.06, 0.03], [0, 0.06]] }), 0.5).dims.profile).toEqual([[0, 0], [0.03, 0.015], [0, 0.03]]);
+  });
+
   it('a factor of 1 returns the model itself; a bad factor throws', () => {
     expect(scaleModel(teddy, 1).model).toBe(teddy);
     const meshes = readEveryTypeMeshes();

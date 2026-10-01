@@ -208,6 +208,34 @@ describe('buildModel = builder-v1 (§3.4.1)', () => {
     const g = partGeometry(broken);
     expectFinite(g, 'polygon without points');
   });
+
+  it('never hands NaN to three.js: broken numbers in an unvalidated model are drawn as 0, negative lengths by their size', () => {
+    const broken: Part[] = [
+      part('sphere', { r: Number.NaN }, { id: 'a' }),
+      part('ellipsoid', { rx: -1, ry: Number.POSITIVE_INFINITY, rz: 1 }, { id: 'b' }),
+      part('capsule', { r: 1, length: Number.NaN }, { id: 'c' }),
+      part('lathe', { profile: [[1, 0]] }, { id: 'd' }), // one point: LatheGeometry alone would throw
+      part('lathe', { profile: [[Number.NaN, 0], [1, Number.NaN], [0, 2]] }, { id: 'e' }),
+      part('flat', { shape: 'oval', w: Number.NaN, h: 1, thickness: 0.2 }, { id: 'f' }),
+      part('flat', { shape: 'polygon', w: 1, h: 1, thickness: 0.2, points: [[0, 0], [Number.NaN, 1], [1, 0], [1, 1]] }, { id: 'g' }),
+      part('torus', { R: 1, r: 0.2, arcDeg: Number.NaN }, { id: 'h' }),
+      part('box', { w: -1, h: 2, d: 3 }, { id: 'i', position: [Number.NaN, 1, 2], rotationDeg: [0, Number.POSITIVE_INFINITY, 0] }),
+      { id: 'j', type: 'cone', position: [0, 0, 0], color: 'c1' } as unknown as Part, // no dims at all
+    ];
+    const group = buildModel(modelOf(broken), 1);
+    expect(group.children).toHaveLength(broken.length);
+    for (const mesh of meshesOf(group)) {
+      const pos = mesh.geometry.attributes.position;
+      for (let i = 0; i < pos.count * 3; i++) expect(Number.isFinite(pos.array[i]), mesh.name).toBe(true);
+      expect(mesh.position.toArray().every(Number.isFinite), mesh.name).toBe(true);
+      expect([mesh.rotation.x, mesh.rotation.y, mesh.rotation.z].every(Number.isFinite), mesh.name).toBe(true);
+      expect(mesh.userData.crochet).toBe(broken.find((p) => p.id === mesh.name)); // the part itself is not rewritten
+    }
+    const b = partGeometry(broken[1]);
+    b.computeBoundingBox();
+    expect(b.boundingBox?.max.toArray()).toEqual([1, 0, 1]);
+    expect(tessellatePart({ ...part('sphere', { r: 1 }), type: 'egg' } as unknown as Part).positions).toHaveLength(0);
+  });
 });
 
 describe('region painting (§3.4.1 paint, §3.5.2 semantics)', () => {

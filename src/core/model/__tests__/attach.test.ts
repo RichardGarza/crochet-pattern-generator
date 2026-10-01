@@ -358,6 +358,24 @@ describe('inferAttach: links (Prim’s rule on overlap, then the smallest gap)',
     expect(inferAttach(m, { meshSdf: { blob: cube } }).repairs).toEqual(withSdf.repairs);
   });
 
+  it('stays fast when every part overlaps every other: the overlap grids share one work budget', { retry: 2 }, () => {
+    // 40 large parts in one small region: 780 overlapping pairs. Unbounded, the grids alone took over a minute.
+    const rng = mulberry32(77);
+    const parts: Part[] = [];
+    for (let i = 0; i < 40; i++) {
+      const at: Vec3 = [randomRange(rng, -2, 2), randomRange(rng, 0, 4), randomRange(rng, -2, 2)];
+      const rot: Vec3 = [randomRange(rng, -90, 90), 0, randomRange(rng, -90, 90)];
+      parts.push(i % 2 === 0 ? part('ellipsoid', { rx: 3, ry: 2.4, rz: 2.7 }, { id: `p${i}`, position: at, rotationDeg: rot }) : part('capsule', { r: 1.5, length: 7 }, { id: `p${i}`, position: at, rotationDeg: rot }));
+    }
+    const m = modelOf(parts);
+    const t0 = performance.now();
+    const { model, repairs } = inferAttach(m);
+    expect(performance.now() - t0).toBeLessThan(10_000); // about 1 s here
+    expectOneTree(model);
+    expect(repairs).toHaveLength(39);
+    expect(JSON.stringify(inferAttach(m).model)).toBe(JSON.stringify(model));
+  });
+
   it('never throws and always ends with one tree, whatever the numbers', () => {
     const broken = modelOf([
       ball('body', 2, [0, 2, 0]),
@@ -367,10 +385,15 @@ describe('inferAttach: links (Prim’s rule on overlap, then the smallest gap)',
       part('lathe', { profile: [] }, { id: 'empty', position: [1, 1, 1] }),
       part('capsule', { r: -1, length: -5 }, { id: 'negative', position: [0, 1, 0] }),
       ball('inf', Number.POSITIVE_INFINITY, [0, 0, 0]),
+      part('lathe', { profile: [[1, 0]] }, { id: 'one_point', position: [5, 0, 0] }),
+      { id: 'no_dims', type: 'cone', position: [0, 9, 0], color: 'c1' } as unknown as Part,
+      { id: 'egg', type: 'egg', dims: { r: 1 }, position: [3, 3, 3], color: 'c1' } as unknown as Part,
+      { ...ball('spin', 1, [2, 2, 0]), rotationDeg: [Number.NaN, 0, 0] },
+      part('flat', { shape: 'polygon', w: 1, h: 1, thickness: 0.2, points: [[0, 0], [Number.NaN, 1], [1, 0]] }, { id: 'bad_polygon', position: [0, 2, 2] }),
     ]);
     const { model, repairs } = inferAttach(broken);
     expectOneTree(model);
-    expect(repairs).toHaveLength(6);
+    expect(repairs).toHaveLength(11);
     expect(inferAttach(model).repairs).toEqual([]);
   });
 });

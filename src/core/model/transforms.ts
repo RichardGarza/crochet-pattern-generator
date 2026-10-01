@@ -26,6 +26,7 @@ import {
   transpose3,
 } from '../kernel/vec';
 import { flatLayout } from './builder';
+import { sanePart } from './dims';
 
 // ---- numbers
 
@@ -300,7 +301,8 @@ function torusSupport(R: number, r: number, arcDeg: number | undefined, wx: numb
   return Math.max(g(0), g(arc));
 }
 
-function boundsWith(part: Part, r: Mat3, origin: Vec3, mesh?: ColoredMesh): Bounds {
+function boundsWith(given: Part, r: Mat3, origin: Vec3, mesh?: ColoredMesh): Bounds {
+  const part = sanePart(given);
   if (part.type === 'mesh' && mesh && mesh.positions.length >= 3) {
     const min: Vec3 = [Infinity, Infinity, Infinity];
     const max: Vec3 = [-Infinity, -Infinity, -Infinity];

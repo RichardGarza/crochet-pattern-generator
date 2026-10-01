@@ -34,6 +34,7 @@ import {
 } from 'three';
 import type { ColoredMesh } from '../../types/geometry';
 import type { CrochetModelV1, Part } from '../../types/model';
+import { sanePart } from './dims';
 
 export const BUILDER_VERSION = 'builder-v1';
 /** `unitScale` for a scene in inches (the app). */
@@ -48,6 +49,8 @@ export const UV64_NONE = 255;
 
 const D2R = MathUtils.degToRad;
 const FALLBACK_COLOR = '#cccccc';
+const finite = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+const KNOWN_TYPES: ReadonlySet<string> = new Set(['sphere', 'ellipsoid', 'capsule', 'cylinder', 'cone', 'torus', 'lathe', 'flat', 'box', 'mesh']);
 
 type FlatDims = Extract<Part, { type: 'flat' }>['dims'];
 
@@ -88,9 +91,10 @@ export function buildModel(spec: CrochetModelV1, unitScale = UNIT_SCALE_METERS, 
     const m = new Mesh(g, mat);
     m.name = p.id;
     m.userData.crochet = p;
-    m.position.set(p.position[0] * S, p.position[1] * S, p.position[2] * S);
+    // A scene graph never holds NaN: a broken number in an unvalidated model counts as 0.
+    m.position.set(finite(p.position?.[0]) * S, finite(p.position?.[1]) * S, finite(p.position?.[2]) * S);
     const r = p.rotationDeg ?? [0, 0, 0];
-    m.rotation.set(D2R(r[0]), D2R(r[1]), D2R(r[2]), 'XYZ');
+    m.rotation.set(D2R(finite(r[0])), D2R(finite(r[1])), D2R(finite(r[2])), 'XYZ');
     group.add(m);
   }
   return group;
@@ -100,8 +104,9 @@ export function buildModel(spec: CrochetModelV1, unitScale = UNIT_SCALE_METERS, 
  * The geometry of one part in its local frame (`geometryFor` of §3.4.1), scaled by `unitScale` (default 1:
  * inches). The reference for every dimension of the schema (§3.5.2).
  */
-export function partGeometry(p: Part, unitScale = UNIT_SCALE_INCHES, meshes?: Record<string, ColoredMesh>): BufferGeometry {
+export function partGeometry(part: Part, unitScale = UNIT_SCALE_INCHES, meshes?: Record<string, ColoredMesh>): BufferGeometry {
   const S = unitScale;
+  const p = sanePart(part); // the part itself when it is valid; never NaN or a negative length into three.js
   switch (p.type) {
     case 'sphere':
       return new SphereGeometry(p.dims.r * S, 48, 32);
@@ -115,11 +120,14 @@ export function partGeometry(p: Part, unitScale = UNIT_SCALE_INCHES, meshes?: Re
       return new ConeGeometry(p.dims.r * S, p.dims.h * S, 48);
     case 'torus':
       return new TorusGeometry(p.dims.R * S, p.dims.r * S, 24, 64, D2R(p.dims.arcDeg ?? 360));
-    case 'lathe':
+    case 'lathe': {
+      // LatheGeometry reads two points at least; a one-point profile (invalid, §3.5.2) is drawn as its ring.
+      const profile = p.dims.profile.length === 1 ? [p.dims.profile[0], p.dims.profile[0]] : p.dims.profile;
       return new LatheGeometry(
-        p.dims.profile.map(([r, y]) => new Vector2(r * S, y * S)),
+        profile.map(([r, y]) => new Vector2(r * S, y * S)),
         48,
       );
+    }
     case 'box':
       return new BoxGeometry(p.dims.w * S, p.dims.h * S, p.dims.d * S, 4, 4, 4);
     case 'flat':
@@ -325,6 +333,8 @@ export interface PartTessellation {
  * part's local frame. Geometries without an index (flat parts) get the trivial one.
  */
 export function tessellatePart(p: Part, meshes?: Record<string, ColoredMesh>): PartTessellation {
+  // Unlike the builder, the kernels do not throw on a part type they do not know: it has no geometry.
+  if (!KNOWN_TYPES.has(p.type)) return { positions: new Float32Array(0), indices: new Uint32Array(0) };
   const g = partGeometry(p, UNIT_SCALE_INCHES, meshes);
   const src = g.attributes.position;
   const positions = new Float32Array(src.count * 3);
@@ -359,7 +369,8 @@ const flatCache = new Map<string, FlatLayout>();
 const FLAT_CACHE_MAX = 64;
 
 /** The builder layout of a flat part (cached by its dims; deterministic). */
-export function flatLayout(d: FlatDims): FlatLayout {
+export function flatLayout(dims: FlatDims): FlatLayout {
+  const d = sanePart({ type: 'flat', dims } as Part).dims as FlatDims;
   const key = JSON.stringify([d.shape, d.w, d.h, d.thickness, d.shape === 'polygon' ? d.points : null]);
   const hit = flatCache.get(key);
   if (hit) return hit;

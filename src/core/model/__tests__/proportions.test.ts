@@ -58,8 +58,8 @@ describe('readProportions (§4.2)', () => {
   it('G23: the untouched teddy reports head : body 1 : 1.3 and arms closest to "short"', () => {
     const reading = readProportions(teddy);
     expect(reading.disabled).toEqual({});
-    expect(reading.headBody).toBeCloseTo(1.3, 1);
-    expect(reading.headBody).toBeCloseTo(H / 4.3 - 1, 4); // head height 2 × 2.15 of 9.88
+    expect(reading.headBody).toBe(1.3);
+    expect(H / 4.3 - 1).toBeCloseTo(1.2974, 4); // head height 2 × 2.15 of 9.88, read to two decimals
     expect(reading.limbs).toBe('short'); // arms 3.0 / 9.88 = 0.30 of the height: nearer 0.25 (short) than 0.375 (medium)
   });
 
@@ -68,7 +68,7 @@ describe('readProportions (§4.2)', () => {
     expect(readProportions(noArms).limbs).toBe('medium'); // legs 3.1 / 9.88 = 0.31: nearest 1.5 × 0.20
     const bunny = readSpecExample();
     expect(readProportions(bunny).limbs).toBe('nubs'); // arms 1.4 of 7.6 in = 0.18: nearest 0.6 × 0.25
-    expect(readProportions(bunny).headBody).toBeCloseTo(modelHeight(bunny) / 2.4 - 1, 3);
+    expect(readProportions(bunny).headBody).toBeCloseTo(modelHeight(bunny) / 2.4 - 1, 2);
   });
 
   it('disabled: no head, or the head is the root ("one-piece body: no separate head")', () => {
@@ -81,7 +81,7 @@ describe('readProportions (§4.2)', () => {
     expect(readProportions(headRoot).headBody).toBeUndefined();
     // the head is found by id, else by label
     const labelled = { ...teddy, parts: teddy.parts.map((p) => (p.id === 'head' ? { ...p, id: 'noggin' } : p.attach?.to === 'head' ? { ...p, attach: { to: 'noggin' } } : p)) };
-    expect(readProportions(labelled).headBody).toBeCloseTo(1.2974, 3);
+    expect(readProportions(labelled).headBody).toBe(1.3);
     expect(readProportions({ ...labelled, parts: labelled.parts.map((p) => (p.id === 'noggin' ? { ...p, label: 'Top' } : p)) }).disabled.headBody).toBe(NO_HEAD_REASON);
   });
 

@@ -9,7 +9,18 @@ import type { InferAttachFn, InferMirrorPairsFn } from '../../types/entryPoints'
 import type { Repair } from '../../types/importer';
 import type { CrochetModelV1, Part } from '../../types/model';
 import { mulMat3, transpose3 } from '../kernel/vec';
-import { type MeshSdf, overlapVolume, partVolume, surfaceGapWith } from './sdf';
+import {
+  gapOfVertices,
+  gapProbe,
+  type MeshSdf,
+  meshSdfOf,
+  OVERLAP_MAX_SAMPLES,
+  overlapVolumeWith,
+  partVolume,
+  partWorldVertices,
+  type WorldSdf,
+  worldSdf,
+} from './sdf';
 import { boundsSize, eulerXYZToMat3, localBounds, modelBounds, worldBounds } from './transforms';
 
 /** A gap above this raises `W_GAP` (§2.13). */
@@ -18,6 +29,9 @@ export const GAP_WARN_IN = 0.1;
 export const GAP_FLOAT_IN = 0.25;
 /** Two overlap volumes within this fraction of the larger one are a tie (§3.7.6). */
 const OVERLAP_TIE = 0.01;
+/** Grid cells `inferAttach` may spend on overlap volumes in one call, and the fewest it gives any one pair. */
+const OVERLAP_BUDGET_SAMPLES = 40_000_000;
+const OVERLAP_MIN_SAMPLES = 32_768;
 
 // ---- the attach graph
 
@@ -243,23 +257,57 @@ export const inferAttach: InferAttachFn = (m, o) => {
   };
   join(root);
 
+  // A work budget for the overlap grids: a model whose parts all overlap one another (60 parts: 1 770 pairs)
+  // would otherwise take minutes. The cap per pair depends only on the model, so the result is deterministic;
+  // it stays at the kernel's default for ordinary models (the teddy has about 40 pairs of touching boxes).
+  const boxes = parts.map((p) => worldBounds(p));
+  let touching = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const a = boxes[i];
+      const b = boxes[j];
+      if (a.min[0] < b.max[0] && b.min[0] < a.max[0] && a.min[1] < b.max[1] && b.min[1] < a.max[1] && a.min[2] < b.max[2] && b.min[2] < a.max[2]) touching++;
+    }
+  }
+  const maxSamples = Math.max(OVERLAP_MIN_SAMPLES, Math.min(OVERLAP_MAX_SAMPLES, Math.floor(OVERLAP_BUDGET_SAMPLES / Math.max(1, touching))));
+
   const overlaps = new Map<number, number>();
   const overlapOf = (c: number, p: number): number => {
     const key = c * n + p;
     let v = overlaps.get(key);
     if (v === undefined) {
-      v = overlapVolume(parts[c], parts[p], { meshSdf });
+      v = overlapVolumeWith(parts[c], parts[p], { meshSdf, maxSamples });
       if (!(v > 0)) v = 0; // NaN counts as no overlap
       overlaps.set(key, v);
     }
     return v;
+  };
+  // Gaps: each part is tessellated once, and its SDF built once, however many pairs it takes part in.
+  const vertices = new Map<number, Float64Array<ArrayBuffer>>();
+  const verticesOf = (i: number): Float64Array<ArrayBuffer> => {
+    let v = vertices.get(i);
+    if (!v) {
+      v = partWorldVertices(parts[i]);
+      vertices.set(i, v);
+    }
+    return v;
+  };
+  const sdfs = new Map<number, WorldSdf>();
+  const sdfOf = (i: number): WorldSdf => {
+    let f = sdfs.get(i);
+    if (!f) {
+      f = worldSdf(parts[i], meshSdfOf(parts[i], meshSdf));
+      sdfs.set(i, f);
+    }
+    return f;
   };
   const gaps = new Map<number, number>();
   const gapOf = (c: number, p: number): number => {
     const key = c * n + p;
     let g = gaps.get(key);
     if (g === undefined) {
-      g = surfaceGapWith(parts[c], parts[p], meshSdf);
+      const swap = gapProbe(parts[c], parts[p]) === 'parent';
+      g = gapOfVertices(verticesOf(swap ? p : c), sdfOf(swap ? c : p));
       if (Number.isNaN(g)) g = Infinity;
       gaps.set(key, g);
     }
