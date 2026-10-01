@@ -34,6 +34,20 @@ type SameProps<Actual, Props> = IsAny<Actual> extends true ? false : Identical<P
 
 type Check<T extends true> = T;
 
+/**
+ * Only while a frozen signature gained an optional parameter that its implementation does not take yet: the
+ * implementation must still be callable everywhere the frozen type is (fewer trailing parameters, same result).
+ * Every use names the sprint that turns it back into `SameSignature`.
+ */
+type PendingSignature<Actual, Frozen extends Fn> =
+  IsAny<Actual> extends true
+    ? false
+    : Actual extends Fn
+      ? [Actual] extends [Frozen]
+        ? Identical<ReturnType<Actual>, ReturnType<Frozen>>
+        : false
+      : false;
+
 // ---- Step 0 kernels. encodePng returns Uint8Array<ArrayBuffer>, a subtype of the frozen Uint8Array that can
 //      also be handed to Blob and crypto.subtle; so its result is checked for assignability, not identity.
 type EncodePng = typeof import('../../core/kernel/png').encodePng;
@@ -41,6 +55,30 @@ export type KernelEntryPoints = [
   Check<Identical<Parameters<EncodePng>, Parameters<E.EncodePngFn>>>,
   Check<ReturnType<EncodePng> extends ReturnType<E.EncodePngFn> ? true : false>,
   Check<SameSignature<typeof import('../../core/kernel/png').decodePng, E.DecodePngFn>>,
+];
+
+// ---- Step 0b kernels (core/model, state, workers, core/kernel/geom; design v1.4 added them here).
+export type ModelEntryPoints = [
+  Check<SameSignature<typeof import('../../core/model/sdf').partSdf, E.PartSdfFn>>,
+  Check<SameSignature<typeof import('../../core/model/sdf').overlapVolume, E.OverlapVolumeFn>>,
+  Check<SameSignature<typeof import('../../core/model/sdf').surfaceGap, E.SurfaceGapFn>>,
+  Check<SameSignature<typeof import('../../core/model/attach').inferAttach, E.InferAttachFn>>,
+  Check<SameSignature<typeof import('../../core/model/attach').inferMirrorPairs, E.InferMirrorPairsFn>>,
+  Check<SameSignature<typeof import('../../core/model/revisions').carryOver, E.CarryOverFn>>,
+  Check<SameSignature<typeof import('../../core/model/naming').nameParts, E.NamePartsFn>>,
+  Check<SameSignature<typeof import('../../core/model/place').placeChildOnSurface, E.PlaceChildOnSurfaceFn>>,
+  Check<Identical<typeof import('../../core/model/proportions').LIMB_TEMPLATE, E.LimbTemplate>>,
+  Check<SameSignature<typeof import('../../core/model/proportions').readProportions, E.ReadProportionsFn>>,
+  Check<SameSignature<typeof import('../../core/model/proportions').applyProportions, E.ApplyProportionsFn>>,
+  Check<SameSignature<typeof import('../../core/model/scale').scaleModel, E.ScaleModelFn>>,
+];
+export type StateEntryPoints = [
+  Check<SameSignature<typeof import('../../state/projectStore').commitModelRevision, E.CommitModelRevisionFn>>,
+  Check<SameSignature<typeof import('../../workers/decode').decodeImage, E.DecodeImageFn>>,
+  Check<SameSignature<typeof import('../../workers/rpc').yieldMacrotask, E.YieldMacrotaskFn>>,
+  Check<SameSignature<typeof import('../../workers/rpc').createJobGate, E.CreateJobGateFn>>,
+  Check<Identical<typeof import('../../workers/rpc').latestWins, E.LatestWinsFn>>,
+  Check<SameSignature<typeof import('../../core/kernel/geom/manifold').getManifold, E.GetManifoldFn>>,
 ];
 
 // ---- T1
@@ -57,8 +95,10 @@ export type T2EntryPoints = [
   Check<SameSignature<typeof import('../../core/pattern/text').renderPatternText, E.RenderPatternTextFn>>,
   Check<SameSignature<typeof import('../../core/pattern/skill').computeSkill, E.ComputeSkillFn>>,
   Check<SameSignature<typeof import('../../core/pattern/notes').notesFor, E.NotesForFn>>,
-  Check<SameSignature<typeof import('../../core/pattern/terminology').abbreviationsFor, E.AbbreviationsForFn>>,
-  Check<SameSignature<typeof import('../../core/pattern/terminology').specialStitchesFor, E.SpecialStitchesForFn>>,
+  // Design v1.4 added the optional `decMethod` parameter; T2.2 adds it to the implementations, then integration
+  // turns these two back into SameSignature checks (tasks in docs/tracks/integration-s1.md).
+  Check<PendingSignature<typeof import('../../core/pattern/terminology').abbreviationsFor, E.AbbreviationsForFn>>,
+  Check<PendingSignature<typeof import('../../core/pattern/terminology').specialStitchesFor, E.SpecialStitchesForFn>>,
   Check<SameProps<typeof import('../../ui/pattern/PatternView').PatternView, U.PatternViewProps>>,
   Check<SameProps<typeof import('../../ui/pattern/MaterialsView').MaterialsView, U.MaterialsViewProps>>,
 ];
@@ -70,7 +110,13 @@ export type T3EntryPoints = [Check<SameSignature<typeof import('../../core/recon
 export type T4EntryPoints = [Check<SameSignature<typeof import('../../core/ami/generate').generateAmigurumi, E.GenerateAmigurumiFn>>];
 
 // ---- T6
-export type T6EntryPoints = [Check<SameSignature<typeof import('../../ui/shape/placement').renderPlacementImage, E.RenderPlacementImageFn>>];
+export type T6EntryPoints = [
+  Check<SameSignature<typeof import('../../ui/shape/placement').renderPlacementImage, E.RenderPlacementImageFn>>,
+  Check<SameProps<typeof import('../../ui/shape/ShapeTab').ShapeTab, U.ShapeTabProps>>,
+  Check<SameProps<typeof import('../../ui/shape/Viewport3D').Viewport3D, U.ViewportProps>>,
+  Check<SameProps<typeof import('../../ui/shape/YarnSizePanel').YarnSizePanel, U.YarnSizePanelProps>>,
+];
+export type T2TabEntryPoints = [Check<SameProps<typeof import('../../ui/pattern/PatternTab').PatternTab, U.PatternTabProps>>];
 
 // ---- T7
 export type T7EntryPoints = [Check<SameSignature<typeof import('../../core/importer/index').importInputs, E.ImportInputsFn>>];
@@ -119,5 +165,12 @@ export type GuardSelfTests = [
   // @ts-expect-error a component with one prop missing
   Check<SameProps<(props: Omit<U.PatternViewProps, 'highlight'>) => null, U.PatternViewProps>>,
   Check<SameProps<(props: U.PatternViewProps) => null, U.PatternViewProps>>,
+  Check<PendingSignature<(req: Req) => Res, Run>>,
+  // @ts-expect-error a pending signature still needs the frozen result
+  Check<PendingSignature<(req: Req) => Res | undefined, Run>>,
+  // @ts-expect-error and cannot take a parameter the frozen type does not pass
+  Check<PendingSignature<(req: Req, gate: Gate, more: number) => Res, Run>>,
+  // @ts-expect-error nor be typed `any`
+  Check<PendingSignature<any, Run>>,
   Check<SameProps<ComponentType<U.MaterialsViewProps>, U.MaterialsViewProps>>,
 ];

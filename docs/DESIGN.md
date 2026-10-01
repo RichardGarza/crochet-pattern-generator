@@ -2252,12 +2252,13 @@ interface UnitsDecision { rawHeight: number; readings: { unit: LengthUnit; heigh
   chosen: LengthUnit | 'normalized'; reason: 'spec' | 'gltf-extras-ratio' | 'expected-height' | 'stage-header'
   | 'small-bbox' | 'user'; confirm: boolean }            // confirm = ask the user, showing both readings
 interface Repair { code: 'attach-inferred' | 'mirror-inferred' | 'units' | 'ground' | 'axes' | 'radians' | 'color'
-                       | 'dims-clamped' | 'id' | 'unknown-key' | 'feature-dropped' | 'limits' | 'versions' | 'spec-rebuilt';
+                       | 'dims-clamped' | 'id' | 'unknown-key' | 'feature-dropped' | 'limits' | 'versions' | 'spec-rebuilt'
+                       | 'type-aliased' | 'mirror-removed' | 'part-added';
                    message: string; part?: string; data?: Record<string, unknown> }   // one "auto-corrected" chip each
 interface ImportResult {
   ok: boolean; model?: CrochetModelV1; meshes?: Record<string, ColoredMesh>;     // mesh parts, keyed by meshRef
   carrier: 'text' | 'json' | 'html' | 'standalone-html' | 'zip' | 'tar' | 'glb' | 'gltf' | 'obj' | 'ply' | 'stl' | 'image';
-  dialect: 'canonical-1' | 'cd-observed-2026-09' | 'geometry-only';
+  dialect: 'canonical-1' | 'cd-observed-2026-09' | 'geometry-only' | 'none';   // 'none' when nothing was imported
   confidence: 'high' | 'medium' | 'low'; repairs: Repair[]; warnings: Issue[]; fingerprint: string[];
   candidates?: SpecCandidate[];                          // every spec found in an archive (§3.7.2)
   units?: UnitsDecision;                                 // geometry carriers (§3.7.5)
@@ -2724,7 +2725,8 @@ The crochet-model types are §3.5.1 (`types/model.ts`); the importer API is §3.
 export type Inches = number; export type Cyc = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 export type Hand = 'right' | 'left'; export type Terms = 'us' | 'uk'; export type UnitPref = 'in' | 'cm';
 export interface Issue { code: string; severity: 'error' | 'warn' | 'info'; message: string;
-  where?: { piece?: string; line?: number; row?: number; col?: number; part?: string } }
+  where?: { piece?: string; line?: number; row?: number; col?: number; part?: string;
+            view?: string } }                           // view = PhotoView.id (§2.9.1–2.9.2)
 
 // ---- types/gauge.ts
 export type Technique2D = 'sc_graphgan' | 'sc_tapestry' | 'sc_tapestry_round' | 'c2c' | 'hdc_graphgan' | 'mosaic_overlay';
@@ -2737,7 +2739,8 @@ export interface GaugeSpec {
   carried?: number; yarnUnder?: boolean; lscCalibratedIn?: number;
 }
 export interface ResolvedGauge { cell: Cell; wSc: Inches; hSc: Inches; lscIn: number; hookMm: number; stretch: number;
-  tol: number; source: 'default' | 'swatch' }                          // hSc = sc row height (border rounds, §2.7.10)
+  tol: number; source: 'default' | 'swatch';                           // hSc = sc row height (border rounds, §2.7.10)
+  lscCalibrated?: boolean }                                            // lscCalibratedIn set lscIn (§2.8: band ±5%)
 
 // ---- types/yarn.ts
 export interface Yarn { id: string; lineId: string; brand: string; line: string; name: string; number?: string; hex: string;
@@ -2746,7 +2749,8 @@ export interface YarnLine { id: string; brand: string; line: string; cyc: Cyc; s
 
 // ---- types/chart.ts
 export type ImageKind = 'photo' | 'flat' | 'pixel';
-export interface CropRect { x: number; y: number; w: number; h: number; rotate: 0 | 90 | 180 | 270; flipX: boolean }
+export interface CropRect { x: number; y: number; w: number; h: number;   // decoded-image px before the rotation
+  rotate: 0 | 90 | 180 | 270; flipX: boolean }        // rotate clockwise (CSS); flipX mirrors after rotating (§2.3.1)
 export interface PaletteEntry { code: string; hex: string; name: string; yarn?: Yarn; deltaE00?: number; protected?: boolean;
   role?: 'color' | 'background' | 'override' }          // 'override' = re-inserted from a hand edit (§5.5.5)
 export interface ChartGrid { cols: number; rows: number; labels: Uint8Array<ArrayBuffer> /* row-major, row 0 = top */; palette: PaletteEntry[] }
@@ -2770,13 +2774,18 @@ export interface RepeatInfo { lattice?: { px: number; py: number; match: number;
   verticalBlocks: { from: number; to: number; repeatOf: [number, number] }[]; stripePeriod?: number;
   symmetryCol?: number; spotMotif?: { count: number; label: number } }
 export interface ChartRequest { jobId: number; image: Blob | RgbaImage;   // Blob decoded by workers/decode.ts (§2.3.1)
-  crop?: CropRect; settings: ChartSettings; gauge: ResolvedGauge; edits?: ChartEdits; lines: YarnLine[]; stash: Yarn[] }
+  crop?: CropRect; settings: ChartSettings; gauge: ResolvedGauge; edits?: ChartEdits; lines: YarnLine[]; stash: Yarn[];
+  sourceId?: string;                                    // SourceImage.asset.sha256: the worker caches the decoded image by it
+  backgroundEdits?: { w: number; h: number; data: Uint8Array<ArrayBuffer> } }   // brushed background (§2.3.2): analysis grid
+                                                        // of the uncropped source, 0 automatic · 1 background · 2 subject
 export interface ChartResult { jobId: number; grid: ChartGrid; kind: ImageKind; source: { w: number; h: number };
   size: { cols: number; rows: number; borderRounds: number; actualW: Inches; actualH: Inches; aspectErr: number };
   metrics: ChartMetrics; repeats: RepeatInfo; issues: Issue[]; hash: string }
 
 // ---- types/pattern.ts
 export type Loop = 'both' | 'BLO' | 'FLO';
+// Op: `loop` absent = both loops (generators leave 'both' out); `into: 'flo2below'` fixes the front loop (`loop` left
+// out; 'FLO' reads the same); a new optional field needs the kernel change that prints it (§6.1 rule 7)
 export type Op =
   | { k: 'st'; st: 'sc' | 'hdc' | 'dc' | 'slst'; loop?: Loop; color?: string; into?: 'flo2below' }
   | { k: 'inc'; n: 2 | 3; color?: string; loop?: Loop }
@@ -2817,12 +2826,14 @@ export interface PatternDoc {
 export type Vec3 = [number, number, number];
 export interface RgbaImage { w: number; h: number; data: Uint8ClampedArray<ArrayBuffer> }   // RGBA8, orientation applied (§2.3.1)
 export interface ColoredMesh { positions: Float32Array<ArrayBuffer>; indices: Uint32Array<ArrayBuffer>; labels: Uint8Array<ArrayBuffer> /* 255 unknown */; partId?: Uint8Array<ArrayBuffer> }
-export interface SdfVolume { data: Int16Array<ArrayBuffer> /* voxel/256 units, positive inside */; dims: [number, number, number];
-  origin: Vec3; voxel: Inches }                         // stored per recon mesh part as asset `sdf:<meshRef>` (§2.9.7)
+export interface SdfVolume { data: Int16Array<ArrayBuffer> /* voxel/256 units, positive inside, saturating at ±127.996 voxels */;
+  dims: [number, number, number]; origin: Vec3; voxel: Inches }   // sample (x, y, z) = origin + voxel·(x, y, z), x fastest;
+                                                        // stored per recon mesh part as asset `sdf:<meshRef>` (§2.9.7)
 export type ViewLabel = 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom';
 export interface PhotoView { id: string; imageKey: string; label: ViewLabel; maskKey?: string;
   labelsKey?: string;                                   // asset: CPGL header + Int8 labels into photoPalette (§2.9.6)
-  align: { scale: number; dx: number; dy: number; rot90: 0 | 1 | 2 | 3; mirror: boolean } }
+  align: { scale: number; dx: number; dy: number; rot90: 0 | 1 | 2 | 3; mirror: boolean } }   // §2.9.2: dx, dy in object
+                                                        // heights along image right/up; scale > 1 enlarges; rot90 clockwise
 export interface ReconSettings { N: 64 | 128 | 192; kappa: number;
   photoView: 'front' | 'left' | 'right' | 'top';        // single image: what the photo shows (F3 step 1, §2.9.3)
   backShape: 'mirror' | 'inflate';                      // single image: back depth (§2.9.4)
@@ -2873,7 +2884,8 @@ export interface ImportRecord { id: string; at: string; fileName: string; carrie
 export interface ProjectDoc {
   schema: 'crochet-project'; version: 1; id: string; name: string; createdAt: string; updatedAt: string; rev: number;
   mode: '2d' | '3d'; units: UnitPref; terms: Terms; hand: Hand; gauge: GaugeSpec; sources: SourceImage[];
-  twoD?: { sourceId: string; crop?: CropRect; settings: ChartSettings; edits: ChartEdits };
+  twoD?: { sourceId: string; crop?: CropRect; settings: ChartSettings; edits: ChartEdits;
+           backgroundEdits?: AssetRef };               // brush PNG (§2.3.2): red 0 automatic · 1 background · 2 subject
   threeD?: { origin: 'multiview' | 'single' | 'claude-design' | 'describe'; model?: CrochetModelV1;   // absent until the first build or import
              meshAssets: Record<string, AssetRef>; revisions: ModelRevision[]; views: PhotoView[];
              photoPalette?: { hex: string; name?: string }[];   // the photos' joint palette (§2.9.6)
@@ -2889,7 +2901,8 @@ export interface Chart2dApi extends Cancellable { run(r: ChartRequest): Promise<
   buildPattern(r: { chart: ChartGrid; settings: ChartSettings; gauge: ResolvedGauge; terms: Terms; dialect: 'compact' | 'verbose';
                     title: string }): Promise<PatternDoc> }
 export interface GeomApi extends Cancellable {
-  mask(image: Blob | RgbaImage, o?: { keepHoles?: boolean }): Promise<{ mask: Uint8Array<ArrayBuffer>; w: number; h: number }>;
+  mask(image: Blob | RgbaImage, o?: { keepHoles?: boolean }): Promise<{ mask: Uint8Array<ArrayBuffer>; w: number; h: number;
+    raw?: Uint8Array<ArrayBuffer>; scale?: number; issues?: Issue[] }>;   // raw = before refineMask; scale = mask px per photo px
   build(r: ReconRequest): Promise<ReconResult>;
   projectColors(r: { jobId: number; model: CrochetModelV1; meshes: Record<string, ColoredMesh>;
     views: { view: PhotoView; labels: Int8Array<ArrayBuffer>; mask: Uint8Array<ArrayBuffer>; w: number; h: number }[];   // read from labelsKey/maskKey
@@ -2903,16 +2916,18 @@ export interface MlApi extends Cancellable { status(): Promise<{ webgpu: boolean
   samMask(points: { x: number; y: number; positive: boolean }[]): Promise<{ mask: Uint8Array<ArrayBuffer>; w: number; h: number }> }
 export interface MeshApi extends Cancellable { pathB(r: { jobId: number; mesh: ColoredMesh; partId: string; frame: Partial<PieceFrame>; gauge: ResolvedGauge;
   settings: AmiSettings }): Promise<RoundsResult | { needsSplit: { level: number; loops: number[] } }>;
-  merge(parts: { part: Part; mesh?: ColoredMesh; sdf?: SdfVolume }[], o?: { N?: number }):   // §2.9.8, editor ⌘J;
+  merge(parts: { part: Part; mesh?: ColoredMesh; sdf?: SdfVolume }[], o?: { N?: number; paletteIds?: string[] }):   // §2.9.8, ⌘J;
     Promise<{ mesh: ColoredMesh; sdf: SdfVolume; volumeIn3: number; unionVolumeIn3: number; genus: number }>;
-                                                        // geometry + labels only; T6's recipe picks the kept id/attach
+                                                        // geometry + labels only, model space; T6 picks the kept id/attach
   voxelize(mesh: ColoredMesh, N: number, o?: { storedSdf?: SdfVolume }): Promise<{ volumeId: string }>;  // narrow band, §2.9.8
   sculpt(volumeId: string, stroke: { tool: 'inflate' | 'deflate' | 'smooth' | 'flatten'; points: Vec3[]; radius: number;
-    strength: number; mirrorX: boolean }): Promise<{ mesh: ColoredMesh; undoId: string }>;
+    strength: number; mirrorX: boolean; mirrorPlane?: { point: Vec3; normal: Vec3 } }):   // default plane x = 0 of the volume
+    Promise<{ mesh: ColoredMesh; undoId: string }>;
   undoSculpt(undoId: string): Promise<{ mesh: ColoredMesh }>;
+  redoSculpt?(undoId: string): Promise<{ mesh: ColoredMesh }>;
   cut(volumeId: string, plane: { point: Vec3; normal: Vec3 }): Promise<[ColoredMesh, ColoredMesh]>;
   fit(mesh: ColoredMesh): Promise<{ type: PartType; dims: Dims; position: Vec3; rotationDeg: Vec3; residual: number }>;
-  fromPart(part: Part): Promise<ColoredMesh> }
+  fromPart(part: Part, o?: { paletteIds?: string[]; N?: number }): Promise<ColoredMesh> }
 export interface AmiApi extends Cancellable { generate(r: AmiRequest): Promise<AmiResult> }
 export interface ImportApi extends Cancellable { importInputs(inputs: ImportInput[], ctx?: ImportContext): Promise<ImportResult> }
 ```
@@ -2979,7 +2994,7 @@ export function nearestYarn(hex: Hex, lineIds: string[]): { yarn: Yarn; deltaE00
 export function buildPattern2D(i: { chart: ChartGrid; settings: ChartSettings; gauge: ResolvedGauge; terms: Terms;
   dialect: 'compact' | 'verbose'; title: string }): PatternDoc;   // border rounds from settings.border + gauge.hSc (§2.7.10)
 export function renderLine(line: Line, o: { dialect: 'compact' | 'verbose'; terms: Terms; hand: Hand;
-  decMethod?: 'invdec' | 'sc2tog' }): string;
+  decMethod?: 'invdec' | 'sc2tog'; docKind?: '2d' | '3d' }): string;   // lines print as written for PatternDoc.hand
 // T2 — core/techniques/export.ts, core/pattern/{text,skill,notes,terminology}.ts: T8's export dialog and T4's 3D
 // PatternDoc call these; T8 never formats pattern text or chart files itself
 export function exportChart(grid: ChartGrid, kind: 'png1px' | 'csv' | 'json'): Blob;     // png via core/kernel/png.ts
@@ -2990,9 +3005,9 @@ export interface SkillInput { colors: number; meanChangesPerLine: number; techni
 export function computeSkill(i: SkillInput): PatternDoc['skill'];                        // §2.8 skill points
 export function notesFor(kind: 'flat-graph' | 'tapestry' | 'tapestry-round' | 'c2c' | 'mosaic' | 'border' | 'amigurumi',
   ctx: { terms: Terms; hand: Hand; corner?: string; arrows?: string[]; joinedRounds?: boolean; leanStPerRnd?: number;
-         roundLean?: ChartSettings['roundLean'] }): string[];
-export function abbreviationsFor(lines: Line[], terms: Terms): PatternDoc['abbreviations'];
-export function specialStitchesFor(lines: Line[], terms: Terms): PatternDoc['specialStitches'];
+         roundLean?: ChartSettings['roundLean']; rounds?: number; stitch?: 'sc' | 'hdc' }): string[];
+export function abbreviationsFor(lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog'): PatternDoc['abbreviations'];
+export function specialStitchesFor(lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog'): PatternDoc['specialStitches'];
 // T3 — core/recon/fit.ts
 export interface FitResult { type: PartType; dims: Dims; position: Vec3; rotationDeg: Vec3; residual: number }
 export function fitPart(mesh: ColoredMesh, o?: { tolerance?: number }): FitResult;

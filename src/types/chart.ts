@@ -7,6 +7,10 @@ import type { Yarn, YarnLine } from './yarn';
 
 export type ImageKind = 'photo' | 'flat' | 'pixel';
 
+/**
+ * In decoded-image pixels before the rotation (rounded to whole pixels, clipped); `rotate` turns clockwise
+ * (CSS); `flipX` mirrors after rotating (§2.3.1).
+ */
 export interface CropRect {
   x: number;
   y: number;
@@ -106,6 +110,13 @@ export interface ChartRequest {
   edits?: ChartEdits;
   lines: YarnLine[];
   stash: Yarn[];
+  /** Content identity of the source (`SourceImage.asset.sha256`): the worker caches the decoded image by it. */
+  sourceId?: string;
+  /**
+   * Brushed background (§2.3.2), decoded from `twoD.backgroundEdits`: one byte per pixel of the analysis grid of
+   * the uncropped source (long side ≤ 2048, §2.3.1); 0 = automatic, 1 = background, 2 = subject.
+   */
+  backgroundEdits?: { w: number; h: number; data: Uint8Array<ArrayBuffer> };
 }
 
 export interface ChartResult {

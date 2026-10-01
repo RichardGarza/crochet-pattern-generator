@@ -60,7 +60,17 @@ export interface ProjectDoc {
   hand: Hand;
   gauge: GaugeSpec;
   sources: SourceImage[];
-  twoD?: { sourceId: string; crop?: CropRect; settings: ChartSettings; edits: ChartEdits };
+  twoD?: {
+    sourceId: string;
+    crop?: CropRect;
+    settings: ChartSettings;
+    edits: ChartEdits;
+    /**
+     * Background brush (§2.3.2): a PNG (`encodePng`) on the analysis grid of the uncropped source whose red
+     * channel holds 0 (automatic), 1 (background) or 2 (subject). Absent = no brushing.
+     */
+    backgroundEdits?: AssetRef;
+  };
   threeD?: {
     origin: 'multiview' | 'single' | 'claude-design' | 'describe';
     /**

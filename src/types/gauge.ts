@@ -33,4 +33,6 @@ export interface ResolvedGauge {
   stretch: number;
   tol: number;
   source: 'default' | 'swatch';
+  /** True when `GaugeSpec.lscCalibratedIn` set `lscIn` (§2.8: yardage band ±5%). */
+  lscCalibrated?: boolean;
 }

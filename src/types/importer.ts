@@ -53,7 +53,10 @@ export interface Repair {
     | 'feature-dropped'
     | 'limits'
     | 'versions'
-    | 'spec-rebuilt';
+    | 'spec-rebuilt'
+    | 'type-aliased'
+    | 'mirror-removed'
+    | 'part-added';
   message: string;
   part?: string;
   data?: Record<string, unknown>;
@@ -65,7 +68,8 @@ export interface ImportResult {
   /** Mesh parts, keyed by meshRef. */
   meshes?: Record<string, ColoredMesh>;
   carrier: 'text' | 'json' | 'html' | 'standalone-html' | 'zip' | 'tar' | 'glb' | 'gltf' | 'obj' | 'ply' | 'stl' | 'image';
-  dialect: 'canonical-1' | 'cd-observed-2026-09' | 'geometry-only';
+  /** 'none' when nothing was imported (`ok: false`). */
+  dialect: 'canonical-1' | 'cd-observed-2026-09' | 'geometry-only' | 'none';
   confidence: 'high' | 'medium' | 'low';
   repairs: Repair[];
   warnings: Issue[];

@@ -129,9 +129,10 @@ export type BuildPattern2DFn = (i: {
   dialect: 'compact' | 'verbose';
   title: string;
 }) => PatternDoc;
+/** Lines are written for `PatternDoc.hand` and printed as written; `docKind` = `PatternDoc.kind` (chart vs amigurumi round). */
 export type RenderLineFn = (
   line: Line,
-  o: { dialect: 'compact' | 'verbose'; terms: Terms; hand: Hand; decMethod?: 'invdec' | 'sc2tog' },
+  o: { dialect: 'compact' | 'verbose'; terms: Terms; hand: Hand; decMethod?: 'invdec' | 'sc2tog'; docKind?: '2d' | '3d' },
 ) => string;
 
 // ---- T2 — core/techniques/export.ts, core/pattern/{text,skill,notes,terminology}.ts: T8's export dialog and
@@ -163,10 +164,15 @@ export type NotesForFn = (
     joinedRounds?: boolean;
     leanStPerRnd?: number;
     roundLean?: ChartSettings['roundLean'];
+    /** Rounds of a tapestry round chart: the §2.7.5 drift sentence. */
+    rounds?: number;
+    /** The graph's stitch: "Each square = 1 hdc", "Ch 2". */
+    stitch?: 'sc' | 'hdc';
   },
 ) => string[];
-export type AbbreviationsForFn = (lines: Line[], terms: Terms) => PatternDoc['abbreviations'];
-export type SpecialStitchesForFn = (lines: Line[], terms: Terms) => PatternDoc['specialStitches'];
+/** `decMethod`: the decrease the pattern uses (`AmiSettings.decMethod`), so the other is not listed. */
+export type AbbreviationsForFn = (lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog') => PatternDoc['abbreviations'];
+export type SpecialStitchesForFn = (lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog') => PatternDoc['specialStitches'];
 
 // ---- T3 — core/recon/fit.ts
 

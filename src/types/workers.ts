@@ -32,7 +32,11 @@ export interface Chart2dApi extends Cancellable {
 
 /** geom.worker (T3). */
 export interface GeomApi extends Cancellable {
-  mask(image: Blob | RgbaImage, o?: { keepHoles?: boolean }): Promise<{ mask: Uint8Array<ArrayBuffer>; w: number; h: number }>;
+  /** `raw` = the mask before `refineMask` (brush edits re-run it); `scale` = mask px per photo px; `issues` = §2.9.1 guards. */
+  mask(
+    image: Blob | RgbaImage,
+    o?: { keepHoles?: boolean },
+  ): Promise<{ mask: Uint8Array<ArrayBuffer>; w: number; h: number; raw?: Uint8Array<ArrayBuffer>; scale?: number; issues?: Issue[] }>;
   build(r: ReconRequest): Promise<ReconResult>;
   /** "Apply photo colors", §2.9.6. */
   projectColors(r: {
@@ -72,21 +76,35 @@ export interface MeshApi extends Cancellable {
     gauge: ResolvedGauge;
     settings: AmiSettings;
   }): Promise<RoundsResult | { needsSplit: { level: number; loops: number[] } }>;
-  /** §2.9.8, editor ⌘J; geometry + labels only — T6's recipe picks the kept id and attach. */
+  /**
+   * §2.9.8, editor ⌘J; geometry + labels only — T6's recipe picks the kept id and attach. Mesh and sdf are in model
+   * space for an unrotated part (T5's `recenterMesh` gives the bbox-centered form). `paletteIds` = the model palette's
+   * ids, so primitives' colors become vertex labels.
+   */
   merge(
     parts: { part: Part; mesh?: ColoredMesh; sdf?: SdfVolume }[],
-    o?: { N?: number },
+    o?: { N?: number; paletteIds?: string[] },
   ): Promise<{ mesh: ColoredMesh; sdf: SdfVolume; volumeIn3: number; unionVolumeIn3: number; genus: number }>;
   /** Narrow band, §2.9.8. */
   voxelize(mesh: ColoredMesh, N: number, o?: { storedSdf?: SdfVolume }): Promise<{ volumeId: string }>;
   sculpt(
     volumeId: string,
-    stroke: { tool: 'inflate' | 'deflate' | 'smooth' | 'flatten'; points: Vec3[]; radius: number; strength: number; mirrorX: boolean },
+    stroke: {
+      tool: 'inflate' | 'deflate' | 'smooth' | 'flatten';
+      points: Vec3[];
+      radius: number;
+      strength: number;
+      mirrorX: boolean;
+      /** The model's symmetry plane in the volume's frame; default x = 0 of that frame. */
+      mirrorPlane?: { point: Vec3; normal: Vec3 };
+    },
   ): Promise<{ mesh: ColoredMesh; undoId: string }>;
   undoSculpt(undoId: string): Promise<{ mesh: ColoredMesh }>;
+  /** Re-applies the stroke `undoSculpt(undoId)` took back (⇧⌘Z). */
+  redoSculpt?(undoId: string): Promise<{ mesh: ColoredMesh }>;
   cut(volumeId: string, plane: { point: Vec3; normal: Vec3 }): Promise<[ColoredMesh, ColoredMesh]>;
   fit(mesh: ColoredMesh): Promise<{ type: PartType; dims: Dims; position: Vec3; rotationDeg: Vec3; residual: number }>;
-  fromPart(part: Part): Promise<ColoredMesh>;
+  fromPart(part: Part, o?: { paletteIds?: string[]; N?: number }): Promise<ColoredMesh>;
 }
 
 /** ami.worker (T4). */

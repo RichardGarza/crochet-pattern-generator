@@ -7,6 +7,11 @@ import type { Yarn } from './yarn';
 
 export type Loop = 'both' | 'BLO' | 'FLO';
 
+/**
+ * `loop` absent = both loops ('both' is the default; generators leave it out). `into: 'flo2below'` fixes the
+ * front loop: generators leave `loop` out on it ('FLO' is accepted as the same op). A new optional field needs
+ * the kernel change that prints it (§6.1 rule 7).
+ */
 export type Op =
   | { k: 'st'; st: 'sc' | 'hdc' | 'dc' | 'slst'; loop?: Loop; color?: string; into?: 'flo2below' }
   | { k: 'inc'; n: 2 | 3; color?: string; loop?: Loop }

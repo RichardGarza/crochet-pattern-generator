@@ -281,9 +281,12 @@ export function createWorkerClient(o: { spawn?: SpawnWorker } = {}): WorkerClien
       voxelize: (m, n, options) => mesh.call((w) => w.voxelize(m, n, options)),
       sculpt: (volumeId, stroke) => mesh.call((w) => w.sculpt(volumeId, stroke)),
       undoSculpt: (undoId) => mesh.call((w) => w.undoSculpt(undoId)),
+      // Optional in MeshApi (design v1.4): a worker without it rejects the call like any unknown method.
+      redoSculpt: (undoId) =>
+        mesh.call((w) => w.redoSculpt?.(undoId) ?? Promise.reject(new Error('MeshApi.redoSculpt is not available in this worker'))),
       cut: (volumeId, plane) => mesh.call((w) => w.cut(volumeId, plane)),
       fit: (m) => mesh.call((w) => w.fit(m)),
-      fromPart: (part) => mesh.call((w) => w.fromPart(part)),
+      fromPart: (part, options) => mesh.call((w) => w.fromPart(part, options)),
     },
     ami: {
       generate: amiJobs.channel<AmiRequest, AmiResult>((r) => ami.call((w) => w.generate(r))),
