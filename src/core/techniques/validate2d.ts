@@ -468,6 +468,9 @@ export function rotationsOf(base: ArrayLike<number>, got: readonly number[]): nu
   return out.sort((a, b) => a - b);
 }
 
+/** The largest lean (st per round) `inferRoundLean` looks for. */
+export const LEAN_LIMIT = 8;
+
 /**
  * The lean the rounds were written with, read from the rounds when not given: `turn` when a round turns or is
  * WS; otherwise `preskew` with the smallest rate whose shifts make every round its chart row, or `note`.
@@ -487,19 +490,26 @@ export function inferRoundLean(grid: ChartGrid, hand: Hand, lines: readonly Line
     sets.push({ k: line.n, s: rotationsOf(base, got) });
   }
   if (sets.every((x) => x.s.length === 0 || x.s.includes(0))) return { mode: 'note', stPerRnd: 0.5 };
-  const fits = (p: number): boolean => sets.every((x) => x.s.length === 0 || x.s.includes(((roundHalfUp(p * (x.k - 1)) % C) + C) % C));
-  const last = [...sets].reverse().find((x) => x.s.length > 0 && !x.s.includes(0));
-  if (last !== undefined && last.k >= 2) {
-    const candidates: number[] = [];
-    for (const s of last.s.slice(0, 4)) {
-      for (let m = -2; m <= 2; m++) {
-        const t = s + m * C;
-        for (let j = 0; j <= 10; j++) candidates.push((t - 0.5 + j / 10.0001) / (last.k - 1));
+  // The rates p with roundHalfUp(p·(k − 1)) ≡ s (mod C) for an s of every round: an intersection of intervals,
+  // searched within |p| ≤ LEAN_LIMIT st per round.
+  let intervals: [number, number][] = [[-LEAN_LIMIT, LEAN_LIMIT]];
+  for (const { k, s } of sets) {
+    if (k < 2 || s.length === 0 || s.length === C) continue;
+    const allowed: [number, number][] = [];
+    for (const shift of s) {
+      const span = LEAN_LIMIT * (k - 1);
+      for (let t = shift - Math.ceil((span + shift) / C) * C; t <= span + C; t += C) {
+        allowed.push([(t - 0.5) / (k - 1), (t + 0.5) / (k - 1)]);
       }
     }
-    candidates.sort((a, b) => Math.abs(a) - Math.abs(b) || a - b);
-    for (const p of candidates) if (fits(p)) return { mode: 'preskew', stPerRnd: p };
+    const next: [number, number][] = [];
+    for (const [a, b] of intervals) for (const [c, d] of allowed) if (Math.max(a, c) < Math.min(b, d)) next.push([Math.max(a, c), Math.min(b, d)]);
+    intervals = next;
+    if (intervals.length === 0) break;
   }
+  const mids = intervals.map(([a, b]) => (a + b) / 2).sort((x, y) => Math.abs(x) - Math.abs(y) || x - y);
+  const fits = (p: number): boolean => sets.every((x) => x.s.length === 0 || x.s.includes(((roundHalfUp(p * (x.k - 1)) % C) + C) % C));
+  for (const p of mids) if (fits(p)) return { mode: 'preskew', stPerRnd: p };
   return { mode: 'note', stPerRnd: 0.5 };
 }
 
@@ -594,9 +604,23 @@ function roundRules(i: Validate2DInput, grid: ChartGrid, lines: readonly Line[],
   return issues;
 }
 
+/** The border setting with its color as the code the doc uses (a materials line with that yarn or hex; unset: A). */
+function borderSettingOf(doc: PatternDoc, border: ChartSettings['border'] | undefined): { widthIn: number; color?: string } | undefined {
+  if (border === undefined || typeof border !== 'object') return undefined;
+  const ref = border.color;
+  const materials = Array.isArray(doc.materials) ? doc.materials : [];
+  let code: string | undefined;
+  if (ref === undefined) code = doc.chart?.grid.palette.find((p) => p.code === 'A')?.code ?? doc.chart?.grid.palette[0]?.code;
+  else {
+    const byYarn = ref.yarnId === undefined ? undefined : materials.find((m) => m.yarn?.id === ref.yarnId);
+    code = (byYarn ?? materials.find((m) => typeof ref.hex === 'string' && m.hex.toLowerCase() === ref.hex.toLowerCase()))?.code;
+  }
+  return code === undefined ? { widthIn: border.widthIn } : { widthIn: border.widthIn, color: code };
+}
+
 /** Options of `validateDoc2D`: the settings and gauge the pattern was built with, when known. */
 export interface ValidateDoc2DOptions {
-  settings?: Partial<Pick<ChartSettings, 'roundLean' | 'startCorner'>> & { border?: { widthIn: number; color?: string } };
+  settings?: Partial<Pick<ChartSettings, 'roundLean' | 'startCorner' | 'border'>>;
   gauge?: Pick<ResolvedGauge, 'cell' | 'wSc' | 'hSc'>;
 }
 
@@ -621,7 +645,7 @@ export function validateDoc2D(doc: PatternDoc, o: ValidateDoc2DOptions = {}): Is
         roundLean: o.settings?.roundLean,
         startCorner: o.settings?.startCorner,
         gauge: o.gauge,
-        border: o.settings?.border,
+        border: borderSettingOf(doc, o.settings?.border),
       }),
     );
   }
