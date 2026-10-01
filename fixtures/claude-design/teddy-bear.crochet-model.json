@@ -1,0 +1,385 @@
+{
+  "schema": "crochet-model",
+  "version": "1.0",
+  "units": "in",
+  "axes": {
+    "up": "+Y",
+    "front": "+Z"
+  },
+  "finishedSize": {
+    "height": 10
+  },
+  "palette": {
+    "#B07A4A": "caramel_yarn",
+    "#F2E3C6": "cream_yarn",
+    "#3B2A20": "dark_brown_yarn",
+    "#111111": "black_safety_eye"
+  },
+  "notes": "dimensions are radii (rx, ry, rz) for ellipsoids/spheres; capsule length is the straight section between hemispherical caps. Child positions/rotations are relative to the parent.",
+  "parts": [
+    {
+      "id": "body",
+      "name": "Body",
+      "type": "ellipsoid",
+      "dimensions": {
+        "rx": 2.1,
+        "ry": 2.6,
+        "rz": 1.9
+      },
+      "position": [
+        0,
+        2.6,
+        0
+      ],
+      "rotationDeg": [
+        0,
+        0,
+        0
+      ],
+      "color": "#B07A4A",
+      "parent": null
+    },
+    {
+      "id": "head",
+      "name": "Head",
+      "type": "ellipsoid",
+      "dimensions": {
+        "rx": 2.4,
+        "ry": 2.15,
+        "rz": 2.2
+      },
+      "position": [
+        0,
+        7.2,
+        0.1
+      ],
+      "rotationDeg": [
+        0,
+        0,
+        0
+      ],
+      "color": "#B07A4A",
+      "parent": null
+    },
+    {
+      "id": "muzzle",
+      "name": "Muzzle",
+      "type": "ellipsoid",
+      "dimensions": {
+        "rx": 1,
+        "ry": 0.75,
+        "rz": 0.6
+      },
+      "position": [
+        0,
+        -0.6,
+        1.8
+      ],
+      "rotationDeg": [
+        0,
+        0,
+        0
+      ],
+      "color": "#F2E3C6",
+      "parent": "head"
+    },
+    {
+      "id": "nose",
+      "name": "Nose",
+      "type": "ellipsoid",
+      "dimensions": {
+        "rx": 0.32,
+        "ry": 0.22,
+        "rz": 0.18
+      },
+      "position": [
+        0,
+        0.3,
+        0.52
+      ],
+      "rotationDeg": [
+        0,
+        0,
+        0
+      ],
+      "color": "#3B2A20",
+      "parent": "muzzle"
+    },
+    {
+      "id": "eye_l",
+      "name": "Left Eye",
+      "type": "sphere",
+      "dimensions": {
+        "r": 0.2
+      },
+      "position": [
+        0.78,
+        0.25,
+        1.92
+      ],
+      "rotationDeg": [
+        0,
+        0,
+        0
+      ],
+      "color": "#111111",
+      "parent": "head"
+    },
+    {
+      "id": "eye_r",
+      "name": "Right Eye",
+      "type": "sphere",
+      "dimensions": {
+        "r": 0.2
+      },
+      "position": [
+        -0.78,
+        0.25,
+        1.92
+      ],
+      "rotationDeg": [
+        0,
+        0,
+        0
+      ],
+      "color": "#111111",
+      "parent": "head"
+    },
+    {
+      "id": "ear_l",
+      "name": "Left Ear",
+      "type": "ellipsoid",
+      "dimensions": {
+        "rx": 0.85,
+        "ry": 0.85,
+        "rz": 0.35
+      },
+      "position": [
+        1.6,
+        1.75,
+        -0.2
+      ],
+      "rotationDeg": [
+        0,
+        0,
+        -28
+      ],
+      "color": "#B07A4A",
+      "parent": "head"
+    },
+    {
+      "id": "ear_l_inner",
+      "name": "Left Ear Inner",
+      "type": "ellipsoid",
+      "dimensions": {
+        "rx": 0.55,
+        "ry": 0.55,
+        "rz": 0.12
+      },
+      "position": [
+        0,
+        -0.05,
+        0.26
+      ],
+      "rotationDeg": [
+        0,
+        0,
+        0
+      ],
+      "color": "#F2E3C6",
+      "parent": "ear_l"
+    },
+    {
+      "id": "ear_r",
+      "name": "Right Ear",
+      "type": "ellipsoid",
+      "dimensions": {
+        "rx": 0.85,
+        "ry": 0.85,
+        "rz": 0.35
+      },
+      "position": [
+        -1.6,
+        1.75,
+        -0.2
+      ],
+      "rotationDeg": [
+        0,
+        0,
+        28
+      ],
+      "color": "#B07A4A",
+      "parent": "head"
+    },
+    {
+      "id": "ear_r_inner",
+      "name": "Right Ear Inner",
+      "type": "ellipsoid",
+      "dimensions": {
+        "rx": 0.55,
+        "ry": 0.55,
+        "rz": 0.12
+      },
+      "position": [
+        0,
+        -0.05,
+        0.26
+      ],
+      "rotationDeg": [
+        0,
+        0,
+        0
+      ],
+      "color": "#F2E3C6",
+      "parent": "ear_r"
+    },
+    {
+      "id": "arm_l",
+      "name": "Left Arm",
+      "type": "capsule",
+      "dimensions": {
+        "radius": 0.55,
+        "length": 1.9
+      },
+      "position": [
+        2,
+        3.5,
+        0.55
+      ],
+      "rotationDeg": [
+        -28,
+        0,
+        22
+      ],
+      "color": "#B07A4A",
+      "parent": null
+    },
+    {
+      "id": "arm_r",
+      "name": "Right Arm",
+      "type": "capsule",
+      "dimensions": {
+        "radius": 0.55,
+        "length": 1.9
+      },
+      "position": [
+        -2,
+        3.5,
+        0.55
+      ],
+      "rotationDeg": [
+        -28,
+        0,
+        -22
+      ],
+      "color": "#B07A4A",
+      "parent": null
+    },
+    {
+      "id": "leg_l",
+      "name": "Left Leg",
+      "type": "capsule",
+      "dimensions": {
+        "radius": 0.75,
+        "length": 1.6
+      },
+      "position": [
+        1.15,
+        0.78,
+        1.25
+      ],
+      "rotationDeg": [
+        82,
+        0,
+        -12
+      ],
+      "color": "#B07A4A",
+      "parent": null
+    },
+    {
+      "id": "foot_pad_l",
+      "name": "Left Foot Pad",
+      "type": "ellipsoid",
+      "dimensions": {
+        "rx": 0.5,
+        "ry": 0.18,
+        "rz": 0.5
+      },
+      "position": [
+        0,
+        1.4,
+        0
+      ],
+      "rotationDeg": [
+        0,
+        0,
+        0
+      ],
+      "color": "#F2E3C6",
+      "parent": "leg_l"
+    },
+    {
+      "id": "leg_r",
+      "name": "Right Leg",
+      "type": "capsule",
+      "dimensions": {
+        "radius": 0.75,
+        "length": 1.6
+      },
+      "position": [
+        -1.15,
+        0.78,
+        1.25
+      ],
+      "rotationDeg": [
+        82,
+        0,
+        12
+      ],
+      "color": "#B07A4A",
+      "parent": null
+    },
+    {
+      "id": "foot_pad_r",
+      "name": "Right Foot Pad",
+      "type": "ellipsoid",
+      "dimensions": {
+        "rx": 0.5,
+        "ry": 0.18,
+        "rz": 0.5
+      },
+      "position": [
+        0,
+        1.4,
+        0
+      ],
+      "rotationDeg": [
+        0,
+        0,
+        0
+      ],
+      "color": "#F2E3C6",
+      "parent": "leg_r"
+    },
+    {
+      "id": "tail",
+      "name": "Tail",
+      "type": "sphere",
+      "dimensions": {
+        "r": 0.45
+      },
+      "position": [
+        0,
+        1.4,
+        -1.8
+      ],
+      "rotationDeg": [
+        0,
+        0,
+        0
+      ],
+      "color": "#B07A4A",
+      "parent": null
+    }
+  ]
+}
