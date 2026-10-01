@@ -12,17 +12,19 @@ by a stitch-count validator; there are no paid or AI APIs.
 
 ## Status
 
-**In development — the app does not do anything useful yet.** The specification and research are complete; the
-code so far is the foundation ("Step 0a"):
+**In development — the app has its frame, not its features yet.** The specification and research are complete;
+Step 0 (the foundation) is nearly done:
 
 | Done | Not built yet |
 |---|---|
-| Toolchain, dependencies and configuration | The app itself: every screen, the 2D and 3D pipelines |
-| Shared types for the whole app (`src/types/`) | Gauge tables, the 3D model kernels, the pattern encoder |
-| Base kernels with tests: color math (OKLab, CIEDE2000), hashing, seeded random numbers, stable sorting, small vector math, a PNG codec | Saving, export and PDF |
-| Typed stubs for every module that is still to be written | |
+| Toolchain, dependencies and configuration; shared types for the whole app (`src/types/`) | The 2D pipeline: picture → chart → written pattern |
+| Kernels with tests: color math, hashing, PNG codec, gauge tables, geometry (marching cubes, smoothing, distance transforms), the pattern encoder and validator | The 3D pipelines: photos → 3D, the amigurumi engine, the 3D editor |
+| App state (undo/redo history, worker messaging) | The Claude Design round trip (Q&A, prompt, import) |
+| **The app shell**: start screen, project workspace with its tabs, light and dark themes, the design system | Saving (projects live only in the open browser tab for now), export, PDF |
 
-Opening the dev server shows a placeholder page. The plan and its progress are in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Opening the dev server shows the start screen. Its cards create a project and open its workspace; each tab shows
+what it will do and which work stream builds it. Projects are not saved yet: they last until the tab is closed or
+reloaded. The plan and its progress are in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Requirements
 
@@ -55,7 +57,7 @@ track worktree, the dev server never uses 5180, so it cannot touch the projects 
 npm run typecheck      # TypeScript, strict
 npm run lint           # oxlint
 npm test               # unit tests (Vitest)
-npm run e2e            # browser tests (Playwright; starts its own dev server on port 5181; no specs yet)
+npm run e2e            # browser smoke tests (Playwright; starts its own dev server on port 5181)
 ```
 
 npm refuses to run any of these on a Node older than 22.12 (`devEngines` in `package.json`), and `dev`, `build`,
@@ -74,7 +76,10 @@ any correctness finding, not only on the rules listed in `.oxlintrc.json`.
 | `docs/tracks/` | Build notes, one file per work stream |
 | `src/types/` | Shared types (frozen) |
 | `src/core/` | Pure TypeScript: algorithms that run in web workers, with their tests |
-| `src/workers/`, `src/ui/` | Web workers and screens (stubs for now) |
+| `src/workers/` | Web workers (stubs for now) |
+| `src/ui/common/`, `src/ui/shell/`, `src/app/` | The design system, the app shell, routing and the tab registry |
+| `src/ui/<feature>/` | Screens of each feature (placeholders for now) |
+| `e2e/` | Browser tests; `e2e/gallery/` shows every UI component (`/e2e/gallery/` on the dev server) |
 | `scripts/` | Tooling: Node check, photo metadata stripping, ONNX Runtime copy |
 | `fixtures/` | Test inputs, including real Claude Design exports |
 

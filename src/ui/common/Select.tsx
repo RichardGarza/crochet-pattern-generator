@@ -15,10 +15,10 @@ export interface SelectOption<T extends string = string> {
 export interface SelectProps<T extends string = string> {
   label: ReactNode;
   value: T;
-  onChange(value: T): void;
-  options: readonly SelectOption<T>[];
+  onChange(value: NoInfer<T>): void;
+  options: readonly SelectOption<NoInfer<T>>[];
   /** Options in labelled groups (instead of `options`). */
-  groups?: readonly { label: string; options: readonly SelectOption<T>[] }[];
+  groups?: readonly { label: string; options: readonly SelectOption<NoInfer<T>>[] }[];
   hint?: ReactNode;
   error?: ReactNode;
   labelHidden?: boolean;

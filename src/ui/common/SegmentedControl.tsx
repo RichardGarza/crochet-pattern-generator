@@ -19,8 +19,9 @@ export interface SegmentedControlProps<T extends string> {
   /** A visible label above the control. */
   label?: ReactNode;
   value: T;
-  onChange(value: T): void;
-  options: readonly SegmentOption<T>[];
+  onChange(value: NoInfer<T>): void;
+  // NoInfer: T comes from `value`, so string literals in `options` do not widen it to string.
+  options: readonly SegmentOption<NoInfer<T>>[];
   size?: 'sm' | 'md';
   fullWidth?: boolean;
   disabled?: boolean;

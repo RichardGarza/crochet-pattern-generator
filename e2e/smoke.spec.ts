@@ -3,7 +3,7 @@
 //   - the start screen renders with no console errors and no page errors (every test checks this);
 //   - each start card opens a workspace with the expected tabs (§5.3 registry and visibility predicates);
 //   - rename + undo / redo, the theme toggle, the keyboard path, the library card of a project;
-//   - light and dark screenshots of the start screen and of a 2D and a 3D workspace;
+//   - light and dark screenshots of the start screen, a 2D and a 3D workspace, and the component gallery;
 //   - §5.4: a progress callback passed through workers/client.ts fires in a real worker, and a nested worker
 //     (the real mesh.worker, spawned inside another worker) answers;
 //   - the cold-cache dev smoke: a dev server on an EMPTY dependency cache serves the app and spins up all six
@@ -31,10 +31,10 @@ function watchErrors(page: Page): string[] {
   return errors;
 }
 
-async function snap(page: Page, info: TestInfo, name: string): Promise<void> {
+async function snap(page: Page, info: TestInfo, name: string, o: { fullPage?: boolean } = {}): Promise<void> {
   // Let entrance transitions finish and hide the caret, so a re-run gives the same pixels.
   await page.waitForTimeout(250);
-  const png = await page.screenshot({ animations: 'disabled', caret: 'hide' });
+  const png = await page.screenshot({ animations: 'disabled', caret: 'hide', fullPage: o.fullPage });
   await info.attach(name, { body: png, contentType: 'image/png' });
   const file = path.join(SHOTS, `${name}.png`);
   if (process.env.CPG_SCREENSHOTS === '1' || !fs.existsSync(file)) {
@@ -198,6 +198,10 @@ test.describe('app shell', () => {
       await page.getByRole('tab', { name: 'Pattern' }).click();
       await expect(page.locator('[data-stub="PatternTab"]')).toBeVisible();
       await snap(page, info, `workspace-3d-${scheme}`);
+      // The design-system gallery (DEV / TEST ONLY page, e2e/gallery/): every ui/common component.
+      await page.goto('/e2e/gallery/');
+      await expect(page.getByRole('heading', { name: 'Buttons' })).toBeVisible();
+      await snap(page, info, `components-${scheme}`, { fullPage: true });
     });
   }
 

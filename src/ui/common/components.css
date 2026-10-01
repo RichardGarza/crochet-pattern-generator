@@ -1499,6 +1499,10 @@
   font-size: var(--text-md);
 }
 
+.ui-dialog__header + .ui-dialog__footer {
+  margin-top: var(--space-3);
+}
+
 .ui-dialog__body {
   flex: 1;
   overflow: auto;

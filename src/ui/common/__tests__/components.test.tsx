@@ -206,7 +206,7 @@ describe('fields', () => {
     const onSwitch = vi.fn();
     render(
       <>
-        <Select label="Yarn weight" value="4" onChange={onSelect} options={[{ value: '3', label: 'DK' }, { value: '4', label: 'Worsted' }]} />
+        <Select<string> label="Yarn weight" value="4" onChange={onSelect} options={[{ value: '3', label: 'DK' }, { value: '4', label: 'Worsted' }]} />
         <Slider label="Thickness" value={0.9} min={0.3} max={1.5} step={0.05} onChange={onSlide} format={(v) => `${Math.round(v * 100)}%`} />
         <Switch label="Border" checked={false} onChange={onSwitch} />
       </>,
@@ -228,7 +228,7 @@ describe('SegmentedControl and Tabs (keyboard)', () => {
   it('SegmentedControl is a radio group with one tab stop; arrows move and select', () => {
     function Harness() {
       const [v, setV] = useState<'us' | 'uk'>('us');
-      return <SegmentedControl<'us' | 'uk'> ariaLabel="Terms" value={v} onChange={setV} options={[{ value: 'us', label: 'US' }, { value: 'uk', label: 'UK' }]} />;
+      return <SegmentedControl ariaLabel="Terms" value={v} onChange={setV} options={[{ value: 'us', label: 'US' }, { value: 'uk', label: 'UK' }]} />;
     }
     render(<Harness />);
     const us = screen.getByRole('radio', { name: 'US' });
