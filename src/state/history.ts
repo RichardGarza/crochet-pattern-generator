@@ -23,7 +23,13 @@
 //
 // The documents are JSON-like data: plain objects, arrays and primitives (what a ProjectDoc is). Anything else
 // (a Date, a typed array, a class instance) is treated as one value, replaced as a whole when it is another
-// object. Symbol keys and non-enumerable properties are not seen.
+// object. Values are compared with Object.is (so -0 is not 0, and NaN is NaN), a key that holds undefined is
+// not a missing key, an object whose prototype changed (ordinary ↔ null-prototype) is replaced whole, and a
+// copied object keeps its prototype — so a round trip is exact by node's isDeepStrictEqual. Not seen:
+// symbol keys, non-enumerable properties, extra properties on arrays, and the difference between a hole in
+// an array and an undefined element. immer and the diff recurse once per level: a recipe on a document nested
+// more than about a thousand levels deep throws a RangeError and changes nothing (measured in node: 1 000
+// levels work; immer stops at 1 500, the diff alone at 2 500). A ProjectDoc is about ten levels deep.
 import { produce, type Draft, type Objectish, type Patch } from 'immer';
 
 /** "200 steps per session" (§4.4). */
@@ -89,9 +95,10 @@ function diffValue(base: unknown, next: unknown, path: Path, forward: Patch[], b
   if (Object.is(base, next)) return;
   if (Array.isArray(base) && Array.isArray(next)) {
     diffArray(base, next, path, forward, backward);
-  } else if (isPlainObject(base) && isPlainObject(next)) {
+  } else if (isPlainObject(base) && isPlainObject(next) && Object.getPrototypeOf(base) === Object.getPrototypeOf(next)) {
     diffObject(base, next, path, forward, backward);
   } else {
+    // another kind of value — including an ordinary object that became a null-prototype one — is replaced whole
     forward.push({ op: 'replace', path, value: next });
     backward.push({ op: 'replace', path, value: base });
   }
@@ -167,6 +174,14 @@ function setKey(target: Record<string, unknown>, key: string, value: unknown): v
   Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
 }
 
+/** A shallow copy of a plain object that keeps its prototype: `{ ...o }` would give a null-prototype object one. */
+function copyObject(node: Record<string, unknown>): Record<string, unknown> {
+  if (Object.getPrototypeOf(node) !== null) return { ...node };
+  const copy = Object.create(null) as Record<string, unknown>;
+  for (const key of Object.keys(node)) setKey(copy, key, node[key]);
+  return copy;
+}
+
 /** The index a patch names in `array`, checked: `0 … length - 1`, or up to `length` for an insertion. */
 function indexIn(array: readonly unknown[], key: string | number, patch: Patch, inserting: boolean): number {
   const index = typeof key === 'number' ? key : Number(key);
@@ -189,7 +204,7 @@ export function applyPatches<T>(doc: T, patches: readonly Patch[]): T {
     if (typeof node === 'object' && node !== null && copies.has(node)) return node as unknown[] | Record<string, unknown>;
     let copy: unknown[] | Record<string, unknown>;
     if (Array.isArray(node)) copy = node.slice() as unknown[];
-    else if (isPlainObject(node)) copy = { ...node };
+    else if (isPlainObject(node)) copy = copyObject(node);
     else throw unresolved(patch);
     copies.add(copy);
     return copy;

@@ -5,6 +5,8 @@
 //
 //   - `update(label, recipe, { coalesceKey? })` is the ONLY way to change authored data. The document is
 //     immutable (deeply frozen); a recipe edits an immer draft and the change becomes one history entry.
+//     A recipe (and a commit's `also`) only edits its draft: every action that writes this store throws when
+//     it is called from inside one, because the recipe's result would overwrite what it wrote.
 //   - `commitModelRevision` is the ONE way to replace the 3D model by a new revision (a rebuild, an import, a
 //     destructive edit): one synchronous step that carries the app-owned settings over (`carryOver`), keeps
 //     the outgoing and the new model as revision assets, appends the `ModelRevision` entries and is undone by
@@ -98,7 +100,10 @@ export type CommitOptions = Parameters<CommitModelRevisionFn>[1] & {
   /**
    * More changes for the same undo step: the import record, `qa.awaiting`, new `meshAssets` entries, the photo
    * palette. It runs after the model was replaced and before the revision is snapshotted (so the snapshot
-   * sees `meshAssets` written here). `info.rev` is the `ModelRevision.rev` the new model gets.
+   * sees `meshAssets` written here, and the model as `also` left it). `info.rev` is the `ModelRevision.rev`
+   * the new model gets — with `also` a revision is appended even when the model did not change, so a record
+   * that names `info.rev` always finds it. `also` must keep the model and must not change `threeD.revisions`
+   * (the commit throws, and nothing is changed).
    */
   also?: (draft: Draft<ProjectDoc>, info: { rev: number; report: CarryReport }) => void;
 };
@@ -381,11 +386,11 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
         history: record(s.history, result.doc, { label, coalesceKey: o.coalesceKey, patches: result.patches, inverse: result.inverse }),
         changeId: s.changeId + 1,
       };
-      if (o.assets && o.assets.length > 0) {
+      const added = (o.assets ?? []).filter(([key]) => !s.assets.has(key));
+      if (added.length > 0) {
         const assets = new Map(s.assets);
         const unsaved = new Set(s.unsavedAssetKeys);
-        for (const [key, blob] of o.assets) {
-          if (assets.has(key)) continue;
+        for (const [key, blob] of added) {
           assets.set(key, blob);
           unsaved.add(key);
         }
@@ -406,7 +411,8 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
      *      (`ModelRevision.asset` = canonical JSON of a `ModelRevisionSnapshot`);
      *   4. all of it is one history entry: one undo restores the previous model and revision list. The
      *      revision assets stay in the asset store either way.
-     * A commit that would change nothing (same model, no `also`) does nothing.
+     * A commit that would change nothing (same model, no `also`) does nothing. `rev` continues after the
+     * highest integer rev of the list.
      */
     const commit = (what: string, next: CrochetModelV1, o: CommitOptions): CarryReport => {
       guardRecipe(what);
@@ -446,7 +452,9 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
 
       const assets: (readonly [string, Blob])[] = [];
       const at = now().toISOString();
-      let rev = threeD.revisions.reduce((max, r) => Math.max(max, r.rev), 0);
+      // A per-project sequence: one more than the highest rev. Only integer revs count, so a stored document
+      // with a malformed entry (NaN, 1.5) cannot derail the numbering.
+      let rev = threeD.revisions.reduce((max, r) => (Number.isSafeInteger(r.rev) && r.rev > max ? r.rev : max), 0);
       const revisions: ModelRevision[] = [];
       if (outgoing && !threeD.revisions.some((r) => r.asset.sha256 === outgoing.ref.sha256)) {
         revisions.push({ rev: ++rev, at, source: 'edit', label: `Before: ${o.label}`, asset: outgoing.ref });
@@ -458,14 +466,20 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
         what,
         o.label,
         (draft) => {
-          const d3 = draft.threeD;
-          if (!d3) return;
+          let d3 = draft.threeD;
+          if (!d3) return; // cannot happen: doc.threeD was checked above
           d3.model = model as Draft<CrochetModelV1>;
           let committed = known;
           if (o.also) {
             o.also(draft, { rev: newRev, report });
+            // `also` may have replaced whole branches, `threeD` itself included: read them again.
+            d3 = draft.threeD;
+            if (!d3) throw new Error(`projectStore.${what}: "also" removed doc.threeD`);
             const final = d3.model as CrochetModelV1 | undefined;
             if (!final) throw new Error(`projectStore.${what}: "also" removed the model`);
+            if (diffDocuments(threeD.revisions, plain(d3.revisions)).patches.length > 0) {
+              throw new Error(`projectStore.${what}: "also" must not change threeD.revisions; old revisions are kept (§3.7.7)`);
+            }
             committed = snapshot(plain(final), plain(d3.meshAssets) as Record<string, AssetRef>);
           }
           if (!committed) return;
@@ -586,6 +600,7 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
       },
 
       endCoalescing() {
+        guardRecipe('endCoalescing');
         const s = get();
         const sealed = seal(s.history);
         if (sealed !== s.history) set({ history: sealed });
@@ -616,6 +631,7 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
       },
 
       cacheAsset(key, blob) {
+        guardRecipe('cacheAsset');
         const s = get();
         if (!s.doc || s.assets.has(key)) return;
         const assets = new Map(s.assets);
@@ -651,6 +667,7 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
       },
 
       uncacheAssets(keys) {
+        guardRecipe('uncacheAssets');
         const s = get();
         let assets: Map<string, Blob> | null = null;
         for (const key of keys) {
@@ -693,6 +710,7 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
       },
 
       beginSave() {
+        guardRecipe('beginSave');
         const s = get();
         if (!s.doc || s.savingTicket !== null || s.changeId === s.savedChangeId) return null;
         const newAssets = new Map<string, Blob>();
@@ -712,6 +730,7 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
       },
 
       markSaved(ticket, o) {
+        guardRecipe('markSaved');
         const ended = endTicket(ticket);
         const s = get();
         if (!ended || !s.doc) return false;
@@ -727,6 +746,7 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
       },
 
       markSaveFailed(ticket, error) {
+        guardRecipe('markSaveFailed');
         const s = get();
         if (s.savingTicket !== ticket.id) return false;
         commitState({ savingTicket: null, saveError: errorMessage(error) });
@@ -734,6 +754,7 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
       },
 
       rebind(ticket, o) {
+        guardRecipe('rebind');
         if (!isProjectId(o.id)) throw new TypeError(`projectStore.rebind: invalid project id ${JSON.stringify(o.id)}`);
         const ended = endTicket(ticket);
         const s = get();

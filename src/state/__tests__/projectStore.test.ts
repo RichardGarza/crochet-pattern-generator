@@ -24,6 +24,7 @@ import {
   selectUndoLabel,
   sha256Hex,
   UnsavedChangesError,
+  type CommitOptions,
   type ProjectStore,
 } from '../projectStore';
 
@@ -232,39 +233,62 @@ describe('update', () => {
     expect(docOf(store).name).toBe('ok');
   });
 
-  it('refuses to be called from inside a recipe, as do undo, redo, open, close and a model commit', async () => {
+  it('refuses every action that writes the store from inside a recipe (found in review: markSaved and endCoalescing were overwritten)', async () => {
     const store = opened();
-    store.getState().update('First', (d) => (d.name = 'first'));
+    store.getState().update('First', (d) => (d.name = 'first'), { coalesceKey: 'typing' });
+    const ticket = store.getState().beginSave();
+    if (!ticket) throw new Error('expected a ticket');
     const errors: string[] = [];
     let commit: Promise<unknown> | undefined;
-    store.getState().update('Outer', (d) => {
-      d.name = 'outer';
-      const s = store.getState();
-      for (const call of [
-        () => s.update('Inner', (x) => (x.name = 'inner')),
-        () => s.undo(),
-        () => s.redo(),
-        () => s.open(project({ id: 'p9' }), { discardUnsaved: true }),
-        () => s.close({ discardUnsaved: true }),
-        () => s.setReadOnly(true),
-      ]) {
-        try {
-          call();
-          errors.push('no error');
-        } catch (e) {
-          errors.push((e as Error).message);
+    store.getState().update(
+      'Outer',
+      (d) => {
+        d.name = 'outer';
+        const s = store.getState();
+        for (const call of [
+          () => s.update('Inner', (x) => (x.name = 'inner')),
+          () => s.undo(),
+          () => s.redo(),
+          () => s.open(project({ id: 'p9' }), { discardUnsaved: true }),
+          () => s.close({ discardUnsaved: true }),
+          () => s.setReadOnly(true),
+          () => s.endCoalescing(),
+          () => s.beginSave(),
+          () => s.markSaved(ticket, { rev: 4 }),
+          () => s.markSaveFailed(ticket, new Error('quota')),
+          () => s.rebind(ticket, { id: 'p1-copy', rev: 1 }),
+          () => s.cacheAsset('p1/cached', new Blob(['x'])),
+          () => s.uncacheAssets(['p1/cached']),
+        ]) {
+          try {
+            call();
+            errors.push('no error');
+          } catch (e) {
+            errors.push((e as Error).message);
+          }
         }
-      }
-      commit = s.commitModelRevision(model([sphere('body')]), { source: 'edit', label: 'x', carry: 'none' });
-    });
-    expect(errors).toHaveLength(6);
+        commit = s.commitModelRevision(model([sphere('body')]), { source: 'edit', label: 'x', carry: 'none' });
+      },
+      { coalesceKey: 'typing' },
+    );
+    expect(errors).toHaveLength(13);
     for (const message of errors) expect(message).toContain('called from inside a recipe');
     await expect(commit).rejects.toThrow('called from inside a recipe');
-    // the outer change went through, exactly once, and nothing else happened
-    expect(docOf(store).name).toBe('outer');
-    expect(docOf(store).id).toBe('p1');
-    expect(store.getState().history.past.map((e) => e.label)).toEqual(['First', 'Outer']);
-    expect(store.getState().readOnly).toBe(false);
+    // the outer change went through, exactly once, and nothing else happened: the run is still open (no
+    // endCoalescing), the save is still in flight (no markSaved), nothing was cached
+    const s = store.getState();
+    expect(docOf(store)).toMatchObject({ name: 'outer', id: 'p1', rev: 3 });
+    expect(s.history.past.map((e) => e.label)).toEqual(['Outer']);
+    expect(s.history.open).toBe(true);
+    expect([s.savingTicket, s.baseRev, s.readOnly, s.assets.size]).toEqual([ticket.id, 3, false, 0]);
+    // the ticket still ends normally afterwards, and the document and the base rev agree
+    expect(s.markSaved(ticket, { rev: 4 })).toBe(true);
+    expect([docOf(store).rev, store.getState().baseRev, store.getState().saveStatus]).toEqual([4, 4, 'unsaved']);
+    // a commit's `also` is part of the recipe
+    await expect(
+      store.getState().commitModelRevisionWith(model([sphere('body')]), { source: 'edit', label: 'x', carry: 'none', also: () => store.getState().endCoalescing() }),
+    ).rejects.toThrow('called from inside a recipe');
+    expect(docOf(store).threeD?.model).toBeUndefined();
   });
 
   it('lets a subscriber make a follow-up update', () => {
@@ -632,11 +656,15 @@ describe('sha256Hex', () => {
       '248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1',
     );
     const rng = mulberry32(5);
-    for (const n of [...Array.from({ length: 140 }, (_, i) => i), 255, 256, 257, 1000, 4096, 65_537, 300_000]) {
+    for (const n of [...Array.from({ length: 140 }, (_, i) => i), 255, 256, 257, 1000, 4096, 65_537, 300_000, 1 << 20, (1 << 20) + 55]) {
       const bytes = new Uint8Array(n);
       for (let i = 0; i < n; i++) bytes[i] = Math.floor(rng() * 256);
       expect(sha256Hex(bytes), `length ${n}`).toBe(nodeSha256(bytes));
     }
+    // a view into a larger buffer hashes its own bytes only
+    const big = new Uint8Array(1000).map((_, i) => (i * 131 + 7) & 255);
+    const view = big.subarray(13, 13 + 119);
+    expect(sha256Hex(view)).toBe(nodeSha256(view));
   });
 });
 
@@ -949,6 +977,22 @@ describe('commitModelRevision', () => {
       [7, T0],
       [8, CLOCK],
     ]);
+    // a stored list with malformed entries (an old or damaged file): only integer revs count (found in review:
+    // NaN gave NaN, 1.5 gave 2.5)
+    const cases: [number[], number][] = [
+      [[Number.NaN], 1],
+      [[1.5], 1],
+      [[1.5, 2], 3],
+      [[-5], 1],
+      [[1, 1], 2],
+      [[3, 1], 4],
+    ];
+    for (const [revs, expected] of cases) {
+      const revisions = revs.map((rev, i) => ({ rev, at: T0, source: 'seed' as const, label: 'Seed', asset: ref(`p1/seed${i}`) }));
+      const odd = opened(project({ threeD: { origin: 'describe', meshAssets: {}, revisions, views: [], ami: AMI } }));
+      await odd.getState().commitModelRevision(model([sphere('body')]), { source: 'import', label: 'Import', carry: 'by-id' });
+      expect(docOf(odd).threeD!.revisions.at(-1)?.rev, String(revs)).toBe(expected);
+    }
   });
 
   it('records the mesh assets of the model’s mesh parts in the revision', async () => {
@@ -990,6 +1034,74 @@ describe('commitModelRevision', () => {
     expect(store.getState().history.past).toHaveLength(1);
     store.getState().undo();
     expect(docOf(store)).toStrictEqual(before);
+  });
+
+  it('lets `also` replace threeD as a whole, but not drop the model or change the revision list (found in review)', async () => {
+    const store = opened();
+    const s = store.getState();
+    await s.commitModelRevision(model([sphere('body', 2)]), { source: 'recon', label: 'A', carry: 'none' });
+    s.update('Edit', (d) => void (d.threeD!.model!.parts[0].position = [9, 9, 9]));
+    const before = store.getState();
+    const attempts: [string, NonNullable<CommitOptions['also']>, RegExp][] = [
+      ['wipe the list', (d) => void (d.threeD!.revisions.length = 0), /must not change threeD.revisions/],
+      ['relabel a revision', (d) => void (d.threeD!.revisions[0].label = 'renamed'), /must not change threeD.revisions/],
+      ['add a revision', (d) => void d.threeD!.revisions.push({ rev: 50, at: T0, source: 'edit', label: 'fake', asset: ref('p1/fake') }), /must not change threeD.revisions/],
+      ['drop threeD', (d) => void delete d.threeD, /removed doc.threeD/],
+      ['drop the model', (d) => void delete d.threeD!.model, /removed the model/],
+    ];
+    for (const [name, also, message] of attempts) {
+      await expect(s.commitModelRevisionWith(model([sphere('body', 3)]), { source: 'import', label: name, carry: 'none', also }), name).rejects.toThrow(message);
+      const after = store.getState();
+      expect([after.doc, after.history, after.assets, after.changeId], name).toEqual([before.doc, before.history, before.assets, before.changeId]);
+      expect(after.doc, name).toBe(before.doc);
+    }
+    // replacing the whole branch is fine: the new revisions go into the branch `also` left
+    await s.commitModelRevisionWith(model([sphere('body', 3)]), {
+      source: 'import',
+      label: 'B',
+      carry: 'none',
+      also: (d) => void (d.threeD = { ...d.threeD!, ami: { ...AMI, spiral: false } }),
+    });
+    const doc = docOf(store);
+    expect(doc.threeD!.ami.spiral).toBe(false);
+    expect(doc.threeD!.model).toEqual(model([sphere('body', 3)]));
+    expect(doc.threeD!.revisions.map((r) => [r.rev, r.source, r.label])).toEqual([
+      [1, 'recon', 'A'],
+      [2, 'edit', 'Before: B'],
+      [3, 'import', 'B'],
+    ]);
+    expect((await readRevision(store, 2)).model.parts[0].position).toEqual([9, 9, 9]);
+    expect((await readRevision(store, 3)).model).toEqual(model([sphere('body', 3)]));
+    expect(store.getState().history.past.map((e) => e.label)).toEqual(['A', 'Edit', 'B']);
+    expect(store.getState().undo()).toBe(true);
+    expect(docOf(store)).toStrictEqual(before.doc);
+  });
+
+  it('with `also`, appends a revision even for an unchanged model, so a record that names `info.rev` finds it', async () => {
+    const store = opened();
+    const s = store.getState();
+    const m = model([sphere('body', 2)]);
+    await s.commitModelRevision(m, { source: 'recon', label: 'Built', carry: 'none' });
+    const assets = store.getState().assets;
+    let named = 0;
+    await s.commitModelRevisionWith(clone(m), {
+      source: 'import',
+      label: 'Imported the same model',
+      carry: 'by-id',
+      also: (d, info) => {
+        named = info.rev;
+        d.imports.push({ id: 'i1', at: T0, fileName: 'toy.json', carrier: 'json', dialect: 'canonical-1', confidence: 'high', repairs: [], original: ref('p1/file'), revision: info.rev });
+      },
+    });
+    const revisions = docOf(store).threeD!.revisions;
+    expect(revisions.map((r) => [r.rev, r.label])).toEqual([
+      [1, 'Built'],
+      [2, 'Imported the same model'],
+    ]);
+    expect(named).toBe(2);
+    expect(docOf(store).imports[0].revision).toBe(2);
+    expect(revisions[1].asset).toEqual(revisions[0].asset); // the same content: one asset
+    expect(store.getState().assets).toBe(assets); // nothing new to store
   });
 
   it('rejects, and changes nothing, without a project, without a 3D part, or with something that is not a model', async () => {
@@ -1111,6 +1223,8 @@ describe('save hooks', () => {
     expect([s.saveStatus, s.saveError, s.savedChangeId]).toEqual(['error', 'QuotaExceededError', 0]);
     expect(s.doc?.rev).toBe(3);
     expect(s.markSaveFailed(ticket, 'again')).toBe(false);
+    expect(s.markSaved(ticket, { rev: 5 })).toBe(false); // a failed ticket cannot succeed later
+    expect([store.getState().doc?.rev, store.getState().baseRev]).toEqual([3, 3]);
     const retry = s.beginSave();
     expect(retry?.id).not.toBe(ticket.id);
     expect([...(retry?.newAssets.keys() ?? [])]).toEqual([asset.key]);
@@ -1138,11 +1252,16 @@ describe('save hooks', () => {
     const old = await store.getState().putAsset(new Uint8Array([1]), 'application/octet-stream');
     const ticket = store.getState().beginSave();
     if (!ticket) throw new Error('expected a ticket');
+    const hashing = store.getState().putAsset(new Uint8Array([3]), 'application/octet-stream'); // still hashing during the rebind
     // repo.save answered { ok: false, conflict }; repo.saveAsCopy stored the ticket's document as a new project
     expect(store.getState().rebind(ticket, { id: 'p1-copy', rev: 1, name: 'Teddy (copy, 12:34)' })).toBe(true);
     const s = store.getState();
     expect(s.doc).toMatchObject({ id: 'p1-copy', rev: 1, name: 'Teddy (copy, 12:34)', updatedAt: CLOCK });
     expect([s.baseRev, s.saveStatus, s.unsavedAssetKeys.size]).toEqual([1, 'saved', 0]);
+    // an asset that was still being hashed is keyed by the project it will be saved with
+    const late = await hashing;
+    expect(late.key.startsWith('p1-copy/')).toBe(true);
+    expect(store.getState().unsavedAssetKeys.has(late.key)).toBe(true);
     // later saves go to the copy: exactly one copy per conflict
     s.update('More', (d) => (d.units = 'cm'));
     expect(store.getState().beginSave()).toMatchObject({ baseRev: 1, doc: { id: 'p1-copy' } });

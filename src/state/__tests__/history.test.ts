@@ -739,6 +739,99 @@ describe('diffDocuments', () => {
       expect(patches.length === 0, `pair ${n}: empty exactly when equal`).toBe(isDeepStrictEqual(a, b));
     }
   });
+
+  it('keeps a null-prototype object one when it copies it, also through undo and redo (found in review)', () => {
+    const dict = (entries: Record<string, unknown>): Record<string, unknown> => Object.assign(Object.create(null) as Record<string, unknown>, entries);
+    const base = frozen({ table: dict({ a: 1, b: { c: 2 } }) });
+    const next = frozen({ table: dict({ a: 1, b: { c: 3 }, d: 4 }) });
+    const { patches, inverse } = diffDocuments(base, next);
+    const forward = applyPatches(base, patches);
+    const back = applyPatches(next, inverse);
+    expect(Object.getPrototypeOf(forward.table)).toBeNull(); // `{ ...table }` would have given it Object.prototype
+    expect(Object.getPrototypeOf(back.table)).toBeNull();
+    expect(isDeepStrictEqual(forward, next)).toBe(true);
+    expect(isDeepStrictEqual(back, base)).toBe(true);
+
+    // immer keeps the prototype in a recipe, so undo and redo must too
+    const change = applyRecipe(base, (d) => void (d.table.a = 2));
+    expect(Object.getPrototypeOf(change.doc.table)).toBeNull();
+    const history = record(emptyHistory(), change.doc, { label: 'Edit', patches: change.patches, inverse: change.inverse });
+    const undone = undo(history, change.doc);
+    if (!undone) throw new Error('expected an undo step');
+    expect(Object.getPrototypeOf(undone.doc.table)).toBeNull();
+    expect(isDeepStrictEqual(undone.doc, base)).toBe(true);
+    const redone = redo(undone.history, undone.doc);
+    if (!redone) throw new Error('expected a redo step');
+    expect(Object.getPrototypeOf(redone.doc.table)).toBeNull();
+    expect(isDeepStrictEqual(redone.doc, change.doc)).toBe(true);
+  });
+
+  it('is exact for everything a recipe can leave in a document: -0, NaN, Infinity, undefined, keys like __proto__ and length, null-prototype objects (seeded; found in review)', () => {
+    const KEYS = ['a', 'b', '__proto__', 'constructor', 'length', '0', '1', '-1', '01', 'toString', 'hasOwnProperty', '', 'then', 'valueOf', '1e3', ' 2'];
+    const rng = mulberry32(100_001);
+    const define = (target: Record<string, unknown>, key: string, value: unknown): void => {
+      Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+    };
+    const hostile = (depth: number): unknown => {
+      switch (randomInt(rng, depth > 3 ? 6 : 10)) {
+        case 0:
+          return randomInt(rng, 5);
+        case 1:
+          return [0, -0, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, null][randomInt(rng, 6)];
+        case 2:
+          return ['x', 'y', ''][randomInt(rng, 3)];
+        case 3:
+          return rng() < 0.5;
+        case 4:
+          return rng() < 0.5 ? undefined : null;
+        case 5:
+          return randomInt(rng, 3);
+        case 6:
+        case 7:
+          return Array.from({ length: randomInt(rng, 5) }, () => hostile(depth + 1));
+        default: {
+          const obj = (rng() < 0.25 ? Object.create(null) : {}) as Record<string, unknown>;
+          const n = randomInt(rng, 5);
+          for (let i = 0; i < n; i++) define(obj, KEYS[randomInt(rng, KEYS.length)], hostile(depth + 1));
+          return obj;
+        }
+      }
+    };
+    /** `v` with one nested value replaced or one key added: an edit, sharing everything else with `v`. */
+    const nudge = (v: unknown, depth: number): unknown => {
+      if (depth > 4 || typeof v !== 'object' || v === null || rng() < 0.2) return hostile(2);
+      if (Array.isArray(v)) {
+        const copy = [...(v as unknown[])];
+        if (copy.length > 0 && rng() < 0.7) {
+          const i = randomInt(rng, copy.length);
+          copy[i] = nudge(copy[i], depth + 1);
+        } else copy.splice(randomInt(rng, copy.length + 1), 0, hostile(3));
+        return copy;
+      }
+      const source = v as Record<string, unknown>;
+      const copy = Object.create(Object.getPrototypeOf(source) as object | null) as Record<string, unknown>;
+      for (const key of Object.keys(source)) define(copy, key, source[key]);
+      const keys = Object.keys(copy);
+      if (keys.length > 0 && rng() < 0.7) {
+        const key = keys[randomInt(rng, keys.length)];
+        define(copy, key, nudge(copy[key], depth + 1));
+      } else define(copy, KEYS[randomInt(rng, KEYS.length)], hostile(3));
+      return copy;
+    };
+    const failures: string[] = [];
+    for (let n = 0; n < 4000; n++) {
+      const a = frozen(hostile(0));
+      const b = frozen(n % 2 === 0 ? nudge(a, 0) : hostile(0));
+      const { patches, inverse } = diffDocuments(a, b);
+      // isDeepStrictEqual: Object.is on primitives, own keys, and prototypes
+      if (!isDeepStrictEqual(applyPatches(a, patches), b)) failures.push(`pair ${n}: forward`);
+      if (!isDeepStrictEqual(applyPatches(b, inverse), a)) failures.push(`pair ${n}: back`);
+      if ((patches.length === 0) !== isDeepStrictEqual(a, b)) failures.push(`pair ${n}: patches ${patches.length}`);
+    }
+    expect(failures).toEqual([]);
+    // an ordinary object that becomes a null-prototype one (or back) is replaced whole: the change is not lost
+    expect(diffDocuments({ t: { a: 1 } }, { t: Object.assign(Object.create(null) as object, { a: 1 }) }).patches).toHaveLength(1);
+  });
 });
 
 describe('applyPatches', () => {
