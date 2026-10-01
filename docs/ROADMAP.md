@@ -3,7 +3,7 @@
 The living plan for Crochet Pattern Generator. The full specification is [`DESIGN.md`](DESIGN.md); the research
 behind it is in [`research/`](research/). This file says what gets built in what order, and where things stand.
 
-**Last updated:** 2026-10-01 · **Now:** Integration between Sprints 1 and 2 (spec amendments from the tracks), then Sprint 2
+**Last updated:** 2026-10-01 · **Now:** Sprint 2 (eight tracks in parallel)
 
 ## What "done" means
 
@@ -43,7 +43,7 @@ Every sprint goes through the same loop, and nothing moves on until its step is 
 | 0b | Shared kernels in parallel: geometry (marching cubes, smoothing, distance transforms) · gauge tables and sizing · 3D model schema, builder and attach tree · pattern encoder and validator · app state and worker plumbing | ✅ done (1,758 tests) |
 | 0c | Merge, app shell and design system, review, the full Step 0 acceptance list, push | ✅ done (1,834 unit + 15 browser tests) |
 | 1 | Eight tracks, first sprint each (see below) | ✅ done (2,683 unit + 25 browser tests) |
-| 2 | Tracks, second sprint each · then the Claude Design send-side trial (`docs/S-CD.md`), run by you or guided, before Sprint 3 | ◻ |
+| 2 | Tracks, second sprint each · then the Claude Design send-side trial (`docs/S-CD.md`), run by you or guided, before Sprint 3 | ⏳ in progress |
 | Checkpoint | Merge the finished halves to `master`, full test run, shared-type amendments | ◻ |
 | 3 | Tracks, third sprint each | ◻ |
 | 4 | Tracks, fourth sprint each | ◻ |
@@ -96,3 +96,4 @@ See `DESIGN.md` §0.2 for all 23. The ones you would notice:
 - **2026-10-01** Sprint 0c done: design system (light/dark, 30+ accessible components, 60 icons), start screen, workspace frame with every tab, browser smoke tests with screenshots in `e2e/screenshots/`. Step 0 complete. Sprint 1 started.
 - **2026-10-01** Decision: the Claude Design send-side trial waits until just before Sprint 3 (T7's Q&A and prompt). The owner may run it by hand from `docs/S-CD.md`; the app's own instructions will guide users through the same steps.
 - **2026-10-01** Sprint 1 done, all eight tracks merged: image sampling and picture kinds (T1), US/UK pattern text and single-crochet chart rows (T2), photo masks and view alignment (T3), amigurumi stitch counts (T4), sculpt/cut/merge mesh tools (T5), the 3D editor with the teddy (T6), the Claude Design importer for text, JSON, HTML, standalone HTML and zip (T7), and autosave to the browser's database with conflict copies and an unload journal (T8). Every track had an independent adversarial review; findings fixed before merge.
+- **2026-10-01** Integration pass after Sprint 1: 136 track requests decided (107 accepted, 23 changed, 6 rejected; `docs/tracks/integration-s1.md`), spec v1.4, additive type changes, Step 0 fixes. Sprint 2 started with each track's hand-off tasks first.
