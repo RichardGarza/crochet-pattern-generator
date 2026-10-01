@@ -15,7 +15,7 @@ import type { ColoredMesh } from '../../types/geometry';
 import type { CrochetModelV1, Part, Vec3 } from '../../types/model';
 import { mulMat3Vec, normalize } from '../kernel/vec';
 import { attachGraph, subtreeIds } from './attach';
-import { anchorPoint, captureAnchor, overlapAlongRay, placeChildOnSurfaceWith, reanchorChildren, type SurfaceSources } from './place';
+import { anchorPoint, captureAnchor, overlapAlongRay, placeChildOnSurfaceWith, type SurfaceSources } from './place';
 import { scaleMesh, scaleModel, scalePartDims } from './scale';
 import { worldSdf } from './sdf';
 import { eulerXYZToMat3, localCenter, modelBounds, modelHeight, partAxis, partCenter, roundCoord, roundVec3, worldBounds } from './transforms';
@@ -276,9 +276,65 @@ function resizeLimb(p: LimbPart, length: number, grow: -1 | 0 | 1): LimbPart {
 }
 
 /**
+ * The straight part of a limb's axis — between its two cap centers for a capsule (`length − 2r`), its whole
+ * height for a cylinder (flat ends) — as the limb's center, its +axis and the half length of that part.
+ */
+function straightPart(p: LimbPart): { center: Vec3; axis: Vec3; half: number } {
+  const half = p.type === 'capsule' ? Math.max(0, Math.max(p.dims.length, 2 * p.dims.r) - 2 * p.dims.r) / 2 : p.dims.h / 2;
+  return { center: partCenter(p), axis: partAxis(p, 1), half };
+}
+
+/**
+ * Re-anchors the direct children of a limb whose length changed (the limb's §4.2 re-anchoring): each child is
+ * placed by where its center lies along the limb's axis, carried by the stretch of the limb — a child beyond
+ * either end of the straight part moves with that end (a foot pad on the foot cap moves with the foot), a child
+ * along the straight part keeps its fraction of it — and its subtree is translated by the same displacement
+ * (along the axis; the child's distance from the axis and its rotation are kept). Unlike a ray from the limb's
+ * center along a fixed direction (0.42 in apart on the toes-in teddy, nubs → long vs long), stretches compose, so
+ * a limb's children end up in the same place whatever chips came before (while the straight part has a length:
+ * a capsule at its 2·r floor keeps only which end each child is nearer).
+ */
+function stretchChildren(before: CrochetModelV1, after: CrochetModelV1, limbBefore: LimbPart, limbAfter: LimbPart, meshes?: Record<string, ColoredMesh>): CrochetModelV1 {
+  const graph = attachGraph(before.parts);
+  const at = graph.index.get(limbBefore.id);
+  if (at === undefined || graph.children[at].length === 0) return after;
+  const old = straightPart(limbBefore);
+  const now = straightPart(limbAfter);
+  const a = old.axis;
+  const shift = (now.center[0] - old.center[0]) * a[0] + (now.center[1] - old.center[1]) * a[1] + (now.center[2] - old.center[2]) * a[2];
+  const move = new Map<string, Vec3>();
+  for (const c of graph.children[at]) {
+    const child = before.parts[c];
+    const q = partCenter(child, meshOf(child, meshes));
+    const y = (q[0] - old.center[0]) * a[0] + (q[1] - old.center[1]) * a[1] + (q[2] - old.center[2]) * a[2];
+    let next: number;
+    if (y >= old.half && y > -old.half) next = y - old.half + shift + now.half;
+    else if (y <= -old.half && y < old.half) next = y + old.half + shift - now.half;
+    else next = shift - now.half + (old.half > 0 ? (y + old.half) / (2 * old.half) : 0.5) * 2 * now.half;
+    const dy = next - y;
+    if (!Number.isFinite(dy) || dy === 0) continue;
+    const d: Vec3 = [a[0] * dy, a[1] * dy, a[2] * dy];
+    for (const id of subtreeIds(before, child.id)) if (!move.has(id)) move.set(id, d);
+  }
+  if (move.size === 0) return after;
+  return { ...after, parts: after.parts.map((p) => (move.has(p.id) ? movePart(p, move.get(p.id) as Vec3) : p)) };
+}
+
+/**
+ * The limb with the end it keeps written to `LIMB_PROXIMAL_KEY`, so every later chip keeps the same end — unless
+ * `attach.openEnd` already names it (or the limb has no parent).
+ */
+function remember(p: LimbPart, grow: -1 | 0 | 1): LimbPart {
+  const openEnd = p.attach?.openEnd;
+  if (grow === 0 || openEnd === 'top' || openEnd === 'bottom') return p;
+  const end = grow === -1 ? 'top' : 'bottom';
+  return storedProximal(p) === end ? p : { ...p, [LIMB_PROXIMAL_KEY]: end };
+}
+
+/**
  * The model with every limb set to `lengths` (by part id), parents before children: each limb keeps its proximal
- * pole and its direct children are re-anchored. No rescale. Exported for the tests of G23 ("the proximal pole
- * moved < 0.01 in before the rescale").
+ * pole (`limbProximalEnd`, then remembered in `LIMB_PROXIMAL_KEY`) and its direct children are re-anchored. No
+ * rescale. Exported for the tests of G23 ("the proximal pole moved < 0.01 in before the rescale").
  */
 export function resizeLimbs(model: CrochetModelV1, lengths: Readonly<Record<string, number>>, meshes?: Record<string, ColoredMesh>): CrochetModelV1 {
   const plans = planLimbs(model, meshes);
@@ -288,69 +344,74 @@ export function resizeLimbs(model: CrochetModelV1, lengths: Readonly<Record<stri
     const before = current;
     const limb = before.parts.find((p) => p.id === plan.id);
     if (!limb || (limb.type !== 'capsule' && limb.type !== 'cylinder')) continue;
-    const resized = resizeLimb(limb, lengths[plan.id], plan.grow);
+    const resized = remember(resizeLimb(limb, lengths[plan.id], plan.grow), plan.grow);
     const after: CrochetModelV1 = { ...before, parts: before.parts.map((p) => (p.id === plan.id ? resized : p)) };
-    current = reanchorChildren(before, after, plan.id, { before: { meshes }, after: { meshes } });
+    current = stretchChildren(before, after, limb, resized, meshes);
   }
   return current;
 }
 
 /**
- * How decisive the parent-SDF test of §4.2 must be, as a fraction of the limb's radius: two poles whose parent
- * SDFs differ by less than this lie along the parent alike (a limb hanging tangent to its parent's side), and
- * the test cannot tell the attached end from the free one.
+ * The part key where `applyProportions` remembers which pole of a limb it keeps fixed: `'top'` = the +axis pole,
+ * `'bottom'` = the −axis pole (the convention of `attach.openEnd` and `crochet.start`). An `x-*` extension key, so
+ * the schema keeps it and no other kernel reads it; it changes nothing in the pattern.
+ *
+ * Why it is stored: the spec's rule (the pole with the larger parent SDF) follows the limb's current length, not
+ * its attachment, for a limb that lies along or points back toward its parent — the nubs arm with its shoulder
+ * kept and the nubs arm with its hand kept are the same arm, so no rule over the current geometry can tell which
+ * end the previous chip kept. The rule is applied once, on the limb as it was before its first resize, and the
+ * answer is kept for every later chip.
  */
-const POLE_SDF_MARGIN = 0.25;
+export const LIMB_PROXIMAL_KEY = 'x-cpg-proximal';
 
-/** The limb's radius: a capsule's `r`, a cylinder's larger end radius. */
-function limbRadius(p: LimbPart): number {
-  return p.type === 'capsule' ? p.dims.r : Math.max(p.dims.rTop, p.dims.rBottom);
+/** The stored proximal end of a limb (`LIMB_PROXIMAL_KEY`), when it is a valid one. */
+function storedProximal(p: Part): 'top' | 'bottom' | undefined {
+  const v = p[LIMB_PROXIMAL_KEY];
+  return v === 'top' || v === 'bottom' ? v : undefined;
 }
 
 /**
- * Which pole of a limb is its proximal end (§4.2): `grow` −1 = the +axis pole, +1 = the −axis pole. In order:
+ * Which pole of a capsule or cylinder limb is its proximal end (§4.2) — the end `applyProportions` keeps fixed:
+ * `'top'` = the +axis pole, `'bottom'` = the −axis pole. In order:
  *
- * 1. `attach.openEnd` `'top'` / `'bottom'`: the open end is the one sewn to the parent, so it is the proximal
- *    end (`'top'` = the +axis pole, as in §2.10.2).
- * 2. A mesh parent known only by its triangles (no SDF): the pole nearer the parent's center.
- * 3. The spec's rule: the pole with the larger parent SDF (the end inside or nearest the parent) — when the two
- *    differ by at least `POLE_SDF_MARGIN` × the limb's radius.
- * 4. Otherwise the two ends meet the parent alike and the rule would follow the limb's length, not its
- *    attachment (the teddy's arm lies along the body: at 'nubs' length its lower pole is the nearer one, so
- *    the next chip would grow the arm up from the hand). Limbs grow away from the model's mirror plane x = 0:
- *    the pole with the smaller |x| is proximal. Keeping that pole and changing the length moves the other pole
- *    along the axis, so a limb that heads away from the mirror plane keeps the same proximal pole on every
- *    later chip. When both poles are as far from the plane (within 1e-6 in), rule 3's comparison decides.
+ * 1. `attach.openEnd` `'top'` / `'bottom'`: the open end is the one sewn to the parent.
+ * 2. `LIMB_PROXIMAL_KEY`: the end an earlier `applyProportions` kept (it is written on the first resize).
+ * 3. A mesh parent known only by its triangles (no SDF): the pole nearer the parent's center.
+ * 4. The spec's rule: the pole with the larger parent SDF (the end inside or nearest the parent); on a tie
+ *    (1e-9 in) the pole nearer the parent's center, then the −axis pole.
+ *
+ * `meshes` resolves a mesh parent's buffer.
  */
-function proximalGrow(p: LimbPart, parent: Part, meshes?: Record<string, ColoredMesh>): -1 | 1 {
+export function limbProximalEnd(p: Part, parent: Part, meshes?: Record<string, ColoredMesh>): 'top' | 'bottom' {
   const openEnd = p.attach?.openEnd;
-  if (openEnd === 'top') return -1;
-  if (openEnd === 'bottom') return 1;
+  if (openEnd === 'top' || openEnd === 'bottom') return openEnd;
+  const stored = storedProximal(p);
+  if (stored) return stored;
+  const length = p.type === 'capsule' ? Math.max(p.dims.length, 2 * p.dims.r) : p.type === 'cylinder' ? p.dims.h : 0;
   const axis = partAxis(p, 1);
-  const half = limbLength(p) / 2;
+  const half = length / 2;
   const c = partCenter(p);
   const plus: Vec3 = [c[0] + axis[0] * half, c[1] + axis[1] * half, c[2] + axis[2] * half];
   const minus: Vec3 = [c[0] - axis[0] * half, c[1] - axis[1] * half, c[2] - axis[2] * half];
-  if (parent.type === 'mesh' && meshOf(parent, meshes)) {
-    // No SDF for a mesh known only by its triangles: the pole nearer the parent's center.
-    const pc = partCenter(parent, meshOf(parent, meshes));
-    const dPlus = Math.hypot(plus[0] - pc[0], plus[1] - pc[1], plus[2] - pc[2]);
-    const dMinus = Math.hypot(minus[0] - pc[0], minus[1] - pc[1], minus[2] - pc[2]);
-    return dPlus < dMinus ? -1 : 1;
-  }
+  const parentMesh = meshOf(parent, meshes);
+  const pc = partCenter(parent, parentMesh);
+  const dPlus = Math.hypot(plus[0] - pc[0], plus[1] - pc[1], plus[2] - pc[2]);
+  const dMinus = Math.hypot(minus[0] - pc[0], minus[1] - pc[1], minus[2] - pc[2]);
+  const nearer: 'top' | 'bottom' = dPlus < dMinus ? 'top' : 'bottom';
+  // No SDF for a mesh known only by its triangles: the pole nearer the parent's center.
+  if (parent.type === 'mesh' && parentMesh) return nearer;
   const f = worldSdf(parent);
   const fPlus = f(plus[0], plus[1], plus[2]);
   const fMinus = f(minus[0], minus[1], minus[2]);
-  const bySdf: -1 | 1 = fPlus > fMinus ? -1 : 1;
-  if (!(Math.abs(fPlus - fMinus) < POLE_SDF_MARGIN * limbRadius(p))) return bySdf;
-  const xPlus = Math.abs(plus[0]);
-  const xMinus = Math.abs(minus[0]);
-  if (Math.abs(xPlus - xMinus) <= 1e-6) return bySdf;
-  return xPlus < xMinus ? -1 : 1;
+  if (Math.abs(fPlus - fMinus) > 1e-9) return fPlus > fMinus ? 'top' : 'bottom';
+  return nearer;
 }
 
+/** `grow` of a limb plan from its proximal end: the +axis pole kept ⇒ the center moves along −axis (−1). */
+const growOf = (end: 'top' | 'bottom'): -1 | 1 => (end === 'top' ? -1 : 1);
+
 /**
- * The limbs in tree order (parents first), each with the end that stays put (`proximalGrow`). A mirror twin
+ * The limbs in tree order (parents first), each with the end that stays put (`limbProximalEnd`). A mirror twin
  * takes its twin's end.
  */
 function planLimbs(model: CrochetModelV1, meshes?: Record<string, ColoredMesh>): LimbPlan[] {
@@ -367,7 +428,7 @@ function planLimbs(model: CrochetModelV1, meshes?: Record<string, ColoredMesh>):
   for (const l of ordered) {
     const p = parts[l.index] as LimbPart;
     const parentIndex = graph.parent[l.index];
-    const grow: -1 | 0 | 1 = parentIndex === null ? 0 : proximalGrow(p, parts[parentIndex], meshes);
+    const grow: -1 | 0 | 1 = parentIndex === null ? 0 : growOf(limbProximalEnd(p, parts[parentIndex], meshes));
     plans.set(p.id, { id: p.id, kind: l.kind, grow });
   }
   // Mirror twins get the same change: the same end stays put (the twins' local frames mirror each other).
@@ -418,7 +479,8 @@ function keepMirrors(before: CrochetModelV1, after: CrochetModelV1): CrochetMode
  * `o.headBody` = b of "head : body = 1 : b" (the slider's 1…3; any positive number is accepted): the head is
  * scaled uniformly about its center by k in [0.2, 5], moved along the ray from its parent's center so its
  * original penetration is kept, and its children are re-anchored. `o.limbs` = the limb length chip: every limb
- * gets the total length factor × template × model height along its own axis, its proximal end fixed, mirror
+ * gets the total length factor × template × model height along its own axis, its proximal end fixed
+ * (`limbProximalEnd`; the end is then stored on the limb in `LIMB_PROXIMAL_KEY`, so later chips keep it), mirror
  * twins alike, its children re-anchored. A control that `readProportions` reports as disabled is ignored.
  *
  * The edit ends with a uniform rescale of the whole model about its ground center, so the finished height is

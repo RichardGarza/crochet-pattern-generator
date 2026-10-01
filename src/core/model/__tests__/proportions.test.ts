@@ -3,7 +3,17 @@ import type { ColoredMesh } from '../../../types/geometry';
 import type { CrochetModelV1, Part, Vec3 } from '../../../types/model';
 import { isOneTree, subtreeIds } from '../attach';
 import { captureAnchor, overlapAlongRay } from '../place';
-import { applyProportions, LIMB_FACTORS, LIMB_TEMPLATE, limbTemplateRow, NO_HEAD_REASON, readProportions, resizeLimbs } from '../proportions';
+import {
+  applyProportions,
+  LIMB_FACTORS,
+  LIMB_PROXIMAL_KEY,
+  LIMB_TEMPLATE,
+  limbProximalEnd,
+  limbTemplateRow,
+  NO_HEAD_REASON,
+  readProportions,
+  resizeLimbs,
+} from '../proportions';
 import { scaleModel } from '../scale';
 import { validateModel } from '../schema';
 import { partSdf, surfaceGap } from '../sdf';
@@ -366,6 +376,122 @@ describe('applyProportions: limb length (§4.2, G23)', HEAVY, () => {
         }
       }
     }
+  });
+
+  // Poses where the parent SDF of the two poles depends on the limb's length (verifier round 2): legs pointing
+  // inward (toes in) and an arm hanging straight down the body's side. The end kept on the first resize is kept on
+  // every later one, so any chip after any other is the second chip applied directly.
+  const posed = (changes: Record<string, Partial<Part>>): CrochetModelV1 => ({
+    ...teddy,
+    parts: teddy.parts.map((p) => (Object.hasOwn(changes, p.id) ? ({ ...p, ...changes[p.id] } as Part) : p)),
+  });
+  const toesIn = posed({ leg_l: { rotationDeg: [82, 0, 12] }, leg_r: { rotationDeg: [82, 0, -12] } });
+  const armDown = posed({ arm_l: { rotationDeg: [0, 0, 0], position: [2.3, 2.9, 0] }, arm_r: { rotationDeg: [0, 0, 0], position: [-2.3, 2.9, 0] } });
+
+  for (const [name, model, ids] of [
+    ['toes-in legs', toesIn, ['leg_l', 'leg_r']],
+    ['arms hanging straight down the body side', armDown, ['arm_l', 'arm_r']],
+  ] as const) {
+    it(`chip order does not matter for ${name}: every pair of chips equals the second chip applied directly`, () => {
+      const chips = ['nubs', 'short', 'medium', 'long'] as const;
+      const b = by(model);
+      const f = partSdf(b.body);
+      // the end kept is the spec's (the larger parent SDF on the limb as modelled), on every chip
+      const kept: Record<string, 0 | 1> = {};
+      for (const id of ids) {
+        const [plus, minus] = poles(b[id]);
+        kept[id] = f(plus) > f(minus) ? 0 : 1;
+        expect(limbProximalEnd(b[id], b.body)).toBe(kept[id] === 0 ? 'top' : 'bottom');
+      }
+      const direct = Object.fromEntries(chips.map((c) => [c, by(applyProportions(model, { limbs: c }).model)]));
+      let worst = 0;
+      for (const first of chips) {
+        const once = applyProportions(model, { limbs: first }).model;
+        for (const id of ids) expect(by(once)[id][LIMB_PROXIMAL_KEY], `${first}: ${id}`).toBe(kept[id] === 0 ? 'top' : 'bottom');
+        for (const second of chips) {
+          const twice = by(applyProportions(once, { limbs: second }).model);
+          for (const id of ['arm_l', 'arm_r', 'leg_l', 'leg_r']) {
+            const d = dist(twice[id].position, direct[second][id].position);
+            worst = Math.max(worst, d);
+            expect(d, `${first} → ${second}: ${id}`).toBeLessThan(0.01);
+            expect(limbLength(twice[id])).toBeCloseTo(limbLength(direct[second][id]), 4);
+          }
+          // A child off its limb's axis (the toes-in pad sits at elevation 73° from its leg's center) rides with
+          // the end it is on: the stretch re-anchoring composes (a ray from the center did not: 0.42 in, nubs → long).
+          expect(dist(twice.foot_pad_l.position, direct[second].foot_pad_l.position), `${first} → ${second}: pad`).toBeLessThan(1e-4);
+          expect(surfaceGap(twice.foot_pad_l, twice.leg_l)).toBeCloseTo(surfaceGap(b.foot_pad_l, b.leg_l), 4);
+        }
+      }
+      expect(worst).toBeLessThan(1e-4);
+      // before the rescale: the kept pole stays within 0.01 in through a run of chips (G23)
+      let m = model;
+      for (const chip of ['nubs', 'long', 'short', 'nubs', 'medium'] as const) {
+        const lengths: Record<string, number> = {};
+        for (const id of ids) lengths[id] = LIMB_FACTORS[chip] * (id.startsWith('arm') ? 0.25 : 0.2) * H;
+        m = resizeLimbs(m, lengths);
+        for (const id of ids) expect(dist(poles(by(m)[id])[kept[id]], poles(b[id])[kept[id]]), `${chip}: ${id}`).toBeLessThan(1e-4);
+      }
+      expect(validateModel(m).ok).toBe(true);
+    });
+  }
+
+  it('the kept end is stored on the limb (x-cpg-proximal) and wins over the geometry; openEnd wins over it and is never written', () => {
+    // A nubs arm along the body: its lower pole is the nearer one now, but the stored end says the shoulder.
+    const nubs = applyProportions(teddy, { limbs: 'nubs' }).model;
+    const arm = by(nubs).arm_l;
+    expect(arm[LIMB_PROXIMAL_KEY]).toBe('top');
+    const f = partSdf(by(nubs).body);
+    expect(f(poles(arm)[1])).toBeGreaterThan(f(poles(arm)[0])); // the SDF alone would now pick the hand
+    expect(limbProximalEnd(arm, by(nubs).body)).toBe('top');
+    const forgotten: Part = { ...arm, [LIMB_PROXIMAL_KEY]: 'sideways' };
+    expect(limbProximalEnd(forgotten, by(nubs).body)).toBe('bottom'); // an invalid value is ignored
+    // the stored end survives validation, scaling and a second edit
+    expect(validateModel(nubs).ok).toBe(true);
+    expect(by(scaleModel(nubs, 2).model).arm_l[LIMB_PROXIMAL_KEY]).toBe('top');
+    // an explicit open end decides, and nothing is stored next to it
+    const open = { ...teddy, parts: teddy.parts.map((p) => (p.id.startsWith('arm') ? { ...p, attach: { to: 'body', openEnd: 'bottom' as const } } : p)) };
+    const edited = by(applyProportions(open, { limbs: 'long' }).model);
+    expect(edited.arm_l[LIMB_PROXIMAL_KEY]).toBeUndefined();
+    expect(limbProximalEnd(edited.arm_l, edited.body)).toBe('bottom');
+    // the head control alone stores nothing
+    expect(by(applyProportions(teddy, { headBody: 2 }).model).arm_l[LIMB_PROXIMAL_KEY]).toBeUndefined();
+  });
+
+  it('a limb’s children ride with the end they are on, or keep their fraction of the straight part; resizes compose', () => {
+    // A vertical arm hanging from a sphere, top (shoulder) inside it: a mitten on the hand cap, a patch on the side
+    // near the top of the straight part, a dot on the patch.
+    const base = modelOf([
+      part('sphere', { r: 1.5 }, { id: 'body', position: [0, 5, 0] }),
+      part('capsule', { r: 0.4, length: 4 }, { id: 'arm_l', position: [1.2, 3.4, 0], attach: { to: 'body' } }),
+      part('sphere', { r: 0.3 }, { id: 'mitten', position: [1.2, 1.3, 0], attach: { to: 'arm_l' } }),
+      part('sphere', { r: 0.2 }, { id: 'patch', position: [1.65, 4.6, 0], attach: { to: 'arm_l' } }),
+      part('sphere', { r: 0.2 }, { id: 'eye_dot', position: [1.2, 5, 0.3], attach: { to: 'patch' } }),
+    ]);
+    const b = by(base);
+    expect(limbProximalEnd(b.arm_l, b.body)).toBe('top');
+    const short = by(resizeLimbs(base, { arm_l: 2 }));
+    expect(poles(short.arm_l)[0][1]).toBeCloseTo(5.4, 6); // the shoulder stays
+    expect(short.mitten.position[1]).toBeCloseTo(1.3 + 2, 6); // the mitten rides with the hand
+    // the patch keeps its fraction of the straight part: 0.4 in below its top of 3.2 in, 0.15 in of 1.2 in
+    expect(short.patch.position[1]).toBeCloseTo(5 - 0.125 * 1.2, 6);
+    expect(short.patch.position[0]).toBe(1.65);
+    expect(short.eye_dot.position[1] - short.patch.position[1]).toBeCloseTo(0.4, 6); // the subtree follows its child
+    // 4 → 2 → 6 in is 4 → 6 in, for every part
+    const twice = by(resizeLimbs(resizeLimbs(base, { arm_l: 2 }), { arm_l: 6 }));
+    const once = by(resizeLimbs(base, { arm_l: 6 }));
+    for (const id of Object.keys(once)) expect(dist(twice[id].position, once[id].position), id).toBeLessThan(1e-5);
+  });
+
+  it('limbProximalEnd: the larger parent SDF; on a tie the pole nearer the parent center', () => {
+    const body = part('sphere', { r: 1.5 }, { id: 'body', position: [0, 4.5, 0] });
+    // a horizontal arm through the sphere's center line, off to one side: both poles equally far outside
+    const across = part('capsule', { r: 0.3, length: 2 }, { id: 'arm_l', position: [0, 4.5, 3], rotationDeg: [0, 0, 90], attach: { to: 'body' } });
+    const f = partSdf(body);
+    const [plus, minus] = poles(across);
+    expect(f(plus)).toBeCloseTo(f(minus), 9);
+    expect(limbProximalEnd(across, body)).toBe('bottom');
+    const shifted: Part = { ...across, position: [0.5, 4.5, 3] };
+    expect(limbProximalEnd(shifted, body)).toBe(f(poles(shifted)[0]) > f(poles(shifted)[1]) ? 'top' : 'bottom');
   });
 
   it('an explicit attach.openEnd names the proximal end, whatever the parent SDF says', () => {

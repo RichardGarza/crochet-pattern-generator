@@ -211,7 +211,9 @@ re-linked part. `mirror-inferred` repairs carry `data: { mirrorOf }`.
 |---|---|---|
 | `readProportions` | `ReadProportionsFn` = `(m: CrochetModelV1) => ProportionsReading` | `{ headBody?, limbs?, disabled: { headBody?, limbs? } }`: b of "head : body = 1 : b" to two decimals (not clamped to 1…3), the chip nearest to the arms (the legs without arms), and the reasons a control is disabled |
 | `applyProportions` | `ApplyProportionsFn` = `(m: CrochetModelV1, o: { headBody?: number; limbs?: LimbLength }, meshes?: Record<string, ColoredMesh>) => { model: CrochetModelV1; meshes?: Record<string, ColoredMesh> }` | §4.2 (G23), ending with a uniform rescale to the original height; `meshes` comes back (scaled) only when it was passed. A disabled control or an unusable value is ignored (the same model comes back) |
-| `resizeLimbs` | `(model: CrochetModelV1, lengths: Readonly<Record<string, number>>, meshes?: Record<string, ColoredMesh>) => CrochetModelV1` | The limb edit alone, before any rescale: each named limb gets its total length with its proximal pole kept (rule in deviation 20), parents before children, mirror twins alike, children re-anchored |
+| `resizeLimbs` | `(model: CrochetModelV1, lengths: Readonly<Record<string, number>>, meshes?: Record<string, ColoredMesh>) => CrochetModelV1` | The limb edit alone, before any rescale: each named limb gets its total length with its proximal pole kept (`limbProximalEnd`, deviation 20) and that end stored in `LIMB_PROXIMAL_KEY` (unless `attach.openEnd` names it), parents before children, mirror twins alike, children carried by the stretch of the limb (deviation 23) |
+| `limbProximalEnd` | `(p: Part, parent: Part, meshes?: Record<string, ColoredMesh>) => 'top' \| 'bottom'` | The pole of a capsule / cylinder limb that `applyProportions` keeps fixed (`'top'` = +axis): `attach.openEnd` `'top'`/`'bottom'`, else the stored `LIMB_PROXIMAL_KEY`, else (mesh parent with a buffer) the pole nearer the parent's center, else the larger parent SDF (tie within 1e-9 in: the pole nearer the parent's center). T4 can use it for the §2.10.2 start pole (request 15) |
+| `LIMB_PROXIMAL_KEY` | `'x-cpg-proximal'` | Part extension key (`'top'` \| `'bottom'`) where `applyProportions` remembers the end it kept; written on a limb's first resize, read by `limbProximalEnd`; kept by the schema and every kernel (spread copies); no other kernel reads it, the pattern does not change |
 | `LIMB_TEMPLATE` | `LimbTemplate` | `quadruped { arm: 0.25, leg: 0.2 }`, `quadruped-standing { 0.3, 0.3 }`, `biped { 0.3, 0.3 }`, `creature { 0.15, 0.15 }` (fractions of the model height) |
 | `LIMB_FACTORS` | `Readonly<Record<LimbLength, number>>` | `{ nubs: 0.6, short: 1, medium: 1.5, long: 2.2 }` |
 | `limbTemplateRow` | `(m: Pick<CrochetModelV1, 'category' \| 'pose'>) => keyof LimbTemplate` | quadruped + `pose: 'standing'` → `quadruped-standing`; `biped` / `person` → `biped`; `creature` → `creature`; anything else (or none) → `quadruped` |
@@ -285,7 +287,7 @@ fixture URLs. `__tests__/helpers/everyType.ts`: `buildEveryType()`, `readEveryTy
 | `nameParts` on anonymous parts; `keepIds` | `naming.test.ts` | The parentless, label-less teddy with ids `p00…p16` → body, head, muzzle, ear_l/ear_r, arm_l/arm_r, leg_l/leg_r, tail, part_1…part_7 by volume; kept ids stay and are not reused |
 | `placeChildOnSurface`, every parent type | `place.test.ts` | 9 primitive types, plain and rotated, 9 directions (a torus: 3 in its ring plane, its axis, world +Y): kernel overlap 0.1 ± 8.5e-7; measured on the builder meshes 0.1 ± 0.0034 (flat parents: plus the bevel the SDF ignores, ≤ 0.095); `{ hit, normal }` on every type; mesh parents by SDF and by triangles; every child type |
 | G23 head 1:1 / 1:3 | `proportions.test.ts` | Head fraction 0.50005 / 0.24996 (targets 0.5 / 0.25); height 9.878906 / 9.878905 vs 9.878905 (< 1e-5 %); ear gaps −0.655 / −0.918 in (they enter the head) |
-| G23 limbs "long" | `proportions.test.ts` | arm_l, arm_r 0.55004·H, legs 0.44003·H; proximal poles moved 7.5e-7 in before the rescale; `arm_r` is the exact mirror of `arm_l`. Chip order does not matter: 9 chips in a row (nubs, short, medium, long, nubs, long, short, nubs, medium) move the shoulders and hips by at most 1.3e-6 in; any chip followed by any other equals the second applied directly to 2.8e-6 in (every part) |
+| G23 limbs "long" | `proportions.test.ts` | arm_l, arm_r 0.55004·H, legs 0.44003·H; proximal poles moved 7.5e-7 in before the rescale; `arm_r` is the exact mirror of `arm_l`. Chip order does not matter: 9 chips in a row (nubs, short, medium, long, nubs, long, short, nubs, medium) move the shoulders and hips by at most 1.3e-6 in; any chip followed by any other equals the second applied directly to 2.3e-6 in (every part) on the teddy, on the teddy with toes-in legs (rotations `[82, 0, ±12]`) and on the teddy with arms hanging straight down its sides (`[0, 0, 0]` at `[±2.3, 2.9, 0]`); 4.4e-4 in on the §3.6 bunny (its height changes with the limbs, so this is the bisection's 2e-4 tolerance) |
 | G23 `readProportions(teddy)` | `proportions.test.ts` | `{ headBody: 1.3, limbs: 'short', disabled: {} }` (raw 1.2974; arms 3.0/9.879 = 0.304 = 1.21 × 0.25) |
 | Disabled reasons of §4.2 | `proportions.test.ts` | Above, each tested |
 | `applyProportions` ≤ 200 ms | `proportions.test.ts` | 2.8 ms (1:1), 2.2 ms (1:3), 14.5 ms (long), 11.7 ms (both) |
@@ -390,27 +392,43 @@ the analytic surface of its part to 1e-5 in).
     cos y = 1e-8 (where the two branches' errors, 1e-16 / cos y and cos y, balance); below that it is three.js's
     gimbal branch. So the angles equal three.js's everywhere except inside that band (by the rotation three.js
     loses), and the round trip is exact to 1e-8 everywhere (measured above).
-20. **The proximal end of a limb (§4.2) is chosen by a fuller rule.** The spec's rule — the pole with the larger
-    parent SDF — follows the limb's length, not its attachment, for a limb that lies along its parent: the teddy's
-    arm touches the body 0.78 in below its shoulder tip and nowhere else, so at "nubs" length (1.48 in, shoulder
-    kept) its lower pole is the nearer one (−0.110 in vs −0.161 in). Re-evaluated on the next chip, the rule then
-    kept the hand and grew the arm up to the neck: `nubs` → `long` put arm_l 3.6 in from where `long` puts it,
-    `short` → `nubs` → `short` 0.99 in away. Any rule that looks only at the current geometry has this problem for
-    such a limb (the nubs arm with its shoulder kept and the nubs arm with its hand kept are the same arm), so the
-    kernel orders the evidence: (1) `attach.openEnd` `'top'` / `'bottom'` — the open end is the end sewn on (as
-    in §2.10.2, `'top'` = the +axis pole; the §3.6 arms); (2) a mesh parent known only by triangles: the pole
-    nearer its center; (3) the larger parent SDF, when the two poles differ by at least 0.25 × the limb's radius;
-    (4) otherwise the pole nearer the model's mirror plane x = 0 (limbs grow away from the body's middle) — a
-    property that keeping that pole and changing the length cannot flip for a limb that heads away from the plane;
-    (5) when both poles are as far from the plane (1e-6 in), the larger parent SDF after all. On the untouched
-    teddy every limb is decided by (3) (arms: −0.161 vs −0.782 in; legs: hip inside the body), so the G23 goldens
-    are unchanged.
+20. **The proximal end of a limb (§4.2) is decided once and stored.** The spec's rule — the pole with the larger
+    parent SDF — follows the limb's current length, not its attachment, for a limb that lies along its parent or
+    points back toward it: the teddy's arm touches the body 0.78 in below its shoulder tip and nowhere else, so at
+    "nubs" length (1.48 in, shoulder kept) its lower pole is the nearer one (−0.110 in vs −0.161 in), and
+    re-evaluated on the next chip the rule kept the hand and grew the arm up to the neck (`nubs` → `long` put arm_l
+    3.6 in from where `long` puts it). No rule over the current geometry can work (the nubs arm with its shoulder
+    kept and the nubs arm with its hand kept are the same arm); round 1's ordered rule (a 0.25·r SDF margin, then
+    the pole nearer x = 0) fixed the untouched teddy only — with toes-in legs it picked the foot after `nubs`
+    (`nubs` → `long` 2.86 in off), and with arms hanging straight down it fell back to the bare SDF test (1.52 in
+    off). So `limbProximalEnd` is: (1) `attach.openEnd` `'top'` / `'bottom'` — the open end is the end sewn on
+    (§2.10.2, `'top'` = the +axis pole; the §3.6 arms); (2) the end stored in the part's `x-cpg-proximal` key;
+    (3) a mesh parent known only by triangles: the pole nearer its center; (4) the spec's rule, the larger parent
+    SDF (exact tie: the pole nearer the parent's center). `resizeLimbs` writes the end it kept to
+    `x-cpg-proximal` (both mirror twins; not when `openEnd` names it), so the spec's rule is applied once, to the
+    limb as modelled, and every later chip keeps that end. The key is an `x-*` extension — not `attach.openEnd`,
+    which would also change the pattern (an open end is finished open, §2.10.3) — so the edit writes one key
+    besides the `dims` and positions of §4.2's "Data written". Consequences: the arms hanging straight down are
+    grown from the hand (the spec's rule on that geometry: −0.434 in at the hand vs −0.617 in at the shoulder;
+    `openEnd: 'top'` says otherwise), and a limb the user later flips end for end in the editor keeps the stored
+    end (request 15).
 21. **Schema: `mirrorOf` must name a part of the same type that has no `mirrorOf` itself** (no mirror chains or
     loops). §3.5.1 does not say so; without it `ear_l.mirrorOf = ear_r` with `ear_r.mirrorOf = ear_l` validated,
     and a later track following `mirrorOf` to the part that carries the pattern never reached a source; a
     `tail.mirrorOf = body` would make "the same as body" of a different shape. Request 16.
 22. **Kernels are total over non-finite placement input** (`placeChildOnSurface`, see its row): an editor ray can
     produce a NaN normal, and JSON would write a NaN position as `null`.
+23. **A limb's children are carried by the stretch of the limb, not by a ray from its center** (§4.2 says the
+    limb's children are re-anchored, and the re-anchoring paragraph uses a direction `(az, el)` from the parent's
+    center). A limb's center moves when it grows from one end, so a child off the limb's axis slides along it:
+    the toes-in teddy's foot pad (73° from its leg's center) ended 0.42 in from where `long` puts it after `nubs`
+    → `long`, and sank 0.25 in deeper. `resizeLimbs` instead moves each direct child (and its subtree) along the
+    axis by where its center lies: beyond either end of the straight part (between the cap centers of a capsule;
+    the whole height of a cylinder) it moves with that end, along it it keeps its fraction. Stretches compose, so
+    every chip order gives the same model (2.3e-6 in), the pad keeps its gap to the leg (−0.232 in) on every
+    chip, and the canonical teddy (pads on the leg axis) is unchanged. A capsule at its 2·r floor has no straight
+    part and keeps only which end a child is nearer. The head edit and `reanchorChildren` (T6) keep the spec's
+    ray.
 
 ## Ambiguities resolved
 
@@ -433,7 +451,7 @@ the analytic surface of its part to 1e-5 in).
 | §2.11.1 paint grid | Row-major, `row = ⌊v·64⌋`, `column = ⌊u·64⌋` (`uv64Cell`); values index `model.palette` |
 | `meshSdf` records | Keyed by `dims.meshRef` (like `ImportResult.meshes`), else by part id; the functions are part-local |
 | §4.2 limb "proximal end" with no SDF for a mesh parent | The pole nearer the parent's center |
-| §4.2 limb "proximal end" in general | Deviation 20: `openEnd`, else the larger parent SDF when decisive (≥ 0.25·r apart), else the pole nearer x = 0 |
+| §4.2 limb "proximal end" in general | Deviation 20: `openEnd`, else the end stored by an earlier resize (`x-cpg-proximal`), else the larger parent SDF on the limb as it is |
 | §3.5.1 "unique" part ids, for the kernels | A precondition of every kernel (the importer's ids repair runs first). They resolve an id to the FIRST part carrying it; `inferAttach` still returns one tree on repeated ids (its row), the others do not promise anything more |
 | §4.2 limb chip for creatures | `creature` arms and legs both 0.15 (DESIGN v1.3); `limb<n>_*` limbs use the arm value |
 | `withExtensions` | A transform (as the spec describes), so `z.toJSONSchema(crochetModelSchema)` cannot work: use the `…CoreSchema` exports |
@@ -473,12 +491,14 @@ the analytic surface of its part to 1e-5 in).
     `eye_l` style and are referenced like part ids). Say so in §3.5.1, and let the importer's "ids: slugify,
     dedupe" repair (§3.7.6) cover feature ids too, or a Claude Design feature id like `Eye-L` fails validation.
 
-15. **§4.2 (spec ambiguity, T6/T7):** "keeping its proximal end fixed (the pole with the larger parent SDF)" is
-    path-dependent for a limb lying along its parent — chip clicks in a different order give a different arm
-    (deviation 20 measured it on the teddy). Please make the rule in §4.2 the ordered one of deviation 20, or name
-    another stable one (e.g. a stored proximal end). §2.10.2's start pole uses the same SDF comparison ("tip
-    first"), so T4 should use the same function for both, or a nubs arm may be started at its shoulder; the kernel
-    can export it (`proximalGrow` is internal for now).
+15. **§4.2 (spec ambiguity, T6/T7/T4):** "keeping its proximal end fixed (the pole with the larger parent SDF)" is
+    path-dependent for a limb lying along its parent or pointing back toward it — chip clicks in a different
+    order give a different arm (deviation 20). The kernel stores the end it kept in the part key `x-cpg-proximal`
+    (`LIMB_PROXIMAL_KEY`); please name that key (or another stored proximal end) in §4.2 / §3.5.1. T6: the Attach
+    tool's open-end choice wins over the key; re-parenting a limb, or a Rotate that turns it end for end, should
+    delete the key (the next chip then applies the SDF rule to the limb as it is). §2.10.2's start pole uses the
+    same SDF comparison ("tip first"), so T4 should call `limbProximalEnd` for both, or a nubs arm may be started
+    at its shoulder. Also name the limb re-anchoring of deviation 23 in §4.2.
 16. **§3.5.1 `mirrorOf` (T3, T4, T7):** state that `mirrorOf` names a part of the same type without `mirrorOf`
     (deviation 21), and let the importer's "dims and attach validity" step drop a `mirrorOf` that breaks it (with
     a repair), or the strict validation at the end of §3.7.6 rejects such a Claude Design model.
@@ -505,4 +525,6 @@ the analytic surface of its part to 1e-5 in).
 the normative builder; then the completion commit (normative region defaults, lathe floor in `scaleModel`, torus
 arc against the builder mesh, every hint value in `every-type.json`, explicit timeouts for the heavy suites, these
 notes); then the verifier-round-1 fixes (a stable proximal end for limbs, duplicate ids in `inferAttach`, enclosure
-in `surfaceGap`, near-gimbal Euler angles, non-finite placement input, `mirrorOf` chains).
+in `surfaceGap`, near-gimbal Euler angles, non-finite placement input, `mirrorOf` chains); then the
+verifier-round-2 fix (the proximal end of a limb stored in `x-cpg-proximal`, limb children carried by the
+stretch; regression tests for toes-in legs and arms hanging straight down).
