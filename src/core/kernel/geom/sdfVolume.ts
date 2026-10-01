@@ -82,9 +82,15 @@ export function decodeSdfVolume(volume: SdfVolume): Float32Array<ArrayBuffer> {
  * point. A distance field cannot fall faster than that, so this is the lowest value consistent with the
  * stored samples: a volume cropped around its part (bbox + 2 voxels, §2.9.7) is outside (negative) everywhere
  * beyond its box, and gets more negative with distance.
+ *
+ * The volume is checked on every call, like `decodeSdfVolume` checks it (RangeError for dimensions that are
+ * not integers ≥ 1 or do not match `data.length`, a non-finite origin, a voxel size that is not a positive
+ * number): a broken stored volume must not answer with a plausible distance of the wrong sign. The check is
+ * a few comparisons, not a pass over the data. A point with a NaN coordinate gives NaN.
  */
 export function sampleSdfVolume(volume: SdfVolume, p: Readonly<Vec3>): number {
   const { data, dims, origin, voxel } = volume;
+  checkGrid(data.length, dims, origin, voxel);
   const nx = dims[0];
   const ny = dims[1];
   const nz = dims[2];

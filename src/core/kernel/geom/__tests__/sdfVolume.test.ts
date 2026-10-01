@@ -141,4 +141,26 @@ describe('sampleSdfVolume', () => {
     expect(sampleSdfVolume(dot, [5, 8, 9])).toBe(0.75 - 5);
     expect(sampleSdfVolume(line, [NaN, 0, 0])).toBeNaN();
   });
+
+  it('rejects a malformed volume like decodeSdfVolume does, instead of answering with a plausible distance', () => {
+    // (The second review found a voxel of −1 giving a finite 0.366, dims [0, 2, 2] giving −1, and dims that do
+    // not match the data reading past the end: a broken stored sdf: asset would flip inside and outside.)
+    const good = encodeSdfVolume(new Float32Array(8).fill(0.5), [2, 2, 2], [0, 0, 0], 1);
+    expect(sampleSdfVolume(good, [0.5, 0.5, 0.5])).toBe(0.5);
+    const broken: SdfVolume[] = [
+      { ...good, voxel: -1 },
+      { ...good, voxel: 0 },
+      { ...good, voxel: NaN },
+      { ...good, voxel: Infinity },
+      { ...good, dims: [0, 2, 2] },
+      { ...good, dims: [3, 3, 3] },
+      { ...good, dims: [2, 2, 1.5] as never },
+      { ...good, origin: [0, NaN, 0] },
+      { ...good, data: new Int16Array(7) },
+    ];
+    for (const volume of broken) {
+      expect(() => decodeSdfVolume(volume)).toThrow(RangeError);
+      expect(() => sampleSdfVolume(volume, [0.5, 0.5, 0.5])).toThrow(RangeError);
+    }
+  });
 });

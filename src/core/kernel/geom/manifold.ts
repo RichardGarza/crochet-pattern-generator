@@ -70,13 +70,17 @@ function rawConstructor(wrapped: ManifoldConstructor): ManifoldConstructor | und
  *
  * Returns `{ status: 'NoError', solid }` — the caller owns `solid` and must `delete()` it — or the error
  * status of a mesh that manifold-3d rejects; a rejected mesh is not an exception and leaves nothing behind
- * in the WASM heap. An index that is not an integer in [0, 2³²) gives `'VertexOutOfBounds'`.
+ * in the WASM heap. An index that is not an integer in [0, 2³²) gives `'VertexOutOfBounds'`; a position
+ * buffer whose length is not a multiple of 3 gives `'PropertiesWrongLength'` (manifold-3d itself would drop
+ * the trailing values and accept the rest as a valid solid). Malformed buffers are statuses here, not the
+ * `RangeError` of ./meshMeasures.ts, so that a caller validating a mesh (§2.9.5 step 5) has one check.
  *
  * manifold-3d accepts an inside-out mesh: check `solid.volume() > 0` too.
  */
 export async function manifoldFromMesh(mesh: MeshLike): Promise<ManifoldFromMesh> {
   const toplevel = await getManifold();
   const { positions, indices } = mesh;
+  if (positions.length % 3 !== 0) return { status: 'PropertiesWrongLength' };
   for (let i = 0; i < indices.length; i++) {
     const v = indices[i];
     // Uint32Array.from would turn 2.9 into 2 and NaN into 0, and validate a mesh that was not passed in.

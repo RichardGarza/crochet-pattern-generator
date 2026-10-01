@@ -375,26 +375,28 @@ describe('extendSignedDistance3d: contract details', () => {
   it('known values beyond the float32 range of the work array make no NaN', () => {
     // (The review found the squares of 1e25 and 1e20 overflowing the Float32Array of costs: the transform saw no
     // seed, and the unknown samples became NaN.)
-    const big64 = extendSignedDistance3d(Float64Array.of(1e25, Infinity, -1, -Infinity), [4, 1, 1]);
-    const big32 = extendSignedDistance3d(Float32Array.of(1e20, Infinity, -1, -Infinity), [4, 1, 1]);
-    expect(Array.from(big64)).toEqual([1e25, 2, -1, -2]);
-    expect(Array.from(big32)).toEqual([Math.fround(1e20), 2, -1, -2]);
+    const big64 = extendSignedDistance3d(Float64Array.of(1e25, Infinity, -0.5, -Infinity), [4, 1, 1]);
+    const big32 = extendSignedDistance3d(Float32Array.of(1e20, Infinity, -0.5, -Infinity), [4, 1, 1]);
+    expect(Array.from(big64)).toEqual([1e25, 0.5, -0.5, -1.5]);
+    expect(Array.from(big32)).toEqual([Math.fround(1e20), 0.5, -0.5, -1.5]);
   });
 
   it('a known sample bounds unknown samples of the other side too, so a band with a gap is still filled sensibly', () => {
-    // An inside sample marked unknown right next to a known outside sample (−0.3: the surface is 0.3 away from
-    // that neighbor, so less than 1 away from the unknown sample). The only inside seed is 9 samples away.
-    // (Using only seeds of the own side, as the first version did, gave 9.4.)
+    // An inside sample marked unknown right next to a known outside sample (−0.3: the surface crosses the
+    // segment between them at least 0.3 from that neighbor, so at most 0.7 from the unknown sample). The only
+    // inside seed is 9 samples away. (Using only seeds of the own side, as the first version did, gave 9.4;
+    // adding |sdf[q]| for a seed of the other side, as the second did, gave 1.3 — more than even ‖p − q‖.)
     const sdf = new Float64Array(12).fill(-Infinity);
     sdf[0] = 0.4; // the only known inside sample
     for (let x = 1; x <= 9; x++) sdf[x] = Infinity;
     sdf[10] = -0.3;
     sdf[11] = -1.3;
     extendSignedDistance3d(sdf, [12, 1, 1]);
-    expect(sdf[9]).toBeCloseTo(1.3, 6);
-    expect(sdf[1]).toBeCloseTo(1.4, 6);
-    // Halfway, the two bounds meet: min(4 + 0.4 + 1, 5 + 0.3 + 1) around x = 5.
-    expect(sdf[5]).toBeCloseTo(5.3, 6);
-    expect(sdf[4]).toBeCloseTo(4.4, 6);
+    expect(sdf[9]).toBeCloseTo(0.7, 12);
+    expect(sdf[1]).toBeCloseTo(1.4, 12);
+    // Halfway, the winner of the squared transform changes: q = 10 for x = 5 (25 + 0.09 < 25 + 0.16), giving
+    // 5 − 0.3; q = 0 for x = 4, giving 4 + 0.4.
+    expect(sdf[5]).toBeCloseTo(4.7, 12);
+    expect(sdf[4]).toBeCloseTo(4.4, 12);
   });
 });

@@ -18,7 +18,7 @@ kind of machine as the design budgets (research 04 §11).
 | `manifold.ts` | `getManifold` (the §5.4 loader), `manifoldFromMesh` (a mesh → a manifold-3d solid or its error status), `manifoldReport` (status / parts / genus / volume) |
 | `meshMeasures.ts` | signed volume, area, edge census, Euler characteristic, components, pinched vertices, degenerate triangles, bounds |
 | `sdfVolume.ts` | the layout and placement of `SdfVolume`, `encodeSdfVolume`, `decodeSdfVolume`, `sampleSdfVolume` |
-| `__tests__/` | 22 test files: 8 written with the kernels, 13 kept from the independent review (see "Review"), and `fields.test.ts` (the test helpers); `fields.ts` holds the analytic test solids (sphere, nine-ellipsoid teddy, torus, two spheres), the `HEAVY` test options and the `firstByteDifference` helper |
+| `__tests__/` | 24 test files: 8 written with the kernels, 13 kept from the first independent review, 2 from the second (`edt.ties`, `edt.spacingRange`; see "Review"), and `fields.test.ts` (the test helpers); `fields.ts` holds the analytic test solids (sphere, nine-ellipsoid teddy, torus, two spheres), the `HEAVY` test options and the `firstByteDifference` helper |
 
 `meshMeasures.ts` and `sdfVolume.ts` are not named in §5.1 (see "Deviations").
 
@@ -47,7 +47,10 @@ and timing tests: see "The test suite".
 - **Units:** every function takes the sample spacing (`voxel`, `spacing`) and returns world units; nothing assumes
   inches except `SdfVolume`.
 - **Malformed input throws `RangeError`** (wrong buffer length, dimensions, spacing, an index that is not a vertex)
-  before anything is written.
+  before anything is written — also in `sampleSdfVolume`, which checks the volume on every call. One exception:
+  `manifoldFromMesh` / `manifoldReport` answer a malformed mesh with a manifold-3d status, never an exception
+  (`'VertexOutOfBounds'` for a bad index, `'PropertiesWrongLength'` for a position buffer whose length is not a
+  multiple of 3), so that validating a mesh is one status check.
 
 ## Public API
 
@@ -108,7 +111,7 @@ function vertexAdjacency(indices: ArrayLike<number>, vertexCount: number): Verte
 type EdtArray = Float32Array | Float64Array;
 type Spacing2 = number | readonly [number, number];
 type Spacing3 = number | readonly [number, number, number];
-interface EdtOptions<S = number> { spacing?: S }                            // default 1; 1e-100 … 1e100
+interface EdtOptions<S = number> { spacing?: S }                            // default 1; 1e-15 … 1e15, else RangeError
 interface EdtSquaredOptions<S = number> extends EdtOptions<S> { nearest?: Int32Array }
 interface SignedEdtOptions extends EdtOptions<number> { measureTo?: 'samples' | 'boundary' }   // default 'samples'
 
@@ -129,7 +132,11 @@ function extendSignedDistance3d<T extends EdtArray>(sdf: T, dims: readonly [numb
 
 - `edtSquared*` — the seeded form, in place: `values[p] ← min over q of ‖(p − q)·spacing‖² + values[q]`. Entries are
   squared-distance costs: 0 = plain seed, +Infinity (or NaN) = no seed, any finite number otherwise. `nearest`
-  receives the index of a winning seed per sample — the lowest index on an exact tie — or −1 where there is none.
+  receives the index of a winning seed per sample, or −1 where there is none. Ties go to the lowest index (§5.8)
+  for plain seeds at any spacing that is the same on every axis (the transform then works in units of
+  spacing², where every value is a whole number until the final product) and for whole-number costs at
+  spacing 1. With per-axis spacings or non-zero costs at another spacing, rounding decides ties — the same
+  way on every run. Plain seeds at isotropic spacing h give h² × an exact integer.
 - `edt*` — distance (not squared) from every sample to the nearest non-zero mask sample; +Infinity everywhere for
   an empty mask, 0 everywhere for a full one. For the distance to the nearest ZERO sample, pass the inverted mask.
 - `signedEdt*` — positive inside (inside = non-zero). `'samples'` (default) is the exact signed transform of
@@ -140,7 +147,10 @@ function extendSignedDistance3d<T extends EdtArray>(sdf: T, dims: readonly [numb
 - `extendSignedDistance3d` — in place, §2.9.8 step 3: finite entries are exact and kept; +Infinity / −Infinity mark
   unknown inside / outside samples. Each gets, with its sign, the smaller of two upper bounds on its distance to
   the surface: the distance to the nearest crossing (the zero between two neighboring known samples on different
-  sides), and `‖p − q‖ + |sdf[q]|` for the known sample q that wins the seeded squared transform.
+  sides), and, through the known sample q that wins the seeded squared transform, `‖p − q‖ + |sdf[q]|` when q is
+  on p's side or `‖p − q‖ − |sdf[q]|` when it is on the other (the segment pq crosses the surface at least
+  |sdf[q]| from q). Where the latter is ≤ 0 (p may lie on the surface) p gets 1e-6 · the smallest spacing,
+  with its sign.
 
 ### `manifold.ts`
 
@@ -156,7 +166,8 @@ function manifoldReport(mesh: MeshLike): Promise<ManifoldReport>;
   failed initialization is not kept: the next call starts again.
 - `manifoldFromMesh` — builds a manifold-3d solid from an indexed mesh; the caller owns `solid` and must
   `delete()` it. A mesh that manifold-3d rejects is a status (`'NotManifold'`, `'NonFiniteVertex'`,
-  `'VertexOutOfBounds'`, …), not an exception, and leaves nothing in the WASM heap. **Use this instead of
+  `'VertexOutOfBounds'`, `'PropertiesWrongLength'` for a position buffer whose length is not a multiple of 3 —
+  manifold-3d itself drops the trailing values and accepts the rest —, …), not an exception, and leaves nothing in the WASM heap. **Use this instead of
   `new Manifold(mesh)`**: manifold-3d 3.5.4's own constructor wrapper throws on a bad status without freeing the
   object it has just built (about half a kilobyte per rejected mesh, never returned).
 - `manifoldReport` — `status`, `parts` (`decompose().length`), `genus` of the largest part by |volume|, and the
@@ -197,7 +208,9 @@ function sampleSdfVolume(volume: SdfVolume, p: Readonly<Vec3>): number;   // inc
   becomes 0, so the stored volume has exactly the inside/outside samples of the field.
 - `sampleSdfVolume` — `p` in the volume's frame; outside the lattice box: the value at the nearest box point minus
   the distance to it (the lowest value a distance field could have there). `(p) => sampleSdfVolume(v, p)` is the
-  `mesh` function that `partSdf` and `inferAttach` take.
+  `mesh` function that `partSdf` and `inferAttach` take. Checks the volume on every call (a few comparisons,
+  not a pass over the data) and throws `RangeError` for one that `decodeSdfVolume` would refuse; a NaN
+  coordinate gives NaN.
 
 ## How the callers use it
 
@@ -252,7 +265,7 @@ suites running (load average 6.6–7.8 on 12 cores).
 | MC sphere → manifold-3d | pass — `NoError`, 1 part, genus 0 at N = 64 and 128, before and after Taubin; torus genus 1; two spheres 2 parts |
 | Timing, MC, N = 128 | Session 1: 22 ms (sphere, 40 k vertices), 17 ms (teddy, 27 k vertices); budget 91 ms. N = 192: 68 ms / 55 ms; N = 256 (teddy): 140 ms. Worst case, noise at N = 128 (6.8 M triangles): 247 ms. Session 3 (best / median of 15): sphere 24.8 / 25.2 ms, teddy 18.8 / 18.9 ms |
 | Timing, Taubin × 10 | Session 1: 14 ms (sphere), 9.7 ms (teddy); budget 33 ms for 21 k vertices. 3 pairs: 6 ms / 4 ms. Session 3 (best / median of 15): sphere 19.0 / 19.2 ms, teddy 13.0 / 13.2 ms; 3 pairs 8.2 ms (sphere) |
-| Timing, 3D EDT, N = 128 | Session 1: 51 ms unsigned, 110 ms signed (sphere mask). 2D signed, 512²: 7.0 ms (research: 21 ms). `extendSignedDistance3d`, N = 96: 90 ms. Session 3 (best / median of 7): 54.2 / 54.9 ms unsigned, 114.6 / 115.7 ms signed; `manifoldReport` of the N = 128 sphere (80 k triangles): 57 ms |
+| Timing, 3D EDT, N = 128 | Session 1: 51 ms unsigned, 110 ms signed (sphere mask). 2D signed, 512²: 7.0 ms (research: 21 ms). `extendSignedDistance3d`, N = 96: 90 ms. Session 3 (best / median of 7): 54.2 / 54.9 ms unsigned, 114.6 / 115.7 ms signed; `manifoldReport` of the N = 128 sphere (80 k triangles): 57 ms. Session 4 (best of 7, load 5–8): 54 ms unsigned, 117 ms signed (unchanged); `extendSignedDistance3d` N = 96 at spacing 0.05: 110–115 ms (95–100 before the sample-unit passes, same load) |
 | Determinism | pass — byte-identical positions and indices on repeated runs and across three processes; node and a Chromium worker give the same counts and volume (session 1). Session 3: the FNV-1a 64 hashes of positions, indices and the Taubin result (sphere, teddy, torus at N = 128) and of `edt3d` / `signedEdt3d` (N = 128 sphere mask) were the same twice in one process and in two separate processes |
 
 The timing tests assert 300 ms (MC), 150 ms (Taubin), 500 ms / 1 s (3D EDT, unsigned / signed) and 150 ms (2D),
@@ -310,7 +323,7 @@ and was not re-run (marked **[s1–2]**).
 
 ## The test suite
 
-`npm test -- src/core/kernel/geom`: 22 files, 247 tests, of which 244 run and 3 are skipped on purpose; about
+`npm test -- src/core/kernel/geom`: 24 files, 257 tests, of which 254 run and 3 are skipped on purpose; about
 6–7 s wall on this machine (36 s of test time spread over the workers).
 
 - **Timeouts.** Vitest's default is 5 s per test, and it fails a synchronous test that finishes after its timeout
@@ -346,7 +359,10 @@ and was not re-run (marked **[s1–2]**).
   `GEOM_FULL=1 npm test -- src/core/kernel/geom` runs them; in session 3 all three passed: 786 432 closed meshes
   with 0 defects, 786 432 open meshes with 0 non-manifold defects and every boundary edge on the box, 786 429
   non-empty meshes accepted by manifold-3d with the right number of parts and volume.
-- **The reviewers' files.** No `zz-review*` file is left: session 2 kept all 13 under proper names. Session 3 read
+- **The reviewers' files.** No `zz-review*` or `zz-verify*` file is left: session 2 kept all 13 of the first
+  review under proper names; session 4 folded the five files of the second review into `edt.ties.test.ts`,
+  `edt.spacingRange.test.ts`, `sdfVolume.test.ts`, `manifold.meshes.test.ts` and `edt.extend.test.ts` (each
+  tests a documented rule), and deleted the originals. Session 3 read
   each of them again — every one tests a documented rule of the kernels against an independent reference or an
   analytic value (the leak test of `manifold.meshes` checks manifold-3d itself, the reason `manifoldFromMesh`
   exists) — and kept them all.
@@ -372,10 +388,10 @@ What the first review found, and what was done:
 | Marching cubes: from \|coordinate\| / voxel = 2¹⁸ on, float32 rounded the 0.01-voxel clamp away (140 zero-area triangles in a 6³ test lattice), silently; an origin of 1e39 gave ±Infinity positions | such lattices are refused with a `RangeError` (from 2¹⁷ on) |
 | Measures: the triangle (0, 0, 1) passed for a closed surface, (5, 5, 5) counted as a pinched vertex | a triangle that names a vertex twice is counted (`degenerateTriangles`) and otherwise ignored; `isWatertight` is false |
 | `signedVolume` lost digits far from the origin (2.6e-6 relative at 1e4, useless at 1e6) | summed around the mesh's own first vertex |
-| `edtSquared*`: a spacing of 1e160 gave NaN, 1e-170 wrong values (its square overflows / underflows) | spacings outside 1e-100 … 1e100 are refused |
+| `edtSquared*`: a spacing of 1e160 gave NaN, 1e-170 wrong values (its square overflows / underflows) | spacings outside 1e-100 … 1e100 are refused (narrowed to 1e-15 … 1e15 after the second review, below) |
 | `edtSquared*`: a −Infinity cost threw after the first rows had been rewritten | validated before anything is written |
 | `extendSignedDistance3d`: the documented "at most 0.60 voxel too large" did not hold — 0.84 on a rotated box, 0.89 on a plane tilted by 0.01; level sets 6 voxels beyond the band were off by up to 0.46 voxel (0.10 rms) | new method (crossings, plus the bound through a known sample); see "Deviations" 4 for the numbers |
-| `extendSignedDistance3d`: a known value beyond 1.8e19 overflowed the float32 work array and produced NaN; only seeds of the own side were used, so a sample next to a known −0.3 got 9.4 | costs are capped; a known sample of either side bounds every unknown one (that sample now gets 1.3) |
+| `extendSignedDistance3d`: a known value beyond 1.8e19 overflowed the float32 work array and produced NaN; only seeds of the own side were used, so a sample next to a known −0.3 got 9.4 | costs are capped; a known sample of either side bounds every unknown one (that sample got 1.3; 0.7 since the second review, below) |
 | `encodeSdfVolume` stored a NaN origin; negative halves rounded toward zero (−1.5 → −1) while positive ones rounded away | origin validated; halves round away from zero on both sides |
 | Signed transform: the default (`'boundary'` then) made an inflated disc 3.2% too small at a radius of 26 px (the spec's form: 1.9% too large), with no gain for the hull (1.1184 vs 1.1186) | the default is the spec's exact form, `'samples'`; `'boundary'` stays as an option; see "Ambiguities" |
 
@@ -397,6 +413,20 @@ Information it produced for later tracks:
   makes one.) A cavity is a part with negative volume.
 - `manifoldReport` on the N = 128 sphere (80 k triangles): 62 ms; `edgeStats` 12 ms.
 
+What the second review found (session 4; each finding reproduced with the reviewer's test first):
+
+| Finding | Fix |
+|---|---|
+| `edtSquared*` `nearest` sent exact ties to the HIGHER index at spacings other than 1 (spacing 0.1, seeds 1 and 7: sample 4 → 7; spacing 0.0229, seeds 0 and 46: sample 23 → 46), against the documented rule and §5.8; in 3D, seeds at the same distance along different axes ((3, 4, 0) vs (0, 0, 5)) also came out one rounding apart (45 of 46 575 samples at 0.0229, 59 at 1.1 on random grids, after a first fix of the crossing alone) | isotropic grids run in units of spacing² (divided on the first pass, multiplied on the last), so plain seeds stay whole numbers and every true tie is exact: 0 misses on 8 spacings × 1D/2D/3D × Float32/Float64 (`edt.ties.test.ts`, > 5 000 ties). Per-axis spacings and non-zero costs at h ≠ 1: rounding decides, documented. Cost (A/B, same load): `edtSquared3d` N = 128 at spacing 0.05 53 → 66 ms, `extendSignedDistance3d` N = 96 95–100 → 110–115 ms; the mask transforms unchanged (they already ran at spacing 1) |
+| `manifoldFromMesh` / `manifoldReport` accepted a position buffer whose length is not a multiple of 3 (a 13th value: `'NoError'`, the value silently dropped by manifold-3d) | `'PropertiesWrongLength'` (a status, like every other malformed mesh here; a buffer of 10 values, `'NotManifold'` before, gives it too) |
+| `sampleSdfVolume` did not check the volume: a voxel of −1 gave a finite 0.366, dims [0, 2, 2] gave −1, dims not matching the data read past the end (NaN) | the same check as `decodeSdfVolume` on every call (`RangeError`) |
+| The spacing range 1e-100 … 1e100 was wider than the float32 results and work arrays hold: `signedEdt1d` at 1e-50 all 0 (signs lost), `edt1d` at 1e50 +Infinity, `extendSignedDistance3d` with 11 296 samples ±0 at 1e-30 and 7 506 wrong at 1e20 | 1e-15 … 1e15 for every transform (spacing² and (spacing · 10⁴ samples)² stay normal float32); at both ends the far field of the reviewer's sphere band is within 0.2 voxel with every sign kept (`edt.spacingRange.test.ts`) |
+| `extendSignedDistance3d`: through a known sample of the OTHER side the bound was `‖p − q‖ + \|sdf[q]\|`; the valid and tighter one is `‖p − q‖ − \|sdf[q]\|` (an unknown sample next to a known −0.3 got 1.3, the data allow 0.7; the kept test pinned 1.3) | the other-side form; that sample gets 0.7. The far-field numbers of "Deviations" 4 are unchanged (a complete band of exact distances rarely lets a sample of the other side win); the brute-force test's split of which bound decides moved from 1258 / 511 to 738 / 1031 on its random half-known fields |
+
+Found while fixing: the lower envelope stepped below its first entry when a crossing was −Infinity (cost
+differences beyond the double range at a tiny spacing) and read `v[−1]`; the result was right by luck. Guarded,
+and tested.
+
 ## Deviations from the spec, with reasons
 
 1. **Two files beyond §5.1's list** (`{marchingCubes,taubin,edt,manifold}.ts`): `meshMeasures.ts` (asked for by the
@@ -412,8 +442,9 @@ Information it produced for later tracks:
    literally (the square root of the transform seeded with d², per side): that is up to 1.96 voxels too small
    with a band of ±2 voxels (1.4–1.7 on average), which would fail T5's own acceptance ("within 1 voxel" of a
    brute-force SDF). `extendSignedDistance3d` takes the smaller of two upper bounds — the distance to the nearest
-   sub-voxel crossing between two known samples, and `‖p − q‖ + |d(q)|` for the known sample q that wins the
-   seeded transform, of either side. Measured at N = 96, band ±2: −0.01 … +0.14 voxel on smooth solids (0.01 on
+   sub-voxel crossing between two known samples, and, through the known sample q that wins the seeded
+   transform, `‖p − q‖ + |d(q)|` (q on p's side) or `‖p − q‖ − |d(q)|` (q on the other side). Measured at
+   N = 96, band ±2 (the same numbers in session 4, after the other-side form changed from + to −): −0.01 … +0.14 voxel on smooth solids (0.01 on
    average), within 0.11 voxel on planes at any tilt (0.103 at the steepest, N = 64), up to 0.58 voxel next to
    sharp edges (boxes, a thin plate; 0.04–0.06 on average; 0.68 on one rotated box in a session-2 scratch run).
    Marching cubes at ±6 voxels on the completed field of a sphere is within 0.06 voxel of the true level set
@@ -497,6 +528,9 @@ Information it produced for later tracks:
    `fields.test.ts`, `retry: 2` on the hub timing test); the acceptance list measured again with an independent
    harness; the `GEOM_FULL` runs; these notes completed. No kernel changed behavior; one doc comment of
    `extendSignedDistance3d` was corrected (planes: within 0.11 voxel, not 0.1).
+4. Session 4 — the fixes from the second review ("Review"): exact ties at any isotropic spacing, the spacing
+   range 1e-15 … 1e15, the other-side bound of `extendSignedDistance3d`, `'PropertiesWrongLength'` in
+   `manifoldFromMesh`, the volume check in `sampleSdfVolume`; two new test files; these notes.
 
 The two commits of sessions 1 and 2 end with the trailer `Co-Authored-By: Claude Fable 5.1
 <noreply@anthropic.com>` instead of the `Claude Opus 5.5` line that the Step 0b rules ask for. They were left

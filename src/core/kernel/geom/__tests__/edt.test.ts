@@ -488,7 +488,7 @@ describe('signedEdt1d/2d/3d', () => {
 // ---- narrow band → whole grid ----------------------------------------------------------------------------
 
 describe('extendSignedDistance3d', HEAVY, () => {
-  it('gives every unknown sample the smaller of: the distance to the nearest crossing, and ‖p − q‖ + |sdf[q]| for the known sample that wins the squared transform', () => {
+  it('gives every unknown sample the smaller of: the distance to the nearest crossing, and ‖p − q‖ ± |sdf[q]| (+ same side, − other side) for the known sample that wins the squared transform', () => {
     const rng = mulberry32(51);
     let checked = 0;
     let viaCrossing = 0;
@@ -548,7 +548,10 @@ describe('extendSignedDistance3d', HEAVY, () => {
           if (!Number.isFinite(before[q])) continue;
           const cost = gap2(p, q, dims, spacing) + before[q] ** 2;
           if (cost > best * (1 + 1e-5) + 1e-9) continue;
-          const value = side * Math.min(toCrossing, Math.sqrt(gap2(p, q, dims, spacing)) + Math.abs(before[q]));
+          const apart = Math.sqrt(gap2(p, q, dims, spacing));
+          const sameSide = before[q] >= 0 === side > 0;
+          const viaSample = sameSide ? apart + Math.abs(before[q]) : Math.max(apart - Math.abs(before[q]), 1e-6 * Math.min(...spacing));
+          const value = side * Math.min(toCrossing, viaSample);
           if (Math.abs(sdf[p] - value) <= 1e-6 * Math.max(1, Math.abs(value))) matches = true;
         }
         expect(matches).toBe(true);
@@ -556,9 +559,11 @@ describe('extendSignedDistance3d', HEAVY, () => {
         checked++;
       }
     }
-    // 1769 unknown samples; the crossing bound decides 1258 of them, the known-sample bound the other 511.
+    // 1769 unknown samples; the crossing bound decides 738 of them, the known-sample bound the other 1031.
+    // (1258 / 511 before a known sample of the other side gave ‖p − q‖ − |sdf[q]|: these random fields put
+    // known samples of both sides everywhere.)
     expect(checked).toBe(1769);
-    expect(viaCrossing).toBe(1258);
+    expect(viaCrossing).toBe(738);
   });
 
   it('on a sphere with a ±2 voxel band the far field is within 0.13 voxel; the square root of the seeded transform is 1.9 voxels short', () => {
@@ -657,24 +662,31 @@ describe('extendSignedDistance3d', HEAVY, () => {
     const blank = Float64Array.of(Infinity, Infinity, -Infinity, -Infinity);
     expect(Array.from(extendSignedDistance3d(Float64Array.from(blank), [4, 1, 1]))).toEqual(Array.from(blank));
     // Only an outside sample is known: no crossing, so every sample is bounded through it — also the inside
-    // ones (the surface is 0.5 beyond it; 1 + 0.5 and 2 + 0.5 are upper bounds, not the distance).
+    // ones: the way to it crosses the surface at least 0.5 before it, so 1 − 0.5 and 2 − 0.5 (upper bounds,
+    // not the distance); the outside one beyond it gets 1 + 0.5.
     const lonely = extendSignedDistance3d(Float64Array.of(Infinity, Infinity, -0.5, -Infinity), [4, 1, 1]);
-    expect(Array.from(lonely)).toEqual([2.5, 1.5, -0.5, -1.5]);
+    expect(Array.from(lonely)).toEqual([1.5, 0.5, -0.5, -1.5]);
     // A known 0 lies on the surface: both sides measure from it.
     const zero = extendSignedDistance3d(Float64Array.of(Infinity, Infinity, 0, -Infinity, -Infinity), [5, 1, 1], { spacing: 0.5 });
     expect(Array.from(zero)).toEqual([1, 0.5, 0, -0.5, -1]);
     // A crossing between +0.25 and −0.75, a quarter of the way: both bounds agree along the line.
     const line = extendSignedDistance3d(Float64Array.of(Infinity, Infinity, 0.25, -0.75, -Infinity, -Infinity), [1, 6, 1]);
     expect(Array.from(line)).toEqual([2.25, 1.25, 0.25, -0.75, -1.75, -2.75]);
-    // Off the line the crossing is nearer than any known sample plus its distance: 2×3, crossing at (0.5, 1).
+    // 2×3, known +0.5 at (0, 1) and −0.5 at (1, 1), crossing at (0.5, 1). Diagonally the crossing is nearer than
+    // the own-side neighbor plus its distance (√1.25 < 1 + 0.5); straight across from the neighbor of the other
+    // side, the way to it crosses the surface at least 0.5 before it (1 − 0.5).
     const grid = extendSignedDistance3d(Float64Array.of(Infinity, Infinity, 0.5, -0.5, -Infinity, -Infinity), [2, 3, 1]);
     expect(grid[0]).toBeCloseTo(Math.hypot(0.5, 1), 6);
-    expect(grid[1]).toBeCloseTo(Math.hypot(0.5, 1), 6);
-    expect(grid[4]).toBeCloseTo(-Math.hypot(0.5, 1), 6);
+    expect(grid[1]).toBeCloseTo(0.5, 12);
+    expect(grid[4]).toBeCloseTo(-0.5, 12);
     expect(grid[5]).toBeCloseTo(-Math.hypot(0.5, 1), 6);
     // An absurdly large known value neither overflows the work array nor makes a NaN.
-    const huge = extendSignedDistance3d(Float64Array.of(1e25, Infinity, -1, -Infinity), [4, 1, 1]);
-    expect(Array.from(huge)).toEqual([1e25, 2, -1, -2]);
+    const huge = extendSignedDistance3d(Float64Array.of(1e25, Infinity, -0.5, -Infinity), [4, 1, 1]);
+    expect(Array.from(huge)).toEqual([1e25, 0.5, -0.5, -1.5]);
+    // Known values that leave no room: the surface may pass through sample 1 itself (−1 one sample away).
+    // The bound through the other side is 1 − 1 = 0; the sample keeps its sign with 1e-6 · spacing.
+    const tight = extendSignedDistance3d(Float32Array.of(5, Infinity, -1, -Infinity), [4, 1, 1], { spacing: 0.25 });
+    expect(Array.from(tight)).toEqual([5, Math.fround(0.25e-6), -1, -1.25]);
   });
 
   it('rejects NaN and malformed grids', () => {

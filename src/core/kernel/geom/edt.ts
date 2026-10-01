@@ -21,9 +21,13 @@
 // per axis.
 //
 // Exactness: with spacing 1 and mask input every squared distance is an integer and is computed exactly (also
-// in a Float32Array, up to 2^24). With other spacings or real-valued costs the results are exact up to
-// floating-point rounding. Ties go to the lowest index (§5.8): exactly so for integer costs at unit spacing,
-// and in any case the same way on every run.
+// in a Float32Array, up to 2^24). With the same spacing h on every axis the squared transforms work in units
+// of h², so plain seeds (cost 0) give h² × an exact integer at any h. With per-axis spacings or non-zero costs
+// at h ≠ 1 the results are exact up to floating-point rounding.
+// Ties go to the lowest index (§5.8) for every true tie when the spacing is the same on every axis and the
+// costs are 0 (plain seeds), or whole numbers at spacing 1. Otherwise rounded crossing points decide: two
+// seeds at the same true distance (offsets along different axes with per-axis spacings, a cost divided by
+// h²) can come out one rounding apart, or tie and go either way — the same way on every run.
 
 /** A work or result array of the squared transforms. */
 export type EdtArray = Float32Array | Float64Array;
@@ -41,7 +45,9 @@ export interface EdtOptions<S = number> {
 export interface EdtSquaredOptions<S = number> extends EdtOptions<S> {
   /**
    * Receives, for every sample, the index of a seed q that attains the minimum — the lowest such index when
-   * several tie exactly — or −1 where no seed exists. Must have one entry per sample.
+   * several tie exactly (§5.8; guaranteed for plain seeds at any spacing that is the same on every axis and
+   * for whole-number costs at spacing 1; see the file header for the other cases) — or −1 where no seed exists.
+   * Must have one entry per sample.
    */
   nearest?: Int32Array;
 }
@@ -70,9 +76,15 @@ export interface SignedEdtOptions extends EdtOptions<number> {
   measureTo?: 'samples' | 'boundary';
 }
 
-/** Beyond these the square of a spacing, or its product with a squared index, leaves the range of a double. */
-const MIN_SPACING = 1e-100;
-const MAX_SPACING = 1e100;
+/**
+ * The accepted spacings. The mask transforms return float32 and `extendSignedDistance3d` keeps squared world
+ * distances in float32 work arrays, so a spacing must keep spacing² (the smallest non-zero squared distance)
+ * and (spacing · grid diagonal)² normal float32 numbers, with room for grids of 10⁴ samples per axis. (The
+ * first version accepted 1e-100 … 1e100, the double range: at 1e-50 a signed transform came out all 0, at
+ * 1e50 a distance came out +Infinity, and the far field lost its sign at 1e-30 and its values at 1e20.)
+ */
+const MIN_SPACING = 1e-15;
+const MAX_SPACING = 1e15;
 
 function checkSpacing(s: number): number {
   if (!(s >= MIN_SPACING && s <= MAX_SPACING)) {
@@ -134,8 +146,12 @@ function makeScratch(n: number): Scratch {
 
 /**
  * One line: out[q] = min over p of w2·(q − p)² + f[p], and arg[q] = the p that attains it (where two
- * parabolas of the envelope tie, the one with the lower p). `f[p]` is finite, or +Infinity / NaN for "no
- * seed"; the line must hold at least one seed.
+ * parabolas of the envelope cross exactly at a sample, the one with the lower p). `f[p]` is finite, or
+ * +Infinity / NaN for "no seed"; the line must hold at least one seed.
+ *
+ * With w2 = 1 and whole-number costs every crossing is an exact rational, so an exact tie lands exactly on
+ * the sample and goes to the lower p. Otherwise the crossing is rounded and decides a tie whichever way it
+ * rounds (the same way on every run): `squaredTransform` therefore runs isotropic grids in sample units.
  */
 function lowerEnvelope(s: Scratch, n: number, w2: number): void {
   const { f, out, arg, v, z } = s;
@@ -156,12 +172,14 @@ function lowerEnvelope(s: Scratch, n: number, w2: number): void {
     let cross = (gq - (f[p] + w2 * p * p)) / (2 * w2 * (q - p));
     while (cross <= z[k]) {
       k--;
+      // (A crossing of −Infinity — a cost difference beyond the double range — hides every parabola.)
+      if (k < 0) break;
       p = v[k];
       cross = (gq - (f[p] + w2 * p * p)) / (2 * w2 * (q - p));
     }
     k++;
     v[k] = q;
-    z[k] = cross;
+    z[k] = k === 0 ? -Infinity : cross;
     z[k + 1] = Infinity;
   }
   let j = 0;
@@ -175,11 +193,30 @@ function lowerEnvelope(s: Scratch, n: number, w2: number): void {
 }
 
 /**
- * The separable transform over the listed axes of a grid with the given dimensions (x fastest), in place:
- * one pass of `lowerEnvelope` along every line of each axis, in the order given. `nearest`, when given, is
- * set by the first pass and carried through the others.
+ * Whether every finite cost divided by `w2` — the costs in units of spacing² — stays a seed with its sign: the
+ * quotient must be finite, and non-zero where the cost is, in the precision of `values`.
+ */
+function fitsSampleUnits(values: EdtArray, w2: number): boolean {
+  const single = values instanceof Float32Array;
+  for (let i = 0; i < values.length; i++) {
+    const c = values[i];
+    if (!(c - c === 0) || c === 0) continue;
+    const u = single ? Math.fround(c / w2) : c / w2;
+    if (!(u - u === 0) || u === 0) return false;
+  }
+  return true;
+}
+
+/**
+ * The separable transform over the listed axes of a grid with the given dimensions (x fastest), in place.
  *
- * A line along an axis starts at `hi + lo` (hi: a multiple of stride·n, lo < stride) and steps by `stride`.
+ * When the spacing is the same along every listed axis, the transform runs in sample units — costs divided
+ * by spacing² before, results multiplied by it after — so that plain seeds (cost 0) give whole numbers through
+ * every pass: every value is exact until the final product, and seeds at the same true distance tie exactly,
+ * whatever the spacing and whichever axes their offsets lie along, and the lowest index wins (§5.8). In world
+ * units the passes round, and a tie between offsets such as (3, 4, 0) and (0, 0, 5) at spacing 0.3 could come
+ * out one rounding apart. (Costs that the division would push out of the range of `values` take the
+ * world-unit path.)
  */
 function squaredTransform(
   values: EdtArray,
@@ -187,6 +224,39 @@ function squaredTransform(
   spacing: readonly number[],
   axes: readonly number[],
   nearest?: Int32Array,
+): void {
+  if (axes.length === 0) return;
+  const h = spacing[axes[0]];
+  const w2 = h * h;
+  if (w2 !== 1 && axes.every((axis) => spacing[axis] === h) && fitsSampleUnits(values, w2)) {
+    envelopePasses(
+      values,
+      dims,
+      dims.map(() => 1),
+      axes,
+      nearest,
+      w2,
+    );
+    return;
+  }
+  envelopePasses(values, dims, spacing, axes, nearest, 1);
+}
+
+/**
+ * The work of `squaredTransform`, with the spacing as given: one pass of `lowerEnvelope` along every line of
+ * each listed axis, in the order given. `nearest`, when given, is set by the first pass and carried through
+ * the others. The first pass divides what it reads by `unit`, the last one multiplies what it writes by it
+ * (1: neither).
+ *
+ * A line along an axis starts at `hi + lo` (hi: a multiple of stride·n, lo < stride) and steps by `stride`.
+ */
+function envelopePasses(
+  values: EdtArray,
+  dims: readonly number[],
+  spacing: readonly number[],
+  axes: readonly number[],
+  nearest: Int32Array | undefined,
+  unit: number,
 ): void {
   let total = 1;
   let longest = 1;
@@ -199,19 +269,30 @@ function squaredTransform(
   const s = makeScratch(longest);
   const { f, out, arg, src } = s;
   let firstPass = true;
-  for (const axis of axes) {
+  for (let pass = 0; pass < axes.length; pass++) {
+    const axis = axes[pass];
     const n = dims[axis];
     const stride = strides[axis];
     const block = stride * n;
     const w2 = spacing[axis] * spacing[axis];
+    const divide = firstPass && unit !== 1;
+    const multiply = pass === axes.length - 1 && unit !== 1;
     for (let hi = 0; hi < total; hi += block) {
       for (let lo = 0; lo < stride; lo++) {
         const base = hi + lo;
         let any = false;
-        for (let k = 0, at = base; k < n; k++, at += stride) {
-          const x = values[at];
-          f[k] = x;
-          if (x < Infinity) any = true;
+        if (divide) {
+          for (let k = 0, at = base; k < n; k++, at += stride) {
+            const x = values[at] / unit;
+            f[k] = x;
+            if (x < Infinity) any = true;
+          }
+        } else {
+          for (let k = 0, at = base; k < n; k++, at += stride) {
+            const x = values[at];
+            f[k] = x;
+            if (x < Infinity) any = true;
+          }
         }
         if (!any) {
           // No seed on this line: every value is +Infinity (a NaN, which means "no seed", becomes +Infinity).
@@ -222,7 +303,8 @@ function squaredTransform(
           continue;
         }
         lowerEnvelope(s, n, w2);
-        for (let k = 0, at = base; k < n; k++, at += stride) values[at] = out[k];
+        if (multiply) for (let k = 0, at = base; k < n; k++, at += stride) values[at] = out[k] * unit;
+        else for (let k = 0, at = base; k < n; k++, at += stride) values[at] = out[k];
         if (nearest !== undefined) {
           if (firstPass) {
             // The winning seed is on this very line.
@@ -481,9 +563,13 @@ function crossingDistancesSquared(sdf: EdtArray, dims: readonly [number, number,
  *      along each axis in turn with the exact distance to the crossings of that axis' lines, the transform
  *      gives the distance to the nearest of all these points — a sampling of the surface itself, about one
  *      point per voxel face.
- *   2. `‖p − q‖ + |sdf[q]|` for the known sample q, of either side, that minimizes `‖p − q‖² + sdf[q]²`: the
- *      surface is |sdf[q]| away from q (triangle inequality). This bound also reaches sharp convex edges and
- *      corners, which no lattice edge crosses, and it is the only one when the known samples lie on one side.
+ *   2. Through the known sample q, of either side, that minimizes `‖p − q‖² + sdf[q]²`: `‖p − q‖ + |sdf[q]|`
+ *      when q lies on the side of p (the surface is |sdf[q]| away from q: triangle inequality), and
+ *      `‖p − q‖ − |sdf[q]|` when it lies on the other side (the segment from p to q crosses the surface at
+ *      least |sdf[q]| from q). This bound also reaches sharp convex edges and corners, which no lattice edge
+ *      crosses, and it is the only one when the known samples lie on one side. (Where the second form is ≤ 0
+ *      the surface may pass through p itself; p then gets 1e-6 · the smallest spacing, with its sign. With
+ *      exact known distances the other-side form is never below p's true distance.)
  *
  * Why not the square root of the transform seeded with sdf², as a literal reading of §2.9.8 suggests: a band
  * sample q at distance d from the surface lies on the way from p to the surface, so the true distance is
@@ -537,6 +623,9 @@ export function extendSignedDistance3d<T extends EdtArray>(sdf: T, dims: readonl
   }
   squaredTransform(work, dims, spacing, [0, 1, 2], nearest);
 
+  // Where the bound through a known sample of the other side is ≤ 0, the surface may pass through p itself;
+  // p keeps its sign with this small value (a normal float32 for every accepted spacing).
+  const floor = 1e-6 * Math.min(spacing[0], spacing[1], spacing[2]);
   let i = 0;
   for (let z = 0; z < dims[2]; z++) {
     for (let y = 0; y < ny; y++) {
@@ -548,7 +637,10 @@ export function extendSignedDistance3d<T extends EdtArray>(sdf: T, dims: readonl
         const dx = (x - (q - row * nx)) * spacing[0];
         const dy = (y - (row % ny)) * spacing[1];
         const dz = (z - Math.floor(row / ny)) * spacing[2];
-        const viaSample = Math.sqrt(dx * dx + dy * dy + dz * dz) + Math.abs(sdf[q]);
+        const known = sdf[q];
+        const apart = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        // Same side: the surface is |known| beyond q. Other side: segment pq crosses it at least |known| from q.
+        const viaSample = known >= 0 === d > 0 ? apart + Math.abs(known) : Math.max(apart - Math.abs(known), floor);
         const viaCrossing = Math.sqrt(crossing[i]);
         const best = viaCrossing < viaSample ? viaCrossing : viaSample;
         sdf[i] = d > 0 ? best : -best;

@@ -341,12 +341,14 @@ describe('edtSquared*: real costs, extreme costs, extreme spacings', HEAVY, () =
   });
 });
 
-describe('edtSquared*: spacing whose square leaves the float64 range', () => {
-  it('is refused: a spacing must lie in 1e-100 … 1e100', () => {
-    // (The review found 1e160 accepted and answered with NaN — spacing² overflows, and Infinity·0·0 is NaN at
-    // the seed itself — and 1e-170 accepted and answered with wrong values: spacing² underflows to 0, the
-    // crossing of two equal costs is 0/0, and [1, 1, 0] came back unchanged instead of [0, 0, 0].)
-    for (const spacing of [1e160, 1e101, 1e-170, 1e-101, 5e-324, Number.MAX_VALUE]) {
+describe('spacing outside what the float32 results and work arrays hold', () => {
+  it('is refused: a spacing must lie in 1e-15 … 1e15', () => {
+    // (The first review found 1e160 accepted and answered with NaN — spacing² overflows, and Infinity·0·0 is NaN
+    // at the seed itself — and 1e-170 accepted and answered with wrong values: spacing² underflows to 0, the
+    // crossing of two equal costs is 0/0, and [1, 1, 0] came back unchanged instead of [0, 0, 0]. The second
+    // found the float32 outputs failing inside the range then accepted, 1e-100 … 1e100: signedEdt1d at 1e-50
+    // all 0, edt1d at 1e50 +Infinity, extendSignedDistance3d losing signs at 1e-30 and values at 1e20.)
+    for (const spacing of [1e160, 1e101, 1e50, 2e15, 1e-170, 1e-101, 1e-50, 1e-30, 9e-16, 5e-324, Number.MAX_VALUE]) {
       expect(() => edtSquared1d(Float64Array.of(0, Infinity, Infinity), { spacing })).toThrow(RangeError);
       expect(() => edtSquared2d(new Float64Array(4), 2, 2, { spacing: [1, spacing] })).toThrow(RangeError);
       expect(() => edtSquared3d(new Float64Array(8), [2, 2, 2], { spacing: [spacing, 1, 1] })).toThrow(RangeError);
@@ -357,7 +359,7 @@ describe('edtSquared*: spacing whose square leaves the float64 range', () => {
 
   it('at the ends of that range the transform is still right', () => {
     const rng = mulberry32(0xb007);
-    for (const spacing of [1e-100, 1e100, 3e-37, 7e41]) {
+    for (const spacing of [1e-15, 1e15, 3e-13, 7e12]) {
       for (let trial = 0; trial < 100; trial++) {
         const n = 1 + Math.floor(rng() * 12);
         // Costs in units of spacing², so that distance and cost terms compete.

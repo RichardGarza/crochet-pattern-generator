@@ -213,6 +213,8 @@ describe('manifoldReport semantics', () => {
       }
     };
     await attempt('positions length 10', { positions: TET.slice(0, 10), indices: TET_FACES });
+    // (The second review found a 13th value silently dropped by manifold-3d: the tetrahedron came back 'NoError'.)
+    await attempt('positions length 13', { positions: [...TET, 5], indices: TET_FACES });
     await attempt('indices length 11', { positions: TET, indices: TET_FACES.slice(0, 11) });
     await attempt('negative index', { positions: TET, indices: [...TET_FACES.slice(0, 11), -1] });
     await attempt('fractional index 2.9', { positions: TET, indices: [...TET_FACES.slice(0, 11), 2.9] });
@@ -225,7 +227,8 @@ describe('manifoldReport semantics', () => {
     // An index that is not an integer in [0, 2^32) is never handed to Uint32Array.from, which would turn 2.9
     // into 2 and NaN into 0 and so validate a mesh that was not passed in (the review found 'NoError' for 2.9).
     expect(results).toEqual({
-      'positions length 10': 'NotManifold',
+      'positions length 10': 'PropertiesWrongLength',
+      'positions length 13': 'PropertiesWrongLength',
       'indices length 11': 'NotManifold',
       'negative index': 'VertexOutOfBounds',
       'fractional index 2.9': 'VertexOutOfBounds',
