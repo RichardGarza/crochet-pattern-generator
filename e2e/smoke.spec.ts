@@ -78,8 +78,8 @@ test.describe('app shell', () => {
     for (const card of CARDS) await expect(page.getByRole('button', { name: card.title })).toBeVisible();
     await expect(page.getByRole('heading', { level: 2, name: 'Your projects' })).toBeVisible();
     await expect(page.getByText('No projects yet')).toBeVisible();
-    // HEAD /__projects answers 204 + x-cpg-mirror: off under CPG_TEST (§5.5.4).
-    await expect(page.getByText('Folder mirror off')).toBeVisible();
+    // The e2e server mirrors into its own temp folder (T8.2), so the mirror is on; the owner's folder stays refused (§5.5.4).
+    await expect(page.getByText('Folder mirror on')).toBeVisible();
     await expect(page).toHaveTitle('Crochet Pattern Generator');
   });
 
