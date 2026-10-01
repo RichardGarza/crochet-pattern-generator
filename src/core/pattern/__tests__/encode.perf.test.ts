@@ -50,11 +50,12 @@ function timeEach(n: number, rounds: number, exactMaxTokens: number): number[] {
 describe('encoder budgets (§5.8)', () => {
   it('exact search: ≤ 5 ms per line at 120 tokens', { retry: 2, timeout: 60_000 }, () => {
     timeEach(EXACT_MAX_TOKENS, 5, EXACT_MAX_TOKENS); // warm-up
-    const elapsed = timeEach(EXACT_MAX_TOKENS, 25, EXACT_MAX_TOKENS);
-    const p90 = elapsed[Math.floor(elapsed.length * 0.9)];
-    const mean = elapsed.reduce((sum, ms) => sum + ms, 0) / elapsed.length;
-    expect(p90).toBeLessThanOrEqual(5);
-    expect(mean).toBeLessThanOrEqual(5);
+    const elapsed = timeEach(EXACT_MAX_TOKENS, 50, EXACT_MAX_TOKENS); // 400 lines, 50 of each shape
+    // Every line is held to the budget except the slowest 1 % (4 lines), which a loaded machine may preempt
+    // or a GC pause may hit: a regression that slows one shape (12.5 % of the lines) fails.
+    const p99 = elapsed[Math.floor(elapsed.length * 0.99) - 1];
+    expect(p99).toBeLessThanOrEqual(5);
+    expect(elapsed[elapsed.length - 1]).toBeLessThanOrEqual(50); // no line is wildly off, even under load
   });
 
   it('the exact search stays quadratic: 1 000 tokens well under 250 ms per line', { retry: 2, timeout: 60_000 }, () => {

@@ -47,12 +47,30 @@ export function compactEncodeMode(line: Pick<Line, 'kind'>, o: CompactOptions = 
 }
 
 /**
+ * True when the line is a joined round of an amigurumi pattern with at least one op: its first op is worked
+ * "in same st as join" and printed on its own, before the rest of the round (§2.11.3).
+ */
+export function isJoinedHead(line: Pick<Line, 'kind' | 'ops' | 'start'>, o: CompactOptions = {}): boolean {
+  return line.start?.k === 'join' && docKindOf(line, o) === '3d' && line.ops.length > 0;
+}
+
+/**
  * The encoded form of a line, as every renderer prints it: its ops as displayed (`displayOps`: the default loop
  * and the header's color are left out, so ops that print alike fold together), its segments, and the token mode
  * of its pattern kind. The verbose renderers start from the same items, so all dialects show the same repeats.
+ *
+ * One kind of line is encoded in two parts: a joined round of an amigurumi pattern (`isJoinedHead`). Its first
+ * item is then always a run of one, the op worked in the same stitch as the join, and the items after it are the
+ * rest of the round encoded on its own (the segments moved along): `sc` + `sc, (inc, 4 sc) x 5, inc, 2 sc`, not
+ * `(2 sc, inc, 2 sc) x 6`. Renderers print that first item in their "… in same st as join" phrase.
  */
-export function lineItems(line: Pick<Line, 'kind' | 'ops' | 'segments' | 'colorHeader'>, o: CompactOptions = {}): readonly Item[] {
-  return encodeOps(displayOps(line), { mode: compactEncodeMode(line, o), segments: line.segments });
+export function lineItems(line: Pick<Line, 'kind' | 'ops' | 'segments' | 'colorHeader' | 'start'>, o: CompactOptions = {}): readonly Item[] {
+  const shown = displayOps(line);
+  const mode = compactEncodeMode(line, o);
+  if (!isJoinedHead(line, o)) return encodeOps(shown, { mode, segments: line.segments });
+  const head = encodeOps(shown.slice(0, 1), { mode });
+  const rest = encodeOps(shown.slice(1), { mode, segments: line.segments?.map((segment) => ({ at: segment.at - 1 })) });
+  return Object.freeze([...head, ...rest]);
 }
 
 /**
@@ -187,7 +205,7 @@ export function chainOvalSide(shown: readonly Op[]): number | null {
  * | `turn`                  | `Ch 1, turn. 4 sc A, sc B` · `Ch 2 (does not count as a st), turn. …`        |
  * | `chainOval`             | `sc in 2nd ch from hook, sc in next 7 ch, 3 sc in last ch; working along the other side of the chain, sc in next 7 ch, 2 sc in last ch` |
  * | `chainRing`             | '2d': `Ch 1 (does not count as a st), {runs}`; '3d': the ops (`Ch 1 (does not count), ` first when joined) |
- * | `join`                  | '2d': `Ch 1, {runs}`; '3d': `Ch 1 (does not count), sc in same st as join, {rest}` |
+ * | `join`                  | '2d': `Ch 1, {runs}`; '3d': `Ch 1 (does not count), sc in same st as join, {rest}` (`inc in same st as join`, `dec over same st as join and next st`) |
  * | `edge`, `c2c`           | the ops (T2 writes the border sentences itself, §2.7.10)                     |
  *
  * `Line.join` adds `; join with sl st in first sc[, changing to B].`; a '3d' line that starts with `join` but
@@ -200,20 +218,14 @@ export function compactBody(line: Line, o: CompactOptions = {}): string {
   const loop = sharedLoop(shown);
   const text: TokenTextOptions = { names, hideLoop: loop !== undefined };
   const loopPrefix = loop === undefined ? '' : `${loop} `;
-  const mode = compactEncodeMode(line, o);
   const where = line.kind === 'row' ? 'across' : 'around';
   const start = line.start;
-  /** The items of the shown ops from index `from` on, with the line's segments moved along. */
-  const encode = (from: number): readonly Item[] => {
-    if (from === 0) return encodeOps(shown, { mode, segments: line.segments });
-    return encodeOps(shown.slice(from), { mode, segments: line.segments?.map((segment) => ({ at: segment.at - from })) });
-  };
+  const items = lineItems(line, o);
 
   let head = '';
   let body: string;
   switch (start?.k) {
     case 'mr': {
-      const items = encode(0);
       const only = items.length === 1 ? items[0] : undefined;
       body = only !== undefined && only.kind === 'run' ? `${only.n} ${tokenText(only.op, text)}` : compactItems(items, text);
       body = `${loopPrefix}${body} in MR`;
@@ -221,16 +233,16 @@ export function compactBody(line: Line, o: CompactOptions = {}): string {
     }
     case 'foundation':
       head = `Starting in ${ordinal(start.firstInto)} ch from hook, `;
-      body = loopPrefix + opsText(encode(0), text, { where, into: 'ch' });
+      body = loopPrefix + opsText(items, text, { where, into: 'ch' });
       break;
     case 'turn':
       head = start.chains === 1 ? 'Ch 1, turn. ' : `Ch ${start.chains} (does not count as a st), turn. `;
-      body = loopPrefix + opsText(encode(0), text, { where, into: 'st' });
+      body = loopPrefix + opsText(items, text, { where, into: 'st' });
       break;
     case 'chainOval': {
       const side = chainOvalSide(shown);
       if (side === null) {
-        body = loopPrefix + opsText(encode(0), text, { where, into: 'ch' });
+        body = loopPrefix + opsText(items, text, { where, into: 'ch' });
       } else {
         const along = side === 0 ? '' : side === 1 ? `${names.sc} in next ch, ` : `${names.sc} in next ${side} ch, `;
         body =
@@ -242,21 +254,24 @@ export function compactBody(line: Line, o: CompactOptions = {}): string {
     case 'chainRing':
       if (docKind === '2d') head = 'Ch 1 (does not count as a st), ';
       else if (line.join !== undefined) head = 'Ch 1 (does not count), ';
-      body = loopPrefix + opsText(encode(0), text, { where, into: 'ch' });
+      body = loopPrefix + opsText(items, text, { where, into: 'ch' });
       break;
     case 'join':
-      if (docKind === '2d' || shown.length === 0) {
+      if (!isJoinedHead(line, o)) {
         head = 'Ch 1, ';
-        body = loopPrefix + opsText(encode(0), text, { where, into: 'st' });
+        body = loopPrefix + opsText(items, text, { where, into: 'st' });
       } else {
-        // §2.11.3: the first stitch of a joined round goes in the same stitch as the join.
+        // §2.11.3: the first stitch of a joined round goes in the same stitch as the join (lineItems keeps it
+        // apart as items[0]); a decrease starts there and takes the next stitch or two with it.
         head = 'Ch 1 (does not count), ';
-        body = `${loopPrefix}${tokenText(shown[0], text)} in same st as join`;
-        if (shown.length > 1) body += `, ${compactItems(encode(1), text)}`;
+        const first = shown[0];
+        const over = first.k !== 'dec' ? ' in same st as join' : first.n === 3 ? ' over same st as join and next 2 sts' : ' over same st as join and next st';
+        body = `${loopPrefix}${tokenText(first, text)}${over}`;
+        if (items.length > 1) body += `, ${compactItems(items.slice(1), text)}`;
       }
       break;
     default:
-      body = loopPrefix + opsText(encode(0), text, line.kind === 'c2c' ? null : { where, into: 'st' });
+      body = loopPrefix + opsText(items, text, line.kind === 'c2c' ? null : { where, into: 'st' });
   }
 
   let tail = '';

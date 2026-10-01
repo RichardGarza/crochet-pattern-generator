@@ -81,6 +81,14 @@ function parseToken(token: string): Op {
     color = colorMatch[1];
     rest = rest.slice(0, -2);
   }
+  const long = / FLO 2 rows below$/.exec(rest);
+  if (long !== null) {
+    rest = rest.slice(0, long.index);
+    if (!Object.hasOwn(WORDS, rest) || WORDS[rest].k !== 'st') throw new Error(`parseBody: unknown long stitch "${token}"`);
+    const op: Op = { k: 'st', st: (WORDS[rest] as { st: 'sc' | 'hdc' | 'dc' | 'slst' }).st, into: 'flo2below' };
+    if (color !== undefined) op.color = color;
+    return op;
+  }
   const loopMatch = / (BLO|FLO)$/.exec(rest);
   if (loopMatch !== null) {
     loop = loopMatch[1] as Loop;

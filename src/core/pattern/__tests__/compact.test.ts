@@ -8,6 +8,7 @@ import {
   compactFoundation,
   compactItems,
   compactLabel,
+  isJoinedHead,
   lineItems,
   renderCompactLine,
   sharedLoop,
@@ -15,7 +16,8 @@ import {
 import { mulberry32 } from '../../kernel/prng';
 import { canonicalCompact, encodeOps, expand, resetEncodeMemo } from '../encode';
 import { type CompactNames, consumed, displayOps } from '../ops';
-import { colored, dc, dec, foldPlain, hdc, inc, inc3, inLoop, parseBody, placeRound, plain, rnd, row, sc, slst, spiralLines, tile, times } from './helpers';
+import { validateLine } from '../validateLine';
+import { colored, dc, dec, dec3, foldPlain, hdc, inc, inc3, inLoop, parseBody, placeRound, plain, rnd, row, sc, slst, spiralLines, tile, times } from './helpers';
 
 beforeEach(() => {
   resetEncodeMemo();
@@ -179,44 +181,73 @@ describe('amigurumi rounds (§2.10.8, §2.10.11)', () => {
 });
 
 describe('the printed text is the line: read back with the independent parser of the tests (R10)', () => {
-  it('random rounds and rows with colors, header colors, loops, shared loops and segments', { timeout: 60_000 }, () => {
-    const rng = mulberry32(2024);
-    const alphabet: Op[] = [
-      sc,
-      inc,
-      dec,
-      slst,
-      hdc,
-      inc3,
-      { k: 'dec', n: 3 },
-      colored(sc, 'A'),
-      colored(sc, 'B'),
-      { k: 'st', st: 'sc', loop: 'BLO' },
-      { k: 'dec', n: 2, loop: 'BLO' },
-      colored(inc, 'A'),
-      { k: 'st', st: 'sc', loop: 'both' },
-      { k: 'st', st: 'dc', loop: 'FLO', color: 'B' },
-    ];
+  const alphabet: Op[] = [
+    sc,
+    inc,
+    dec,
+    slst,
+    hdc,
+    inc3,
+    { k: 'dec', n: 3 },
+    colored(sc, 'A'),
+    colored(sc, 'B'),
+    { k: 'st', st: 'sc', loop: 'BLO' },
+    { k: 'dec', n: 2, loop: 'BLO' },
+    colored(inc, 'A'),
+    { k: 'st', st: 'sc', loop: 'both' },
+    { k: 'st', st: 'dc', loop: 'FLO', color: 'B' },
+    { k: 'st', st: 'dc', into: 'flo2below' },
+    { k: 'st', st: 'dc', into: 'flo2below', loop: 'FLO' }, // prints as the one before: the loop is in its name
+    { k: 'st', st: 'dc', into: 'flo2below', color: 'A' },
+  ];
+
+  /** Random ops: repeated blocks of a random part of the alphabet, or every third line a BLO / FLO round. */
+  function randomLine(rng: () => number, i: number): Op[] {
     const pick = (size: number): Op => ({ ...alphabet[Math.floor(rng() * size)] });
+    const size = 1 + Math.floor(rng() * alphabet.length);
+    const length = 1 + Math.floor(rng() * (i % 10 === 0 ? 300 : 40));
+    if (i % 3 === 0) {
+      const loop = rng() < 0.5 ? 'BLO' : 'FLO';
+      return inLoop(Array.from({ length }, () => pick(Math.min(size, 7))), loop); // a BLO / FLO round
+    }
+    const ops: Op[] = [];
+    while (ops.length < length) {
+      const block = Array.from({ length: 1 + Math.floor(rng() * 4) }, () => pick(size));
+      for (let r = 1 + Math.floor(rng() * 5); r > 0; r--) ops.push(...block.map((op) => ({ ...op })));
+    }
+    return ops.slice(0, length);
+  }
+
+  it('random rounds and rows with colors, header colors, loops, shared loops, long stitches and segments', { timeout: 60_000 }, () => {
+    const rng = mulberry32(2024);
     for (let i = 0; i < 3000; i++) {
-      const size = 1 + Math.floor(rng() * alphabet.length);
-      const length = 1 + Math.floor(rng() * (i % 10 === 0 ? 300 : 40));
-      let ops: Op[] = [];
-      if (i % 3 === 0) {
-        const loop = rng() < 0.5 ? 'BLO' : 'FLO';
-        ops = inLoop(Array.from({ length }, () => pick(Math.min(size, 7))), loop); // a BLO / FLO round
-      } else {
-        while (ops.length < length) {
-          const block = Array.from({ length: 1 + Math.floor(rng() * 4) }, () => pick(size));
-          for (let r = 1 + Math.floor(rng() * 5); r > 0; r--) ops.push(...block.map((op) => ({ ...op })));
-        }
-        ops = ops.slice(0, length);
-      }
+      const ops = randomLine(rng, i);
       const segments: Line['segments'] =
         i % 6 === 0 && ops.length > 3 ? [{ at: 0, kind: 'end' }, { at: Math.floor(ops.length / 3), kind: 'side' }, { at: Math.floor((2 * ops.length) / 3), kind: 'end' }] : undefined;
       const line: Line = { kind: i % 5 === 0 ? 'row' : 'rnd', n: 5, ops, prevCount: consumed(ops), stated: 1, colorHeader: i % 4 === 0 ? 'B' : undefined, segments };
       const body = compactBody(line, { docKind: i % 7 === 0 ? '2d' : '3d' });
       expect([body, parseBody(body, consumed(ops))]).toStrictEqual([body, displayOps(line)]);
+    }
+  });
+
+  it('random joined rounds of an amigurumi pattern (§2.11.3): the head op, then the rest as lineItems encodes it', { timeout: 60_000 }, () => {
+    const rng = mulberry32(2025);
+    const joined = /^Ch 1 \(does not count\), (?:(BLO|FLO) )?(.+?) (?:in same st as join|over same st as join and next (?:st|2 sts))(?:, (.+))?; (?:join with sl st in first (?:sc|hdc|dc)\.|do not join — continue in a spiral\.)$/;
+    for (let i = 0; i < 1500; i++) {
+      const ops = randomLine(rng, i);
+      const segments: Line['segments'] = i % 6 === 0 && ops.length > 3 ? [{ at: 0, kind: 'end' }, { at: 1, kind: 'side' }, { at: Math.floor(ops.length / 2), kind: 'end' }] : undefined;
+      const line: Line = { kind: 'rnd', n: 9, ops, prevCount: consumed(ops), stated: 1, start: { k: 'join' }, join: i % 2 === 0 ? {} : undefined, colorHeader: i % 4 === 0 ? 'B' : undefined, segments };
+      const body = compactBody(line);
+      const match = joined.exec(body);
+      expect(match, body).not.toBeNull();
+      if (match === null) continue;
+      const head = parseBody(match[2]);
+      expect(head).toHaveLength(1);
+      let read = [...head, ...(match[3] === undefined ? [] : parseBody(match[3]))];
+      if (match[1] !== undefined) read = inLoop(read, match[1] as 'BLO' | 'FLO');
+      expect([body, read]).toStrictEqual([body, displayOps(line)]);
+      const items = lineItems(line);
+      expect(match[3] ?? '').toBe(compactItems(items.slice(1), { hideLoop: match[1] !== undefined }));
     }
   });
 });
@@ -247,6 +278,30 @@ describe('lineItems: the encoded form every renderer prints (§2.6.1)', () => {
     ];
     expect(canonicalCompact(lineItems(rnd(3, rnd3, 26, { segments })))).toBe('sc, inc, 7 sc, (sc, inc) x 3, 7 sc, (sc, inc) x 2');
     expect(expand(lineItems(rnd(3, rnd3, 26, { segments })))).toStrictEqual(rnd3);
+  });
+
+  it('a joined round of an amigurumi pattern: the op worked in the same st as the join, then the rest encoded on its own (§2.11.3)', () => {
+    const ops = parseBody('(dec, sc) x 6');
+    const line = rnd(16, ops, 18, { start: { k: 'join' }, join: {} });
+    const items = lineItems(line);
+    expect(isJoinedHead(line)).toBe(true);
+    expect(canonicalCompact(items)).toBe('dec, (sc, dec) x 5, sc');
+    expect(items[0]).toEqual({ kind: 'run', op: dec, n: 1 });
+    expect(Object.isFrozen(items)).toBe(true);
+    expect(expand(items)).toStrictEqual(ops);
+    expect(compactBody(line)).toBe(`Ch 1 (does not count), dec over same st as join and next st, ${compactItems(items.slice(1))}; join with sl st in first sc.`);
+    // A chart pattern's joined round is not split (`Ch 1, {runs}`), and neither is a spiral round.
+    expect(isJoinedHead(line, { docKind: '2d' })).toBe(false);
+    expect(canonicalCompact(lineItems(line, { docKind: '2d' }))).toBe(canonicalCompact(encodeOps(ops, { mode: 'runs' })));
+    expect(canonicalCompact(lineItems(rnd(16, ops, 18)))).toBe('(dec, sc) x 6');
+    expect(isJoinedHead(rnd(16, [], 18, { start: { k: 'join' } }))).toBe(false);
+  });
+
+  it('mosaic long stitches with and without loop "FLO" print alike, so they fold into one run (§2.7.8)', () => {
+    const long: Op = { k: 'st', st: 'dc', into: 'flo2below' };
+    const line = row(3, [sc, { ...long, loop: 'FLO' }, long, { ...long, loop: 'FLO' }, sc], 5, { side: 'RS', arrow: '←', start: { k: 'turn', chains: 1 } });
+    expect(canonicalCompact(lineItems(line))).toBe('sc, 3 dc FLO 2 rows below, sc');
+    expect(renderCompactLine(line)).toBe('Row 3 (RS) ←: Ch 1, turn. sc, 3 dc FLO 2 rows below, sc (5 sts)');
   });
 
   it('is what compactBody prints, and the same frozen result on every call (memo)', () => {
@@ -372,9 +427,21 @@ describe('joined rounds in a spiral piece (§2.11.3 template)', () => {
     expect(renderCompactLine(line)).toBe('Rnd 11: Ch 1 (does not count), sc in same st as join, 35 sc; do not join — continue in a spiral. (36)');
   });
 
-  it('a round that cannot start with a plain sc starts "Ch 1 (does not count), inc in same st as join, …"', () => {
+  it('a round that cannot start with a plain sc (g = 0) opens with its first op, in the template form of Rnd a+1 (notes: §2.11.3 fallback)', () => {
+    // §2.11.3 / §2.10.8 abbreviate this opening as "Ch 1, inc in same st as join, …"; the kernel keeps the
+    // template's "Ch 1 (does not count), " so every joined round of an amigurumi pattern opens alike.
     const line = rnd(8, times(6, inc), 6, { start: { k: 'join' }, join: {} });
     expect(renderCompactLine(line)).toBe('Rnd 8: Ch 1 (does not count), inc in same st as join, 5 inc; join with sl st in first sc. (12)');
+  });
+
+  it('a decrease first is worked over the join st and the next one (a dec takes two sts, a dec3 three)', () => {
+    const decs = rnd(17, times(6, dec), 12, { start: { k: 'join' }, join: {} });
+    expect(validateLine(decs)).toEqual([]);
+    expect(renderCompactLine(decs)).toBe('Rnd 17: Ch 1 (does not count), dec over same st as join and next st, 5 dec; join with sl st in first sc. (6)');
+    const dec3s = rnd(18, times(4, dec3), 12, { start: { k: 'join' }, join: {} });
+    expect(compactBody(dec3s)).toBe('Ch 1 (does not count), dec3 over same st as join and next 2 sts, 3 dec3; join with sl st in first sc.');
+    const blo = rnd(19, inLoop(parseBody('(dec, sc) x 4'), 'BLO'), 12, { start: { k: 'join' }, join: {} });
+    expect(compactBody(blo)).toBe('Ch 1 (does not count), BLO sc2tog over same st as join and next st, (sc, sc2tog) x 3, sc; join with sl st in first sc.');
   });
 
   it('segments keep their place when the first stitch is taken out', () => {

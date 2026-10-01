@@ -352,7 +352,19 @@ describe('E_START / E_FOUNDATION, the single-line part: a first line must fit wh
     expect(issues[0].message).toBe('Rnd 1: a magic ring of 6 takes 6 stitches, not 7 (7 ≠ 6)');
     const ringOfIncs = validateLine(rnd(1, times(3, inc), null, { start: { k: 'mr', n: 3 } }));
     expect(codes(ringOfIncs)).toEqual(['E_START']);
-    expect(ringOfIncs[0].message).toBe('Rnd 1: only plain stitches can be worked into a magic ring');
+    expect(ringOfIncs[0].message).toBe(
+      'Rnd 1: only plain sc, hdc or dc can be worked into a magic ring (no sl st, inc, dec, BLO, FLO or long stitch: a ring has no loops to choose)',
+    );
+  });
+
+  it('a magic ring has no back or front loops and no rows below: BLO, FLO, sl st and long stitches are refused', () => {
+    const ring = (ops: Op[]): string[] => codes(validateLine(rnd(1, ops, null, { start: { k: 'mr', n: 6 } })));
+    expect(ring(inLoop(times(6, sc), 'BLO'))).toEqual(['E_START']);
+    expect(ring(inLoop(times(6, sc), 'FLO'))).toEqual(['E_START']);
+    expect(ring(times(6, slst))).toEqual(['E_START']);
+    expect(ring(times(6, { k: 'st', st: 'dc', into: 'flo2below' }))).toEqual(['E_START']);
+    expect(ring(inLoop(times(6, sc), 'both'))).toEqual([]); // the default loop is no loop at all
+    expect(ring(times(6, { k: 'st', st: 'dc' }))).toEqual([]);
   });
 
   it('ch N of an oval offers 2N − 3 loops (research 07 §6.9, vector 13: ch 10 → 17 loops → 20 sts)', () => {
@@ -480,6 +492,15 @@ describe('E_COLOR', () => {
     expect(validateLine(line, { palette: new Set(['A', 'B', 'C']) })).toEqual([]);
   });
 
+  it('a palette that is not iterable (a record of codes) is reported as E_SANITY, never thrown', () => {
+    const record = { A: '#ffffff', B: '#000000' } as unknown as Iterable<string>;
+    const issues = validateLine(line, { palette: record });
+    expect(codes(issues)).toEqual(['E_SANITY']);
+    expect(issues[0].message).toBe('Rnd 12: the palette option must be a list of color codes, got {"A":"#ffffff","B":"#000000"}');
+    expect(codes(validateLine(line, { palette: 7 as unknown as Iterable<string> }))).toEqual(['E_SANITY']);
+    expect(validateLine(line, { palette: null as unknown as Iterable<string> })).toEqual([]); // like no palette
+  });
+
   it('reports each unknown color code once: on ops, in the header, in the change of a joined round', () => {
     const issues = validateLine(line, { palette: ['A'] });
     expect(codes(issues)).toEqual(['E_COLOR']);
@@ -536,6 +557,16 @@ describe('E_SANITY', () => {
     expect(codes(broken({ ops: [sc, { k: 'st', st: 'sc', post: 'front' }] }))).toEqual(['E_SANITY']);
     expect(broken({ ops: [sc, { k: 'mr', n: 6 }] })[0].message).toBe('Rnd 3: op 2 is not a stitch of the pattern language: {"k":"mr","n":6}');
     expect(codes(broken({ kind: 'round' }))).toEqual(['E_SANITY']);
+  });
+
+  it('a mosaic long stitch is worked in the front loop only (§2.7.8): a BLO or "both" loop on it contradicts its text', () => {
+    const long = (loop?: 'BLO' | 'FLO' | 'both'): Op => (loop === undefined ? { k: 'st', st: 'dc', into: 'flo2below' } : { k: 'st', st: 'dc', into: 'flo2below', loop });
+    const mosaic = (op: Op): Line => row(5, [sc, op, sc], 3, { side: 'RS', arrow: '←', start: { k: 'turn', chains: 1 } });
+    expect(codes(validateLine(mosaic(long('BLO'))))).toEqual(['E_SANITY']);
+    expect(codes(validateLine(mosaic(long('both'))))).toEqual(['E_SANITY']);
+    expect(validateLine(mosaic(long('FLO')))).toEqual([]);
+    expect(validateLine(mosaic(long()))).toEqual([]);
+    expect(renderCompactLine(mosaic(long('FLO')))).toBe('Row 5 (RS) ←: Ch 1, turn. sc, dc FLO 2 rows below, sc (3 sts)');
   });
 
   it('a start must have possible numbers', () => {

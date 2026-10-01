@@ -5,14 +5,16 @@
 //
 //   E_SANITY          the line is not well formed: a count that is not a whole number from 1 to 19 999, an op
 //                     outside the frozen `Op` type, a start with impossible numbers or on the wrong kind of
-//                     line, tiles outside a C2C row, a field of the wrong type. When this fires nothing else is
-//                     checked, and nothing ever throws: a malformed line is reported.
+//                     line, tiles outside a C2C row, a field of the wrong type; or the `palette` option is not
+//                     an iterable. When this fires nothing else is checked, and nothing ever throws: a
+//                     malformed line is reported.
 //   E_CONSUME   (R1)  Σ consumed(ops) ≠ the previous count. Lines that start a piece are exempt: magic ring,
 //                     foundation chain, chain oval, chain ring, the `edge` round of a border, the first C2C tile.
 //                     A folded line (`nEnd`) must also leave the count unchanged, or its second round would not
 //                     fit on its first.
 //   E_START     (R2)  the single-line part of the rule: a round that starts a piece does not fit its start — a
-//                     magic ring of n takes n plain stitches, ch N of an oval offers 2N − 3 loops, a chain ring
+//                     magic ring of n takes n plain stitches (sc, hdc or dc around the ring: no sl st, no
+//                     inc/dec, no BLO/FLO, no long stitch), ch N of an oval offers 2N − 3 loops, a chain ring
 //                     N. (In `validateLines` also: a piece whose first line starts from nothing, or a second
 //                     start in the middle of a piece.) The sizes a start may have (5–8, classic 6, 2S + 6) and
 //                     the pole rule need the piece and belong to T4.
@@ -27,14 +29,15 @@
 //   E_COLOR           a color code that is not in the palette (checked only when a palette is given).
 //   E_ROUNDTRIP (R10) the encoded form that is printed (`lineItems`) does not expand back to the line's ops as
 //                     printed (`displayOps`: no `loop: 'both'`, no header color), or adds up to another count,
-//                     or the encoder throws. It guards the encoder and the renderer: it cannot fire unless one
+//                     or a joined amigurumi round does not begin with the single op worked in the same stitch
+//                     as the join, or the encoder throws. It guards the encoder and the renderer: it cannot fire unless one
 //                     of them has a bug.
 //
 // Not here: rules that need the chart, the piece or the 3D model (E_RUN_SUM, E_C2C_TILES, E_BORDER, E_FOLD,
 // E_SPIRAL_CHAIN, E_CLOSE, the limits per piece of E_SANITY, the W_* rules, …) belong to the 2D and 3D
 // validators of T2 and T4.
 import type { Issue, Line, PatternDoc } from '../../types';
-import { compactCount, lineItems } from './compact';
+import { compactCount, isJoinedHead, lineItems } from './compact';
 import { START_LINE_KINDS, type StartKind, displayOps, expand, isConsumeExempt, isOp, itemsProduced, lineConsumed, lineProduced, startCapacity } from './ops';
 
 /** The codes `validateLine` and `validateLines` can return. */
@@ -55,7 +58,10 @@ export interface ValidateLineOptions {
    * stated count. Leave it out (or pass null) when there is none or it is not known.
    */
   prev?: Line | null;
-  /** The palette's color codes. When given, every color code of the line must be one of them (E_COLOR). */
+  /**
+   * The palette's color codes (an array or a Set, not a record of codes). When given, every color code of the
+   * line must be one of them (E_COLOR); a value that is not iterable is reported as E_SANITY.
+   */
   palette?: Iterable<string>;
   /** `Piece.id`, copied into `where.piece` of every issue. */
   piece?: string;
@@ -267,6 +273,15 @@ export function validateLine(line: Line, o: ValidateLineOptions | null = {}): Is
     issues.push(makeIssue(code, `${name}: ${message}`, where));
   };
 
+  const palette: unknown = options.palette;
+  if (palette !== undefined && palette !== null) {
+    const iterable = (typeof palette === 'object' || typeof palette === 'string') && typeof (palette as { [Symbol.iterator]?: unknown })[Symbol.iterator] === 'function';
+    if (!iterable) {
+      report('E_SANITY', `the palette option must be a list of color codes, got ${show(palette)}`);
+      return issues;
+    }
+  }
+
   const problems = sanityProblems(line);
   if (problems.length > 0) {
     for (const problem of problems) report('E_SANITY', problem);
@@ -304,8 +319,8 @@ export function validateLine(line: Line, o: ValidateLineOptions | null = {}): Is
   const start = line.start;
   const capacity = startCapacity(start);
   if (start !== undefined && capacity !== null) {
-    if (start.k === 'mr' && line.ops.some((op) => op.k !== 'st')) {
-      report('E_START', 'only plain stitches can be worked into a magic ring');
+    if (start.k === 'mr' && line.ops.some((op) => op.k !== 'st' || op.st === 'slst' || op.into !== undefined || op.loop === 'BLO' || op.loop === 'FLO')) {
+      report('E_START', 'only plain sc, hdc or dc can be worked into a magic ring (no sl st, inc, dec, BLO, FLO or long stitch: a ring has no loops to choose)');
     } else if (used !== capacity) {
       if (start.k === 'mr') report('E_START', `a magic ring of ${start.n} takes ${start.n} stitches, not ${used} (${used} ≠ ${capacity})`);
       else if (start.k === 'chainOval') report('E_START', `an oval on ch ${start.chains} offers ${capacity} loops, but the round works into ${used} (${used} ≠ ${capacity})`);
@@ -337,7 +352,7 @@ export function validateLine(line: Line, o: ValidateLineOptions | null = {}): Is
 
   // E_COLOR
   if (options.palette !== undefined && options.palette !== null) {
-    const palette = new Set(options.palette);
+    const palette = new Set<unknown>(options.palette);
     const unknown = new Set<string>();
     for (const op of line.ops) if (op.color !== undefined && !palette.has(op.color)) unknown.add(op.color);
     if (line.colorHeader !== undefined && !palette.has(line.colorHeader)) unknown.add(line.colorHeader);
@@ -350,8 +365,11 @@ export function validateLine(line: Line, o: ValidateLineOptions | null = {}): Is
   const docKind = options.docKind;
   try {
     const items = lineItems(line, { docKind });
+    const head = items.length > 0 ? items[0] : undefined;
     if (!sameList(expand(items), displayOps(line))) {
       report('E_ROUNDTRIP', 'its encoded form does not expand back to its ops');
+    } else if (isJoinedHead(line, { docKind }) && (head === undefined || head.kind !== 'run' || head.n !== 1)) {
+      report('E_ROUNDTRIP', 'its encoded form does not begin with the stitch worked in the same st as the join');
     } else if (itemsProduced(items) !== made) {
       report('E_ROUNDTRIP', `its encoded form makes ${itemsProduced(items)}, its ops make ${made}`);
     } else if (made === line.stated) {

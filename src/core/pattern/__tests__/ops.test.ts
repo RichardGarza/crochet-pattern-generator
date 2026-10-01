@@ -74,7 +74,8 @@ describe('CONS / PROD (research 03 §6.0, 07 §7.2)', () => {
 
   it('isOp accepts exactly the frozen Op type', () => {
     for (const op of [sc, hdc, dc, slst, inc, inc3, dec, dec3, tile('A')]) expect(isOp(op)).toBe(true);
-    expect(isOp({ k: 'st', st: 'sc', loop: 'both', color: 'A', into: 'flo2below' })).toBe(true);
+    expect(isOp({ k: 'st', st: 'dc', loop: 'FLO', color: 'A', into: 'flo2below' })).toBe(true);
+    expect(isOp({ k: 'st', st: 'dc', into: 'flo2below' })).toBe(true);
     expect(isOp({ k: 'st', st: 'sc', loop: undefined, color: undefined })).toBe(true);
     expect(isOp({ k: 'dec', n: 2, loop: 'BLO', color: 'B' })).toBe(true);
     for (const bad of [
@@ -96,6 +97,13 @@ describe('CONS / PROD (research 03 §6.0, 07 §7.2)', () => {
     ]) {
       expect(isOp(bad)).toBe(false);
     }
+  });
+
+  it('isOp refuses a mosaic long stitch in any loop but the front one (§2.7.8: the X is a dc in the front loop 2 rows below)', () => {
+    expect(isOp({ k: 'st', st: 'dc', loop: 'BLO', into: 'flo2below' })).toBe(false);
+    expect(isOp({ k: 'st', st: 'dc', loop: 'both', into: 'flo2below' })).toBe(false);
+    expect(isOp({ k: 'st', st: 'dc', loop: 'FLO', into: 'flo2below' })).toBe(true);
+    expect(isOp({ k: 'st', st: 'dc', into: 'flo2below', loop: undefined })).toBe(true);
   });
 
   it('isOp refuses a field the frozen type does not have: the kernel could not print it', () => {
@@ -369,8 +377,15 @@ describe('displayOps: the ops as they are printed (§2.10.11 color header; loop 
       colored(sc, 'A'),
     ]);
     // Without a header every color stays; BLO / FLO and `into` always stay.
-    const kept: Op[] = [colored(sc, 'B'), { k: 'st', st: 'sc', loop: 'BLO' }, { k: 'st', st: 'dc', loop: 'FLO', into: 'flo2below' }];
+    const kept: Op[] = [colored(sc, 'B'), { k: 'st', st: 'sc', loop: 'BLO' }, { k: 'st', st: 'dc', loop: 'FLO' }, { k: 'st', st: 'dc', into: 'flo2below' }];
     expect(displayOps({ ops: kept })).toStrictEqual(kept);
+  });
+
+  it('leaves out the FLO of a mosaic long stitch: "dc FLO 2 rows below" already names it, so both forms are one token', () => {
+    const long: Op = { k: 'st', st: 'dc', into: 'flo2below' };
+    const shown = displayOps({ ops: [{ ...long, loop: 'FLO' }, long, { ...long, loop: 'FLO', color: 'B' }] });
+    expect(shown).toStrictEqual([long, long, { ...long, color: 'B' }]);
+    expect(produced(shown)).toBe(3);
   });
 
   it('never changes a count, and never touches a C2C tile (its color is the tile)', () => {

@@ -58,7 +58,9 @@ function isStitch(st: unknown): st is 'sc' | 'hdc' | 'dc' | 'slst' {
 /**
  * True when `value` is exactly an `Op` of the frozen type: every field it needs, each in range, and no other
  * field (a field set to `undefined` counts as absent). An op with a field the kernel does not know cannot be
- * printed faithfully, so it is not an op.
+ * printed faithfully, so it is not an op. A mosaic long stitch (`into: 'flo2below'`, the X of §2.7.8: a dc in
+ * the front loop of the stitch 2 rows below) is always worked in the front loop, so its `loop` may only be
+ * left out or be `'FLO'` (which says the same thing); `'BLO'` or `'both'` contradict it and make it no op.
  */
 export function isOp(value: unknown): value is Op {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
@@ -74,7 +76,8 @@ export function isOp(value: unknown): value is Op {
   const optional = (loop === undefined ? 0 : 1) + (color === undefined ? 0 : 1);
   switch (op.k) {
     case 'st':
-      return isStitch(op.st) && loopOk && colorOk && (into === undefined || into === 'flo2below') && defined === 2 + optional + (into === undefined ? 0 : 1);
+      if (into !== undefined && (into !== 'flo2below' || (loop !== undefined && loop !== 'FLO'))) return false;
+      return isStitch(op.st) && loopOk && colorOk && defined === 2 + optional + (into === undefined ? 0 : 1);
     case 'inc':
     case 'dec':
       return (op.n === 2 || op.n === 3) && loopOk && colorOk && defined === 2 + optional;
@@ -297,10 +300,11 @@ export function lineProduced(line: Pick<Line, 'ops'>): number {
 }
 
 /**
- * The ops of a line as they are printed: `loop: 'both'` is the default loop, and a color that the line's
- * header already names (`Rnd 9 (B)`) is not repeated on its stitches, so both are left out. Ops that print the
- * same text then are the same token for the encoder: 18 `sc` followed by 18 `sc` with `loop: 'both'` is one run
- * of 36. Counts never change. Returns the line's own array when nothing had to be left out.
+ * The ops of a line as they are printed: `loop: 'both'` is the default loop, the `loop: 'FLO'` of a mosaic
+ * long stitch is already in its name (`dc FLO 2 rows below`), and a color that the line's header already names
+ * (`Rnd 9 (B)`) is not repeated on its stitches, so all three are left out. Ops that print the same text then
+ * are the same token for the encoder: 18 `sc` followed by 18 `sc` with `loop: 'both'` is one run of 36. Counts
+ * never change. Returns the line's own array when nothing had to be left out.
  */
 export function displayOps(line: Pick<Line, 'ops' | 'colorHeader'>): readonly Op[] {
   const ops = line.ops;
@@ -308,10 +312,11 @@ export function displayOps(line: Pick<Line, 'ops' | 'colorHeader'>): readonly Op
   let out: Op[] | null = null;
   for (let i = 0; i < ops.length; i++) {
     const op = ops[i];
-    if (op.k !== 'tile' && (op.loop === 'both' || (header !== undefined && op.color === header))) {
+    const loopShown = op.k !== 'tile' && op.loop !== undefined && op.loop !== 'both' && !(op.k === 'st' && op.into !== undefined);
+    if (op.k !== 'tile' && ((op.loop !== undefined && !loopShown) || (header !== undefined && op.color === header))) {
       out ??= ops.slice(0, i);
       const copy = { ...op };
-      if (copy.loop === 'both') delete copy.loop;
+      if (!loopShown) delete copy.loop;
       if (header !== undefined && copy.color === header) delete copy.color;
       out.push(copy);
     } else if (out !== null) {

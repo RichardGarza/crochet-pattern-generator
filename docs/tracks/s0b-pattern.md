@@ -6,8 +6,9 @@ and their tests (`DESIGN.md` §5.1, §6.2 item 5). Nothing else was touched: the
 as Step 0a left them.
 
 Commits: `47ca4e0` (the four kernels and their tests), `5d3e6d9` (fixes from an independent review),
-`d623ace` (two more exports for T2, a text read-back test, test timeouts), `3fd00d8` (`isOp` speed), and the
-commit that adds this file.
+`d623ace` (two more exports for T2, a text read-back test, test timeouts), `3fd00d8` (`isOp` speed), `bde60a7`
+(this file), and the round-1 fixes of the verifiers' findings (joined rounds in `lineItems`, the head of a joined
+round, mosaic long stitches, magic-ring loops, the palette option, the perf percentile).
 
 ## What was delivered
 
@@ -17,7 +18,7 @@ commit that adds this file.
 | `encode.ts` | `encodeOps` (§2.6.1): the shortest encoding with one bracket level, exact up to 120 tokens, the linear run/period fallback above, per-op and per-run token modes, segments, an LRU memo of 4 096 entries keyed by `fnv1a64(token ints ‖ mode)`. |
 | `validateLine.ts` | `validateLine`: the rules of §2.13 that one line decides, alone or against the line before it (`E_SANITY`, `E_CONSUME`, `E_START` and `E_FOUNDATION` for the first line of a piece, `E_PRODUCE`, `E_INC_INFEASIBLE`, `E_DEC_INFEASIBLE`, `E_COLOR`, `E_ROUNDTRIP`); `validateLines`: a whole piece, plus its shape (`E_START`). Never throws. |
 | `compact.ts` | The Compact dialect (§2.7.2, §2.7.3, §2.7.5, §2.7.6, §2.10.6, §2.10.11, §2.11.3): amigurumi rounds, flat rows, tapestry rounds, C2C rows, chain ovals, chain rings, joined rounds, border rounds (generic); `lineItems`, the encoded form every renderer prints. |
-| `__tests__/` | `ops.test.ts` (32 tests), `encode.test.ts` (57), `encode.perf.test.ts` (3), `validateLine.test.ts` (80), `validateLine.roundtrip.test.ts` (9), `compact.test.ts` (58), and `helpers.ts` (not a test: a parser for the compact notation, the §2.10.8 placement rule, a literal transcription of the encoder's definition, a brute-force search, random line generators). |
+| `__tests__/` | `ops.test.ts` (34 tests), `encode.test.ts` (57), `encode.perf.test.ts` (3), `validateLine.test.ts` (83), `validateLine.roundtrip.test.ts` (9), `compact.test.ts` (62), and `helpers.ts` (not a test: a parser for the compact notation, the §2.10.8 placement rule, a literal transcription of the encoder's definition, a brute-force search, random line generators). |
 
 Dependencies between the four: `ops` ← `encode` ← `compact` ← `validateLine` (no cycle). `encode.ts` also uses
 `core/kernel/hash.ts`; nothing else is imported. No `Math.random()`, no `Date`, no DOM (§5.8).
@@ -32,8 +33,8 @@ Dependencies between the four: `ops` ← `encode` ← `compact` ← `validateLin
   and on border Rnds 2–n; `edge` on border Rnd 1 only; `c2c` on C2C rows only, and every C2C row has one, with
   `first` at both ends on Row 1 and nowhere else.
 - **Magic ring:** `start: { k: 'mr', n }` and the n stitches as ops: `Rnd 1: 6 sc in MR (6)` is six `sc` ops. The
-  text and the count come from the ops; `start.n` must equal their number and only `st` ops may be worked into a
-  ring (`E_START`).
+  text and the count come from the ops; `start.n` must equal their number, and only plain sc, hdc or dc may be
+  worked into a ring: no inc/dec, no sl st, no `BLO`/`FLO` (a ring has no loops), no long stitch (`E_START`).
 - **Chain oval, Rnd 1:** ops `(S + 1) sc, inc3, S sc, inc` with `S = chains − 3`. They consume `2N − 3` chain
   loops (`E_START` otherwise) and make `2N` stitches (research 07 §6.9, vector 13), and they print as the sentence
   of §2.10.6. Any other ops on a `chainOval` line print as a plain list.
@@ -44,6 +45,9 @@ Dependencies between the four: `ops` ← `encode` ← `compact` ← `validateLin
 - **Joined rounds (§2.11.3):** `join` on a line adds `; join with sl st in first sc[, changing to B].`;
   `start: { k: 'join' }` begins the round with `Ch 1 (does not count), sc in same st as join, …` (3D) or `Ch 1, …`
   (2D, §2.7.5). A 3D line with `start: { k: 'join' }` and no `join` ends `; do not join — continue in a spiral.`
+  In 3D (`isJoinedHead`) the first op is the one worked in the same st as the join: `inc in same st as join`, and a
+  decrease `dec over same st as join and next st` (`dec3 … and next 2 sts`). `lineItems` gives it as a run of one,
+  followed by the rest of the round encoded on its own, and every renderer prints those items.
 - **`prevCount`** is `null` only on a line that starts a piece (magic ring, foundation, chain oval, chain ring,
   border `edge`, first C2C tile). Every other line must carry it; a missing one is `E_CONSUME`.
 - **A piece** (`validateLines`): its first line starts from one of those starts, and no later line does, except a
@@ -61,7 +65,9 @@ Dependencies between the four: `ops` ← `encode` ← `compact` ← `validateLin
   a header every colored op prints its tag (`4 sc A`), and a tagged line never becomes `sc in each st around`.
 - **Loops:** `loop: 'both'` prints as no loop and never splits a run. When every op of a line carries the same
   `BLO`/`FLO`, the line prints it once as a prefix and its decreases as `sc2tog` (§2.10.5). Otherwise each run
-  carries its tag (`3 sc BLO, 2 sc`).
+  carries its tag (`3 sc BLO, 2 sc`). A mosaic long stitch (`into: 'flo2below'`, §2.7.8) is always in the front
+  loop: its `loop` is left out or `'FLO'` (the two print and encode alike, `dc FLO 2 rows below`); `'BLO'` or
+  `'both'` on it is `E_SANITY`.
 - **Segments** (`Line.segments`, oval rounds): encoded separately and joined, so neither a repeat nor a run crosses
   a boundary (`7 sc, sc, (2 sc, inc) x 2`, not `8 sc, …`); a line of one op is still one run, so a plain oval round
   prints `sc in each st around`. An empty segment (two equal `at`, or `at` = the number of ops) is allowed.
@@ -86,7 +92,7 @@ read them, never change them. Nothing here is a §5.2.1 entry point, so no `…F
 | `OP_NAMES` | `const OP_NAMES: readonly OpName[]` | All of them (frozen). |
 | `CONS` | `const CONS: Readonly<Record<OpName, number>>` | Stitches (or ch-3 spaces) of the previous line one op is worked into: 1, except `dec` 2 and `dec3` 3. Frozen. |
 | `PROD` | `const PROD: Readonly<Record<OpName, number>>` | Stitches one op makes: 1, except `inc` 2 and `inc3` 3. Frozen. |
-| `isOp` | `function isOp(value: unknown): value is Op` | True for exactly an op of the frozen type: every field it needs, each in range, no other defined field. |
+| `isOp` | `function isOp(value: unknown): value is Op` | True for exactly an op of the frozen type: every field it needs, each in range, no other defined field; a mosaic long stitch (`into`) only with no `loop` or `loop: 'FLO'`. |
 | `opName` | `function opName(op: Op): OpName` | The table key of an op (loops and colors never change it). Throws `TypeError` on a malformed op. |
 | `consumed` | `function consumed(ops: readonly Op[]): number` | Σ CONS over a list of ops. |
 | `produced` | `function produced(ops: readonly Op[]): number` | Σ PROD over a list of ops. |
@@ -102,7 +108,7 @@ read them, never change them. Nothing here is a §5.2.1 entry point, so no `…F
 | `startCapacity` | `function startCapacity(start: LineStart \| undefined): number \| null` | What a first line works into: `mr` n; `foundation` chains − firstInto + 1; `chainOval` 2·chains − 3; `chainRing` chains; else `null`. |
 | `lineConsumed` | `function lineConsumed(line: Pick<Line, 'ops' \| 'start'>): number` | Σ consumed of a line, with the C2C rule above. |
 | `lineProduced` | `function lineProduced(line: Pick<Line, 'ops'>): number` | Σ produced of a line: what `stated` must be. |
-| `displayOps` | `function displayOps(line: Pick<Line, 'ops' \| 'colorHeader'>): readonly Op[]` | The ops as printed: `loop: 'both'` and the header's color left out (tiles untouched). Counts never change. Returns the line's own array when nothing had to go; never changes the line. |
+| `displayOps` | `function displayOps(line: Pick<Line, 'ops' \| 'colorHeader'>): readonly Op[]` | The ops as printed: `loop: 'both'`, the `loop: 'FLO'` of a long stitch (`into`) and the header's color left out (tiles untouched). Counts never change. Returns the line's own array when nothing had to go; never changes the line. |
 | `CompactNames` | `interface CompactNames { sc; hdc; dc; slst; inc; inc3; dec; dec3; sc2tog; sc3tog: string }` | The words of the compact dialect (`sc2tog` / `sc3tog`: a decrease in a BLO/FLO round). |
 | `US_COMPACT_NAMES` | `const US_COMPACT_NAMES: Readonly<CompactNames>` | `sc hdc dc "sl st" inc inc3 dec dec3 sc2tog sc3tog`. Frozen. |
 | `TokenTextOptions` | `interface TokenTextOptions { names?: Readonly<CompactNames>; hideLoop?: boolean }` | `hideLoop`: leave out ` BLO` / ` FLO` (the line carries the loop as a prefix). |
@@ -131,7 +137,7 @@ read them, never change them. Nothing here is a §5.2.1 entry point, so no `…F
 | Export | Signature | What it does |
 |---|---|---|
 | `LineIssueCode` | `type LineIssueCode = 'E_SANITY' \| 'E_CONSUME' \| 'E_START' \| 'E_FOUNDATION' \| 'E_PRODUCE' \| 'E_INC_INFEASIBLE' \| 'E_DEC_INFEASIBLE' \| 'E_COLOR' \| 'E_ROUNDTRIP'` | The codes this module returns; all have severity `error`. |
-| `ValidateLineOptions` | `interface ValidateLineOptions { prev?: Line \| null; palette?: Iterable<string>; piece?: string; docKind?: PatternDoc['kind'] }` | `prev` = the line worked just before (its `stated` must be this line's `prevCount`); `palette` turns `E_COLOR` on; `piece` goes into `where.piece`; `docKind` as in `compact.ts`. |
+| `ValidateLineOptions` | `interface ValidateLineOptions { prev?: Line \| null; palette?: Iterable<string>; piece?: string; docKind?: PatternDoc['kind'] }` | `prev` = the line worked just before (its `stated` must be this line's `prevCount`); `palette` (an array or Set of codes) turns `E_COLOR` on, and a palette that is not iterable (a record of codes) is reported as `E_SANITY` alone; `piece` goes into `where.piece`; `docKind` as in `compact.ts`. |
 | `validateLine` | `function validateLine(line: Line, o?: ValidateLineOptions \| null): Issue[]` | The issues of one line, each frozen, `where.line` = the line's number `n`; `[]` = sound. When `E_SANITY` fires nothing else is checked. Never throws, whatever `line` is. |
 | `validateLines` | `function validateLines(lines: readonly Line[], o?: Omit<ValidateLineOptions, 'prev'> \| null): Issue[]` | The lines of one whole piece in order, each against the one before, plus the shape of the piece (`E_START`). Issues in line order. |
 
@@ -147,7 +153,8 @@ read them, never change them. Nothing here is a §5.2.1 entry point, so no `…F
 | `compactFoundation` | `function compactFoundation(line: Line, o?: CompactOptions): string \| null` | The sentence before a line worked into chains: `Foundation: With A, ch 6.` · `Ch 10.` · `With C, ch 8.` · `…; join with sl st in first ch to form a ring (do not twist).`; `null` for other starts. |
 | `compactItems` | `function compactItems(items: readonly Item[], o?: TokenTextOptions): string` | An encoded list as text, without the whole-line phrases. |
 | `compactEncodeMode` | `function compactEncodeMode(line: Pick<Line, 'kind'>, o?: CompactOptions): EncodeMode` | `'runs'` in a '2d' pattern, `'ops'` in a '3d' one. |
-| `lineItems` | `function lineItems(line: Pick<Line, 'kind' \| 'ops' \| 'segments' \| 'colorHeader'>, o?: CompactOptions): readonly Item[]` | The encoded form every renderer prints: `encodeOps(displayOps(line), { mode: compactEncodeMode(line, o), segments })`. T2's verbose renderers start from it, so every dialect shows the same repeats. |
+| `lineItems` | `function lineItems(line: Pick<Line, 'kind' \| 'ops' \| 'segments' \| 'colorHeader' \| 'start'>, o?: CompactOptions): readonly Item[]` | The encoded form every renderer prints: `encodeOps(displayOps(line), { mode: compactEncodeMode(line, o), segments })`, except a joined amigurumi round (`isJoinedHead`): there item 0 is the op worked in the same st as the join (a run of 1) and the rest is the remaining ops encoded on their own, segments moved along (`dec` + `(sc, dec) x 5, sc`, not `(dec, sc) x 6`). T2's verbose renderers start from it, so every dialect shows the same repeats; they print item 0 in their "same st as join" phrase. `E_ROUNDTRIP` checks exactly these items. |
+| `isJoinedHead` | `function isJoinedHead(line: Pick<Line, 'kind' \| 'ops' \| 'start'>, o?: CompactOptions): boolean` | True for a round with `start: { k: 'join' }`, at least one op, in a '3d' pattern: the round whose first op is printed on its own (§2.11.3). |
 | `sharedLoop` | `function sharedLoop(ops: readonly Op[]): 'BLO' \| 'FLO' \| undefined` | The loop every op shares (no mosaic long stitch among them), printed once as a prefix; `undefined` when mixed or empty. |
 | `chainOvalSide` | `function chainOvalSide(shown: readonly Op[]): number \| null` | S of the canonical chain-oval Rnd 1 (`(S + 1) sc, inc3, S sc, inc`, both loops, no tag to print), or `null`. Pass `displayOps(line)`. |
 
@@ -157,8 +164,8 @@ prints a border line as a plain list and gives T2 `compactItems` for the mosaic 
 
 ## Acceptance — what was tested and measured
 
-`npm run typecheck` and `npm run lint` pass; `npm test` passes twice in a row (26 files, 529 tests, none skipped;
-239 of them in `src/core/pattern`).
+`npm run typecheck` and `npm run lint` pass; `npm test` passes twice in a row (26 files, 538 tests, none skipped;
+248 of them in `src/core/pattern`).
 
 | Item | Result |
 |---|---|
@@ -166,9 +173,9 @@ prints a border line as a plain list and gives T2 `compactItems` for the mosaic 
 | `expand(encodeOps(ops))` deep-equals `ops` | Every vector in both token modes; 12 000 encodings of 6 000 seeded random and structured lines (lengths 0–499, both modes, a quarter with random segments, 600+ past the 120-token limit); 600 fallback-only encodings; 3 000 random lines through `validateLine` with no `E_ROUNDTRIP`; ops with unknown plain-JSON fields, nested data and `loop: 'both'`. |
 | Optimal on small inputs | Equal cost to a brute-force search over every encoding for 2 500 lines of up to 12 tokens, in both modes; identical text and cost to a literal transcription of §2.6.1 for 4 000 lines of 1–14 tokens (op tokens) and 150 structured lines of 15–40 tokens (op and run tokens). |
 | The standard sphere prints exactly | The 12 printed lines of §2.10.8 (17 rounds, `Rnds 7–12 (6 rnds)` folded) and the 13-round sphere of research 07 §6.6, generated from the counts with the placement rule of §2.10.8. The staggered `sc, inc, (2 sc, inc) x 5, sc` round-trips and prints `Rnd 4: (sc, inc, sc) x 6 (24)`. Also exact: the cylinder lines of §2.10.5, the G9 rows of §2.7.3 (RH and LH), both C2C goldens of §2.7.6, the tapestry-round templates of §2.7.5, the joined-round template of §2.11.3, the chain-oval sentence of §2.10.6. |
-| The printed text is the line | 3 000 random rounds and rows (colors, header colors, loops, shared loops, segments, both pattern kinds) print a body that the tests' own parser reads back as exactly the ops as printed (20 000 in a one-off run: no difference). |
+| The printed text is the line | 3 000 random rounds and rows (colors, header colors, loops, shared loops, mosaic long stitches with and without `loop: 'FLO'`, segments, both pattern kinds) print a body that the tests' own parser reads back as exactly the ops as printed (20 000 in a one-off run: no difference); 1 500 random joined amigurumi rounds read back the same way, with the text after the head equal to `compactItems(lineItems(line).slice(1))`. |
 | `validateLine` fires / stays silent / honors exemptions | `E_CONSUME` and `E_PRODUCE` on crafted lines of every kind; silent on every golden line above, on the ch-10 oval (G8 lines), on C2C 100 × 60 (159 rows), on the G22 piece with its border rounds and on joined rounds inside a spiral piece; each of the six exemptions tested with and without a `prevCount`, and `E_PRODUCE` still applies to them. 200 000 random malformed lines in a one-off fuzz: nothing thrown, every issue frozen with severity `error`. |
-| Encoder budgets (§5.8) | `encode.perf.test.ts` passes with the spec's bounds: ≤ 5 ms per line at 120 tokens (p90 and mean over 200 lines) and ≤ 2 s for 200 rows × 240 run tokens, plus a check that the search stays quadratic (1 000 tokens < 250 ms per line). Timing tests retry twice and have 60 s timeouts. Numbers below. |
+| Encoder budgets (§5.8) | `encode.perf.test.ts` passes with the spec's bounds: ≤ 5 ms per line at 120 tokens (p99 over 400 lines, 50 of each of 8 shapes, so a regression in any one shape fails; the slowest 1 % is left to load and GC, with a 50 ms ceiling on the maximum) and ≤ 2 s for 200 rows × 240 run tokens, plus a check that the search stays quadratic (1 000 tokens < 250 ms per line). Timing tests retry twice and have 60 s timeouts. Numbers below. |
 | Determinism | The same lines give the same items and text in forward order, from the memo, in reverse order after a reset, and with a reset before every line (400 lines); the renderer likewise. |
 
 Measured on this machine (Apple M-class, Node 22.23.3, `npx tsx` benches outside the test run, after warm-up; the
@@ -178,6 +185,7 @@ are noisy):
 | What | Budget | Measured |
 |---|---|---|
 | Exact search, 120 tokens, per line (9 shapes × 60 lines) | ≤ 5 ms | median 0.11 ms, p90 0.15–0.16 ms, max 0.33–0.41 ms (cold: max 1.3–1.5 ms) |
+| The same inside the perf test (8 shapes × 50 lines, 3 runs under load) | ≤ 5 ms (p99) | median 0.11–0.23 ms, p99 0.24–2.1 ms, max 0.32–5.96 ms (why the maximum is not held to 5 ms) |
 | 200 rows × 240 run tokens, fallback + memo (≈ 842 sts per row, every 4th row repeats an earlier one) | ≤ 2 s | 22–35 ms in total (the exact search on the same rows: 50 ms) |
 | Exact search at 240 / 500 / 1 000 / 4 000 tokens (not required) | — | median 0.33 / 1.27 / 4.8 / 78 ms; p90 0.45 / 1.59 / 5.7 / 93–99 ms |
 | `validateLine` + `renderCompactLine`, chart 200 × 200 | — | 17–27 ms + 6–8 ms |
@@ -224,7 +232,8 @@ are noisy):
 8. **`validateLine` checks more than the brief's kernel rules, including the single-line parts of two rules §2.13
    gives T4 and T2.** A line that starts a piece is exempt from `E_CONSUME`, so without these checks its ops would
    never be compared with its start, and a mismatch prints wrong text (`Ch 10.` then `sc in next 6 ch`). So:
-   `E_START` when a magic ring of n does not hold n stitches (or holds an inc/dec), when the ops on ch N of an oval
+   `E_START` when a magic ring of n does not hold n stitches (or holds an inc/dec, a sl st, a BLO/FLO stitch or a
+   long stitch), when the ops on ch N of an oval
    do not use its 2N − 3 loops, or when a chain ring's round does not use its N chains; `E_FOUNDATION` when row 1
    does not use `chains − firstInto + 1` chains; and in `validateLines`, `E_START` for a piece that starts from
    nothing or starts again in the middle. The rest of those rules (the sizes 5–8 / 6 / 2S + 6, the joint, the pole
@@ -243,7 +252,8 @@ are noisy):
 10. **`E_ROUNDTRIP` checks the ops as printed.** `expand(encodeOps(ops))` deep-equals `ops` for every input, as
     R10 says (tested on the encoder itself). The renderer encodes `displayOps(line)` — no `loop: 'both'`, no
     header color, both of which print as nothing — so that ops that print alike fold together; `E_ROUNDTRIP`
-    therefore compares `expand(lineItems(line))` with `displayOps(line)`, plus the printed count.
+    therefore compares `expand(lineItems(line))` with `displayOps(line)`, plus the printed count, and for a joined
+    amigurumi round that item 0 is the single op worked in the same st as the join.
 
 ## Ambiguities resolved
 
@@ -258,7 +268,11 @@ are noisy):
 | §2.6.1 post-rules, whole-line phrases | Applied when the encoded line is one run of one op with no color tag to print: `sc / hdc / inc / inc3 / sl st in each st around`, `dec around`, `dec3 around`, `BLO sc2tog around`; `across` for rows; `in each ch` on a line worked into chains. A one-color row of a chart prints `40 sc A`. |
 | §2.10.11 color header | One parenthesis, tags in the order color, side, fold size: `Rnds 10–12 (B, 3 rnds)`, `Row 5 (B, RS) ←` (§2.7.8). Ops in the header's color print untagged. |
 | §2.10.11 "change to B on the last yo" | A `color` cue; it prints after the count like `· carry B` in §2.7.2: `Rnd 8: sc in each st around (36) · change to B on the last yo`. |
-| §2.11.3 "sc in same st as join, {ops of the rest of the round}" | The first op is printed in that phrase and the rest is encoded on its own: `Ch 1 (does not count), sc in same st as join, 35 sc; join …`. A first op that is not a plain sc prints its name (`inc in same st as join`). |
+| §2.11.3 "sc in same st as join, {ops of the rest of the round}" | The first op is printed in that phrase and the rest is encoded on its own: `Ch 1 (does not count), sc in same st as join, 35 sc; join …`. A first op that is not a plain sc prints its name (`inc in same st as join`). `lineItems` returns the same split (item 0, then the rest), so verbose dialects print the same repeats and `E_ROUNDTRIP` checks the encoding that is printed. |
+| §2.11.3 / §2.10.8 fallback "Ch 1, inc in same st as join, …" | Read as shorthand for the template line `Ch 1 (does not count), inc in same st as join, …`: the kernel prints `Ch 1 (does not count), ` on every joined amigurumi round, whatever its first op, so the rounds of one section open alike (`Rnd 8: Ch 1 (does not count), inc in same st as join, 5 inc; join with sl st in first sc. (12)`). Request 14. |
+| A joined round that starts with a decrease (not covered by §2.11.3) | A decrease takes two (three) sts, so it cannot be worked "in same st as join": `dec over same st as join and next st`, `dec3 over same st as join and next 2 sts`, `BLO sc2tog over same st as join and next st`. Request 14. |
+| §2.7.8 X = "dc in the front loop of the stitch 2 rows below" vs `Op.loop` | `into: 'flo2below'` fixes the loop: `loop` absent or `'FLO'` (same text, same token after `displayOps`); `'BLO'` and `'both'` contradict it and are `E_SANITY` through `isOp`. Request 15. |
+| `ValidateLineOptions.palette` "never throws" | A palette that is not iterable (`{ A: '#fff' }`, a number) is one `E_SANITY` issue and nothing else is checked; `null` is no palette; an iterable of other things than codes flags every color `E_COLOR`. |
 | §2.7.3 / §2.7.7 turning chain | `Ch 1, turn.` for one chain; `Ch N (does not count as a st), turn.` for more. |
 | §2.10.4 chain ring in a spiral piece (torus) | `Ch 24; join with sl st in first ch to form a ring (do not twist).` then `Rnd 1: sc in each ch around (24)`, with no ch 1 (spiral). Rnd 1 is worked into each chain. |
 | §2.7.3 Foundation line | A separate string from `compactFoundation`, built from the first line of the piece: the caller prints it on its own line (2D) or in front of the round (`Ch 10. Rnd 1: …`, §2.10.6). |
@@ -329,3 +343,9 @@ and checked against the spec one by one. Kept as edited: everything in the commi
 13. **Additive `Op` amendments (§6.1 rule 7):** `isOp` refuses a field the kernel does not know, so a new optional
     field on `Op` must come with the kernel change that prints it (or every line using it is `E_SANITY`, which
     blocks export).
+14. **§2.11.3 / §2.10.8 — print the fallback opening in full.** Write the fallback as `Ch 1 (does not count), inc
+    in same st as join, …` (the template's form, which the kernel prints), and add the case of a decrease first:
+    `Ch 1 (does not count), dec over same st as join and next st, …` (or require the §2.10.8 rotation to avoid
+    it).
+15. **§5.2 `Op` — a long stitch fixes its loop.** Say that `into: 'flo2below'` implies the front loop and that
+    generators leave `loop` out on it (the kernel accepts `'FLO'` as the same op and refuses `'BLO'` / `'both'`).
