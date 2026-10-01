@@ -282,3 +282,52 @@ describe('sparse undo (§2.9.8, §4.4)', HEAVY, () => {
     expect(() => applyStroke(v, stroke('inflate', [[0.3, 0.5, 0.7]], 0.4, 1, true), { mirrorPlane: { point: [0, 0, 0], normal: [0, 0, 0] } })).toThrow(RangeError);
   });
 });
+
+describe('MeshApi additions of the Sprint 1 integration (kernel side)', HEAVY, () => {
+  it('the stroke carries its own mirror plane (MeshApi.sculpt stroke.mirrorPlane); the option overrides it', () => {
+    const n = 41;
+    const viaStroke = volumeOf(sphereF(1), n, 1.3);
+    applyStroke(viaStroke, { ...stroke('inflate', [[0.3, 0.5, 0.7]], 0.4, 1, true), mirrorPlane: { point: [0, 0, 0], normal: [0, 0, 1] } });
+    const viaOption = volumeOf(sphereF(1), n, 1.3);
+    applyStroke(viaOption, stroke('inflate', [[0.3, 0.5, 0.7]], 0.4, 1, true), { mirrorPlane: { point: [0, 0, 0], normal: [0, 0, 1] } });
+    expect(Buffer.compare(Buffer.from(viaStroke.field.buffer), Buffer.from(viaOption.field.buffer))).toBe(0);
+    // the option wins over the stroke's plane
+    const both = volumeOf(sphereF(1), n, 1.3);
+    applyStroke(both, { ...stroke('inflate', [[0.3, 0.5, 0.7]], 0.4, 1, true), mirrorPlane: { point: [0, 0, 0], normal: [1, 0, 0] } }, { mirrorPlane: { point: [0, 0, 0], normal: [0, 0, 1] } });
+    expect(Buffer.compare(Buffer.from(both.field.buffer), Buffer.from(viaOption.field.buffer))).toBe(0);
+    // a session passes the stroke's plane through too
+    const s = new SculptSession('m', volumeOf(sphereF(1), n, 1.3));
+    s.stroke({ ...stroke('inflate', [[0.3, 0.5, 0.7]], 0.4, 1, true), mirrorPlane: { point: [0, 0, 0], normal: [0, 0, 1] } });
+    expect(Buffer.compare(Buffer.from(s.volume.field.buffer), Buffer.from(viaOption.field.buffer))).toBe(0);
+    // without mirrorX the plane is ignored
+    const off = volumeOf(sphereF(1), n, 1.3);
+    const ref = volumeOf(sphereF(1), n, 1.3);
+    applyStroke(off, { ...stroke('inflate', [[0.3, 0.5, 0.7]]), mirrorPlane: { point: [0, 0, 0], normal: [0, 0, 1] } });
+    applyStroke(ref, stroke('inflate', [[0.3, 0.5, 0.7]]));
+    expect(Buffer.compare(Buffer.from(off.field.buffer), Buffer.from(ref.field.buffer))).toBe(0);
+    expect(() => applyStroke(off, { ...stroke('inflate', [[0.3, 0.5, 0.7]], 0.4, 1, true), mirrorPlane: { point: [0, 0, 0], normal: [0, 0, 0] } })).toThrow(RangeError);
+  });
+
+  it('redo(undoId) checks the id like MeshApi.redoSculpt', () => {
+    const s = new SculptSession('r', volumeOf(sphereF(1), 33, 1.3));
+    const a = s.stroke(stroke('inflate', [[0, 1, 0]]));
+    const b = s.stroke(stroke('deflate', [[0, -1, 0]]));
+    expect(() => s.redo(b.undoId)).toThrow(/nothing to redo/);
+    s.undo(b.undoId);
+    s.undo(a.undoId);
+    expect(() => s.redo(b.undoId)).toThrow(MeshToolError); // b was undone first, so a must come back first
+    try {
+      s.redo(b.undoId);
+    } catch (e) {
+      expect((e as MeshToolError).code).toBe('undo-order');
+    }
+    expect(() => s.redo('r:99')).toThrow(/unknown redo id/);
+    const ra = s.redo(a.undoId);
+    expect(ra?.undoId).toBe(a.undoId);
+    expect(Buffer.compare(Buffer.from(ra?.mesh.positions.buffer ?? new ArrayBuffer(0)), Buffer.from(a.mesh.positions.buffer))).toBe(0);
+    const rb = s.redo(b.undoId);
+    expect(rb?.undoId).toBe(b.undoId);
+    expect(Buffer.compare(Buffer.from(rb?.mesh.positions.buffer ?? new ArrayBuffer(0)), Buffer.from(b.mesh.positions.buffer))).toBe(0);
+    expect(s.redo()).toBeNull();
+  });
+});

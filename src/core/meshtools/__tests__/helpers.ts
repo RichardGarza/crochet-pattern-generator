@@ -2,6 +2,7 @@
 // here walks every triangle for every sample and signs by the generalized winding number.
 import { marchingCubes, type IndexedMesh } from '../../kernel/geom/marchingCubes';
 import { taubinSmooth } from '../../kernel/geom/taubin';
+import { mulberry32 } from '../../kernel/prng';
 import type { MeshLike } from '../../kernel/geom/meshMeasures';
 import type { ColoredMesh, Vec3 } from '../../../types/geometry';
 
@@ -170,4 +171,44 @@ export function bestOf(runs: number, fn: () => void): number {
     best = Math.min(best, performance.now() - t0);
   }
   return best;
+}
+
+/** Distance from p to the segment ab. */
+export function segmentDistance(p: Vec3, a: Vec3, b: Vec3): number {
+  const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const L = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+  const t = L > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1] + (p[2] - a[2]) * d[2]) / L)) : 0;
+  return Math.hypot(p[0] - a[0] - t * d[0], p[1] - a[1] - t * d[1], p[2] - a[2] - t * d[2]);
+}
+
+/** Capsule field: radius r around the segment ab. */
+export const capsuleF =
+  (r: number, a: Vec3, b: Vec3): Implicit =>
+  (x, y, z) =>
+    r - segmentDistance([x, y, z], a, b);
+
+/** A Y: a stem of radius 0.4 from (0, −1.6, 0) to the origin, two arms of radius 0.35 and length 1.4 at ±35° from +Y. */
+export function yShapeF(): Implicit {
+  const ang = (35 * Math.PI) / 180;
+  const stem = capsuleF(0.4, [0, -1.6, 0], [0, 0, 0]);
+  const armL = capsuleF(0.35, [0, 0, 0], [-1.4 * Math.sin(ang), 1.4 * Math.cos(ang), 0]);
+  const armR = capsuleF(0.35, [0, 0, 0], [1.4 * Math.sin(ang), 1.4 * Math.cos(ang), 0]);
+  return (x, y, z) => Math.max(stem(x, y, z), armL(x, y, z), armR(x, y, z));
+}
+
+/** A UV sphere whose vertices are scaled radially by 1 + (u − ½)·amp, u from mulberry32(seed) (a poor mesh). */
+export function noisySphere(amp: number, seed: number, seg = 40, rings = 20): IndexedMesh {
+  const m = uvSphere(1, seg, rings);
+  const rng = mulberry32(seed);
+  for (let v = 0; v < m.positions.length / 3; v++) {
+    const s = 1 + (rng() - 0.5) * amp;
+    for (let a = 0; a < 3; a++) m.positions[3 * v + a] *= s;
+  }
+  return m;
+}
+
+/** Great-circle distance on the sphere of radius r about the origin between the directions of p and q. */
+export function greatCircle(r: number, p: ArrayLike<number>, q: ArrayLike<number>): number {
+  const c = (p[0] * q[0] + p[1] * q[1] + p[2] * q[2]) / (Math.hypot(p[0], p[1], p[2]) * Math.hypot(q[0], q[1], q[2]));
+  return r * Math.acos(Math.max(-1, Math.min(1, c)));
 }

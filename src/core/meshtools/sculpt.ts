@@ -26,6 +26,8 @@ export interface SculptStroke {
   radius: number;
   strength: number;
   mirrorX: boolean;
+  /** The model's symmetry plane in the volume's frame (`MeshApi.sculpt`); default x = 0 of that frame. */
+  mirrorPlane?: MirrorPlane;
 }
 
 /** The samples a stroke changed: ascending indices, values before and after (float32, exact). */
@@ -285,18 +287,20 @@ function reflect(c: Vec3, plane: MirrorPlane | undefined): Vec3 | null {
 /**
  * Applies a stroke to the volume IN PLACE and returns its sparse diff. Points outside the lattice only reach the
  * samples within the radius; a stroke that changes nothing returns an empty diff. `mirrorPlane` (volume frame)
- * replaces the default x = 0 for `mirrorX` — for a mesh part that is not centered on the model's symmetry plane the
- * editor passes the model's x = 0 plane mapped into the part's frame.
+ * (or the stroke's own `mirrorPlane`; the option wins when both are given) replaces the default x = 0 for `mirrorX` —
+ * for a mesh part that is not centered on the model's symmetry plane the editor passes the model's x = 0 plane mapped
+ * into the part's frame.
  */
 export function applyStroke(v: FieldVolume, stroke: SculptStroke, o: { mirrorPlane?: MirrorPlane } = {}): VoxelDiff {
   checkVolume(v);
   checkStroke(stroke);
   const k = Math.min(1, stroke.strength);
+  const plane = o.mirrorPlane ?? stroke.mirrorPlane;
   const journal = new Journal(v.field.length);
   for (const c of stroke.points) {
     const centers: Vec3[] = [[c[0], c[1], c[2]]];
     if (stroke.mirrorX) {
-      const twin = reflect(c, o.mirrorPlane);
+      const twin = reflect(c, plane);
       if (twin) centers.push(twin);
     }
     const dabs: Dab[] = centers.map((center) => ({ center, plane: stroke.tool === 'flatten' ? brushPlane(v, center, stroke.radius) : null }));
@@ -507,8 +511,20 @@ export class SculptSession {
     return copyMesh(this.current);
   }
 
-  /** Re-applies the most recently undone stroke (not in `MeshApi`; see docs/tracks/t5.md, requests). */
-  redo(): { mesh: ColoredMesh; undoId: string } | null {
+  /**
+   * Re-applies the most recently undone stroke (`MeshApi.redoSculpt`, ⇧⌘Z). Without `undoId` it returns null when
+   * there is nothing to redo. With `undoId` (the id `undo` took back) it must be the latest undone stroke:
+   * `MeshToolError` `undo-order` for an older undone stroke, `unknown-undo` for any other id or an empty redo stack.
+   */
+  redo(undoId?: string): { mesh: ColoredMesh; undoId: string } | null {
+    if (undoId !== undefined) {
+      const top = this.redoStack[this.redoStack.length - 1];
+      if (!top) throw new MeshToolError('unknown-undo', `nothing to redo on ${this.id}`);
+      if (top.id !== undoId) {
+        if (this.redoStack.some((x) => x.id === undoId)) throw new MeshToolError('undo-order', `redo ${top.id} before ${undoId}`);
+        throw new MeshToolError('unknown-undo', `unknown redo id ${undoId}`);
+      }
+    }
     const r = this.redoStack.pop();
     if (!r) return null;
     const before = this.current;
