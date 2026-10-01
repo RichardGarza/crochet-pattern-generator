@@ -78,7 +78,8 @@ function checkRot90(rot90: number): void {
   if (![0, 1, 2, 3].includes(rot90)) throw new RangeError(`align.rot90 must be 0, 1, 2 or 3, got ${rot90}`);
 }
 
-function checkAlign(a: ViewAlign): void {
+/** Validates a view's `align` (RangeError): scale finite > 0, finite offsets, rot90 0–3, boolean mirror. */
+export function checkAlign(a: ViewAlign): void {
   if (!(a.scale > 0) || !Number.isFinite(a.scale)) throw new RangeError(`align.scale must be a finite number > 0, got ${a.scale}`);
   if (!Number.isFinite(a.dx) || !Number.isFinite(a.dy)) throw new RangeError(`align offsets must be finite, got ${a.dx}, ${a.dy}`);
   checkRot90(a.rot90);
@@ -220,7 +221,12 @@ export function alignViews(input: readonly ViewMask[], o: { keepHoles?: boolean 
     const o2 = { mask: morphClose(filled, turned.w, turned.h, VIEW_CLOSE_R), w: turned.w, h: turned.h };
     const box = maskBox(o2.mask, o2.w, o2.h);
     if (!box) {
-      issues.push({ code: ALIGN_ISSUES.emptyView, severity: 'warn', message: `The ${NAMES[v.label]} photo has no object mask yet, so it is left out.` });
+      issues.push({
+        code: ALIGN_ISSUES.emptyView,
+        severity: 'warn',
+        message: `The ${NAMES[v.label]} photo has no object mask yet, so it is left out.`,
+        where: { view: v.id },
+      });
       continue;
     }
     if (seen.has(v.label)) {
@@ -228,6 +234,7 @@ export function alignViews(input: readonly ViewMask[], o: { keepHoles?: boolean 
         code: ALIGN_ISSUES.duplicate,
         severity: 'warn',
         message: `Two photos are labelled "${NAMES[v.label]}". If one shows another side, change its label; otherwise their outlines are combined.`,
+        where: { view: v.id },
       });
     }
     seen.add(v.label);
@@ -264,6 +271,7 @@ export function alignViews(input: readonly ViewMask[], o: { keepHoles?: boolean 
             code: ALIGN_ISSUES.scale,
             severity: 'warn',
             message: `The ${NAMES[o.v.label]} photo does not match the others (its width and depth disagree by ${Math.round(mismatch * 100)}%). Check its label and rotation, or re-take it from farther away.`,
+            where: { view: o.v.id },
           });
         }
       } else if (knownX !== undefined) {
@@ -551,30 +559,46 @@ export const CONSISTENCY_N = 128;
 export function viewConsistency(alignment: Alignment, N = CONSISTENCY_N): ConsistencyReport {
   if (alignment.views.length === 0) return { grid: null, views: [], silhouettes: {}, issues: [] };
   const grid = makeGrid(alignedBounds(alignment), N);
-  const { planes, perView } = planeTables(alignment, grid);
+  return consistencyFromTables(alignment, grid, planeTables(alignment, grid));
+}
+
+/** `viewConsistency` from plane tables already computed on `grid` (the build reuses its own). */
+export function consistencyFromTables(
+  alignment: Alignment,
+  grid: ReconGrid,
+  tables: ReturnType<typeof planeTables>,
+): ConsistencyReport {
+  const { N } = grid;
+  const { planes, perView } = tables;
   const silhouettes = hullSilhouettes(planes, N);
   const issues: Issue[] = [];
   const views: ViewConsistency[] = alignment.views.map((view) => {
     const own = perView[view.id];
     const sil = silhouettes[view.convention.plane] as Uint8Array;
-    let inter = 0;
-    let union = 0;
-    for (let k = 0; k < N * N; k++) {
-      const a = own[k] > 0;
-      const b = sil[k] !== 0;
-      if (a && b) inter++;
-      if (a || b) union++;
-    }
-    const iou = union === 0 ? 1 : inter / union;
+    const iou = tableIoU(own, sil, N);
     const warn = iou < IOU_WARN;
     if (warn) {
       issues.push({
         code: ALIGN_ISSUES.iou,
         severity: 'warn',
         message: `The ${NAMES[view.label]} photo does not line up with the others (match ${Math.round(iou * 100)}%). Check its label, its mask and its alignment.`,
+        where: { view: view.id },
       });
     }
     return { id: view.id, label: view.label, iou, warn };
   });
   return { grid, views, silhouettes, issues };
+}
+
+/** IoU of `table > 0` and `silhouette ≠ 0` on an N × N plane grid (1 when both are empty). */
+export function tableIoU(table: ArrayLike<number>, silhouette: ArrayLike<number>, N: number): number {
+  let inter = 0;
+  let union = 0;
+  for (let k = 0; k < N * N; k++) {
+    const a = table[k] > 0;
+    const b = silhouette[k] !== 0;
+    if (a && b) inter++;
+    if (a || b) union++;
+  }
+  return union === 0 ? 1 : inter / union;
 }
