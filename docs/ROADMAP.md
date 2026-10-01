@@ -3,7 +3,7 @@
 The living plan for Crochet Pattern Generator. The full specification is [`DESIGN.md`](DESIGN.md); the research
 behind it is in [`research/`](research/). This file says what gets built in what order, and where things stand.
 
-**Last updated:** 2026-10-01 · **Now:** Integration pass after Sprint 2 (the spec's checkpoint), then Sprint 3
+**Last updated:** 2026-10-01 · **Now:** Sprint 3 (eight tracks in parallel)
 
 ## What "done" means
 
@@ -44,8 +44,8 @@ Every sprint goes through the same loop, and nothing moves on until its step is 
 | 0c | Merge, app shell and design system, review, the full Step 0 acceptance list, push | ✅ done (1,834 unit + 15 browser tests) |
 | 1 | Eight tracks, first sprint each (see below) | ✅ done (2,683 unit + 25 browser tests) |
 | 2 | Tracks, second sprint each · then the Claude Design send-side trial (`docs/S-CD.md`), run by you or guided, before Sprint 3 | ✅ tracks done (3,383 unit + 31 browser tests); trial pending |
-| Checkpoint | Merge the finished halves to `master`, full test run, shared-type amendments | ⏳ in progress |
-| 3 | Tracks, third sprint each | ◻ |
+| Checkpoint | Merge the finished halves to `master`, full test run, shared-type amendments | ✅ done (spec v1.5) |
+| 3 | Tracks, third sprint each (T7: import screens instead of the Q&A, see log) | ⏳ in progress |
 | 4 | Tracks, fourth sprint each | ◻ |
 | 5 | Integration: wire every flow end to end, browser tests with screenshots, user guide | ◻ |
 | Gates | The four release checks below, then tag `v0.1.0` | ◻ |
@@ -99,3 +99,4 @@ See `DESIGN.md` §0.2 for all 23. The ones you would notice:
 - **2026-10-01** Integration pass after Sprint 1: 136 track requests decided (107 accepted, 23 changed, 6 rejected; `docs/tracks/integration-s1.md`), spec v1.4, additive type changes, Step 0 fixes. Sprint 2 started with each track's hand-off tasks first.
 - **2026-10-01** Sprint 2 done, all eight tracks merged: color reduction with licensed Red Heart Super Saver data (T1); tapestry, C2C from any corner, borders, yardage and materials (T2); 3D shape from photos (T3); increase/decrease placement and round text (T4); geodesic rows for free-form parts (T5); Add/Mirror/Delete/Attach and the Yarn & size panel (T6); GLB/OBJ/PLY/STL import with unit detection (T7); folder mirror with backups, Recently deleted and the project library (T8).
 - **2026-10-01** Decision: the Claude Design send-side trial is postponed again. In Sprint 3, T7 builds the import screens (import dialog, repair and units chips, versions picker, diff, accept) instead of the Q&A wizard; the prompt, the send step and the wizard wait for the trial.
+- **2026-10-01** Checkpoint after Sprint 2: 48 requests decided (`docs/tracks/integration-s2.md`), spec v1.5, a shared binary format for meshes, volumes and photo labels, and speed tests moved to a strict serial `npm run perf` so the main suite no longer flakes under load. Sprint 3 started.
