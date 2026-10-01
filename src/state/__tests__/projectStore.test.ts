@@ -736,6 +736,37 @@ describe('putAsset and the asset cache', () => {
   });
 });
 
+describe('uncacheAssets', () => {
+  it('frees saved assets, which then load again through the loader, and never drops an unsaved one', async () => {
+    const store = opened();
+    const s = store.getState();
+    const saved = await s.putAsset(new Uint8Array([1, 2, 3]), 'application/octet-stream');
+    s.update('Use it', (d) => d.sources.push({ id: 's1', asset: saved, name: 'a.png', w: 1, h: 1, addedAt: T0 }));
+    const unreferenced = await s.putAsset(new Uint8Array([4, 5, 6]), 'application/octet-stream'); // saved with the ticket too
+    const repository = new Map(store.getState().assets); // what a repository would hold after the save
+    const ticket = store.getState().beginSave();
+    if (!ticket) throw new Error('expected a ticket');
+    const later = await s.putAsset(new Uint8Array([7, 8, 9]), 'application/octet-stream'); // added during the save
+    store.getState().markSaved(ticket, { rev: 4 });
+
+    s.uncacheAssets([saved.key, unreferenced.key, later.key, 'p1/unknown']);
+    const after = store.getState();
+    expect([...after.assets.keys()]).toEqual([later.key]); // the one that is not saved yet stays
+    expect([...after.unsavedAssetKeys]).toEqual([later.key]);
+
+    let loads = 0;
+    s.setAssetLoader(async (key) => {
+      loads++;
+      return repository.get(key);
+    });
+    expect(new Uint8Array(await (await s.getAsset(saved)).arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+    expect(loads).toBe(1);
+    expect(store.getState().assets.has(saved.key)).toBe(true); // cached again
+    s.uncacheAssets([]); // nothing to do: no new Map
+    expect(store.getState().assets).toBe(store.getState().assets);
+  });
+});
+
 // ---- commitModelRevision
 
 async function readRevision(store: ProjectStore, rev: number) {

@@ -167,6 +167,11 @@ export interface ProjectState {
   getAsset(ref: AssetRef | string): Promise<Blob>;
   /** T8 registers how assets that are not in the cache are loaded. */
   setAssetLoader(loader: AssetLoader | null): void;
+  /**
+   * Drops assets from the cache to free memory; they stay in the repository and come back through the asset
+   * loader. Assets that are not saved yet are kept, whatever is asked.
+   */
+  uncacheAssets(keys: Iterable<string>): void;
 
   /** §5.2.1: the one way to replace the 3D model. See `CommitOptions` and the notes at `commit` below. */
   commitModelRevision: CommitModelRevisionFn;
@@ -643,6 +648,17 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
 
       setAssetLoader(loader) {
         assetLoader = loader;
+      },
+
+      uncacheAssets(keys) {
+        const s = get();
+        let assets: Map<string, Blob> | null = null;
+        for (const key of keys) {
+          if (!s.assets.has(key) || s.unsavedAssetKeys.has(key)) continue;
+          assets ??= new Map(s.assets);
+          assets.delete(key);
+        }
+        if (assets) set({ assets });
       },
 
       commitModelRevision: async (next, o) => commit('commitModelRevision', next, o),
