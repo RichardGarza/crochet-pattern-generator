@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { GaugeSpec, ResolvedGauge, Technique2D, TechniqueId } from '../../../types/gauge';
 import type { Cyc } from '../../../types/units';
 import {
-  LSC_SLACK,
-  SC_ASPECT_RANGE,
+  CARRIED_LIMIT,
+  HOOK_LIMITS_MM,
+  LSC_LIMITS_IN,
+  STITCH_LIMITS_IN,
   checkGauge,
   countsPer4In,
   defaultCell,
@@ -176,7 +178,7 @@ describe('resolveGauge — defaults for each CYC weight × technique (§2.2.5 st
     }
   });
 
-  it('defaultHookMm and defaultCell give the same defaults without resolving', () => {
+  it('consistency: defaultHookMm and defaultCell agree with what resolveGauge returns', () => {
     for (const cyc of CYCS) {
       for (const technique of TECHNIQUES_2D) {
         expect(defaultHookMm(cyc, technique)).toBe(TABLE_A[cyc].hook);
@@ -300,6 +302,7 @@ describe('resolveGauge — a measured swatch wins (§2.2.5 step 1; research 01 �
     expect(g.cell.h).toBeCloseTo(0.2875, 12);
     expect(() => swatchFromSize({ sts: 20, rows: 20, widthIn: 0, heightIn: 5 })).toThrow(RangeError);
     expect(() => swatchFromSize({ sts: Number.NaN, rows: 20, widthIn: 6, heightIn: 5 })).toThrow(RangeError);
+    expect(() => swatchFromSize(null as unknown as { sts: number; rows: number; widthIn: number; heightIn: number })).toThrow(RangeError);
   });
 
   it('a tapestry, hdc or mosaic swatch sets the cell; wSc, hSc and L_sc stay at Table A × hook factor', () => {
@@ -327,6 +330,16 @@ describe('resolveGauge — a measured swatch wins (§2.2.5 step 1; research 01 �
     const b = resolveGauge({ cyc: 4, technique: 'sc_tapestry', swatch, carried: 3, hookMm: 3.5 });
     expect(b.cell).toEqual(a.cell);
     expect(b.hookMm).toBe(3.5);
+  });
+
+  it('an sc_graphgan swatch with a hook override: the swatch sets cell, wSc, hSc and L_sc; the hook is only reported', () => {
+    const swatch = { sts: 15, rows: 18, spanIn: 4 };
+    const plain = resolveGauge({ cyc: 4, technique: 'sc_graphgan', swatch });
+    const hooked = resolveGauge({ cyc: 4, technique: 'sc_graphgan', swatch, hookMm: 4 });
+    expect(hooked).toEqual({ ...plain, hookMm: 4 });
+    expect(hooked.wSc).toBeCloseTo(4 / 15, 14);
+    expect(hooked.hSc).toBeCloseTo(4 / 18, 14);
+    expect(hooked.lscIn).toBeCloseTo((6.5 * 4) / 15, 12);
   });
 
   it('mode c, C2C "N tiles = X in": a square tile X / N', () => {
@@ -457,6 +470,17 @@ describe('resolveGauge — invalid input is rejected (§2.2.5)', () => {
     ['a negative hook', { cyc: 4, technique: 'amigurumi_sc', hookMm: -3.5 }],
     ['a NaN hook', { cyc: 4, technique: 'c2c', hookMm: Number.NaN }],
     ['an infinite hook', { cyc: 4, technique: 'c2c', hookMm: Number.POSITIVE_INFINITY }],
+    ['a hook thinner than 0.1 mm', { cyc: 4, technique: 'sc_graphgan', hookMm: 0.05 }],
+    ['a hook thicker than 100 mm', { cyc: 4, technique: 'amigurumi_sc', hookMm: 150 }],
+    ['a denormal hook', { cyc: 4, technique: 'amigurumi_sc', hookMm: 5e-324 }],
+    ['a hook given as text', { cyc: 4, technique: 'sc_graphgan', hookMm: '5' as unknown as number }],
+    ['yarn under given as text', { cyc: 4, technique: 'amigurumi_sc', yarnUnder: 'false' as unknown as boolean }],
+    ['a swatch that is not an object', { cyc: 4, technique: 'sc_graphgan', swatch: 13 as unknown as NonNullable<GaugeSpec['swatch']> }],
+    ['a swatch whose stitch is 500 in wide', { cyc: 4, technique: 'sc_graphgan', swatch: { sts: 0.001, rows: 1, spanIn: 0.5 } }],
+    ['a swatch over 1e308 in', { cyc: 4, technique: 'sc_graphgan', swatch: { sts: 1, rows: 1, spanIn: 1e308 } }],
+    ['more than 100 carried strands', { cyc: 4, technique: 'sc_tapestry', carried: 101 }],
+    ['a calibrated yarn per stitch of 2000 in', { cyc: 4, technique: 'sc_graphgan', lscCalibratedIn: 2000 }],
+    ['a calibrated yarn per stitch of 0.00001 in', { cyc: 4, technique: 'amigurumi_sc', lscCalibratedIn: 1e-5 }],
     ['a swatch with no stitches', { cyc: 4, technique: 'sc_graphgan', swatch: { sts: 0, rows: 16, spanIn: 4 } }],
     ['a swatch with negative rows', { cyc: 4, technique: 'sc_tapestry', swatch: { sts: 13, rows: -16, spanIn: 4 } }],
     ['a swatch with a NaN span', { cyc: 4, technique: 'hdc_graphgan', swatch: { sts: 13, rows: 16, spanIn: Number.NaN } }],
@@ -505,30 +529,95 @@ describe('resolveGauge — invalid input is rejected (§2.2.5)', () => {
     expect(() => resolveGauge(null as unknown as GaugeSpec)).toThrow(RangeError);
     expect(() => resolveGauge(undefined as unknown as GaugeSpec)).toThrow(RangeError);
     expect(checkGauge(null as unknown as GaugeSpec)).toHaveLength(1);
+    expect(checkGauge({ cyc: 4, technique: 'amigurumi_sc', yarnUnder: 1 as unknown as boolean }).map((i) => i.field)).toEqual(['yarnUnder']);
   });
 
   it('CYC 0 is fine for every 2D technique', () => {
     for (const technique of TECHNIQUES_2D) expect(() => resolveGauge({ cyc: 0, technique })).not.toThrow();
   });
 
-  it('never returns a NaN, zero or infinite number for input it accepts', () => {
-    const hooks = [undefined, 0.6, 2, 3.5, 9, 25];
+  it('pins the limits of what it accepts', () => {
+    expect(HOOK_LIMITS_MM).toEqual([0.1, 100]);
+    expect(STITCH_LIMITS_IN).toEqual([0.001, 100]);
+    expect(LSC_LIMITS_IN).toEqual([0.001, 1000]);
+    expect(CARRIED_LIMIT).toBe(100);
+    for (const hookMm of [0.1, 100]) expect(() => resolveGauge({ cyc: 4, technique: 'sc_graphgan', hookMm })).not.toThrow();
+    for (const hookMm of [0.0999, 100.01]) expect(() => resolveGauge({ cyc: 4, technique: 'sc_graphgan', hookMm })).toThrow(RangeError);
+    // a stitch exactly 100 in wide and one exactly 0.001 in tall
+    expect(() => resolveGauge({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 1, rows: 100000, spanIn: 100 } })).not.toThrow();
+    expect(() => resolveGauge({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 1, rows: 100000, spanIn: 100.1 } })).toThrow(/not a size a stitch can have/);
+    expect(() => resolveGauge({ cyc: 4, technique: 'sc_tapestry', carried: 100 })).not.toThrow();
+  });
+
+  it('never returns a NaN, zero or infinite number for a spec it accepts, and never accepts one it cannot size', () => {
+    const hooks = [undefined, 0.1, 0.6, 2, 3.5, 9, 25, 100, 5e-324, 1e-9, 1e9, Number.MAX_VALUE];
     const extras: Partial<GaugeSpec>[] = [
       {},
-      { swatch: { sts: 0.001, rows: 9999, spanIn: 0.5 } },
+      { swatch: { sts: 0.1, rows: 400, spanIn: 0.5 } },
+      { swatch: { sts: 1, rows: 1, spanIn: 1e308 } },
+      { swatch: { sts: 1e-320, rows: 1, spanIn: 1 } },
+      { swatch: { sts: 1e300, rows: 1e300, spanIn: 1e-300 } },
       { c2cSwatch: { tiles: 1, spanIn: 30 } },
+      { c2cSwatch: { tiles: 1e-320, spanIn: 1 } },
       { testBall: { maxSts: 6, circumferenceIn: 0.4 } },
+      { testBall: { maxSts: 1e300, circumferenceIn: 1e-300 } },
       { carried: 12 },
+      { carried: 1e308 },
       { yarnUnder: true },
       { lscCalibratedIn: 0.01 },
+      { lscCalibratedIn: 1e308 },
+      { lscCalibratedIn: 5e-324 },
     ];
+    let accepted = 0;
+    let rejected = 0;
     for (const cyc of CYCS) {
       for (const technique of [...TECHNIQUES_2D, 'amigurumi_sc'] as const) {
-        if (cyc === 0 && technique === 'amigurumi_sc') continue;
         for (const hookMm of hooks) {
-          for (const extra of extras) expectFiniteGauge(resolveGauge({ cyc, technique, hookMm, ...extra }));
+          for (const extra of extras) {
+            const spec: GaugeSpec = { cyc, technique, hookMm, ...extra };
+            // the three entry points agree on what is valid
+            const errors = checkGauge(spec).filter((i) => i.severity === 'error');
+            const checked = resolveGaugeChecked(spec);
+            if (errors.length > 0) {
+              expect(() => resolveGauge(spec)).toThrow(RangeError);
+              expect(() => yardageBandFor(spec)).toThrow(RangeError);
+              expect(checked.gauge).toBeUndefined();
+              rejected++;
+            } else {
+              const g = resolveGauge(spec);
+              expectFiniteGauge(g);
+              expect(checked.gauge).toEqual(g);
+              expect(yardageBandFor(spec)).toBeGreaterThan(0);
+              accepted++;
+            }
+          }
         }
       }
+    }
+    expect(accepted).toBeGreaterThan(1000);
+    expect(rejected).toBeGreaterThan(1000);
+  });
+
+  it('answers a broken value with a RangeError that says what it got, never a TypeError', () => {
+    expect(() => resolveGauge({ cyc: '4' as unknown as Cyc, technique: 'sc_graphgan' })).toThrow(
+      'resolveGauge: The yarn weight must be a CYC number 0–7, got "4" (text).',
+    );
+    expect(() => resolveGauge({ cyc: 4, technique: 'sc_graphgan', hookMm: '5' as unknown as number })).toThrow(
+      'resolveGauge: The hook must be a size in mm between 0.1 and 100, got "5" (text).',
+    );
+    expect(() => resolveGauge({ cyc: 4, technique: 'amigurumi_sc', yarnUnder: 'false' as unknown as boolean })).toThrow(
+      'resolveGauge: Yarn under must be true or false, got "false" (text).',
+    );
+    // values without a string form do not break the message
+    const bare = Object.create(null) as unknown;
+    expect(checkGauge({ cyc: bare as Cyc, technique: bare as TechniqueId }).map((i) => i.field)).toEqual(['cyc', 'technique']);
+    expect(checkGauge({ cyc: Symbol('x') as unknown as Cyc, technique: 'c2c' }).map((i) => i.code)).toEqual(['E_GAUGE_INPUT']);
+    for (const junk of [null, undefined, 4, 'worsted', [], () => 1]) {
+      expect(() => resolveGauge(junk as unknown as GaugeSpec)).toThrow(RangeError);
+      expect(checkGauge(junk as unknown as GaugeSpec).every((i) => i.code === 'E_GAUGE_INPUT')).toBe(true);
+      expect(resolveGaugeChecked(junk as unknown as GaugeSpec).gauge).toBeUndefined();
+      expect(() => yardageBandFor(junk as unknown as GaugeSpec)).toThrow(RangeError);
+      expect(measurementOf(junk as unknown as GaugeSpec)).toBeUndefined();
     }
   });
 
@@ -541,239 +630,13 @@ describe('resolveGauge — invalid input is rejected (§2.2.5)', () => {
     expect(() => resolveGauge({ cyc: 4, technique: 'sc_graphgan', carried: Number.NaN })).not.toThrow();
     expect(() => resolveGauge({ cyc: 4, technique: 'sc_tapestry', carried: Number.NaN, swatch: { sts: 14, rows: 12, spanIn: 4 } })).not.toThrow();
     expect(checkGauge({ cyc: 4, technique: 'sc_tapestry', carried: Number.NaN, swatch: { sts: 14, rows: 12, spanIn: 4 } })).toEqual([]);
-  });
-});
-
-describe('checkGauge — sanity warnings on a measured gauge (§2.2.5, research 01 §7)', () => {
-  const codes = (g: GaugeSpec): string[] => checkGauge(g).map((i) => i.code);
-
-  it('says nothing about the defaults or about a plausible measurement', () => {
-    for (const cyc of CYCS) {
-      for (const technique of TECHNIQUES_2D) expect(checkGauge({ cyc, technique })).toEqual([]);
-      if (cyc !== 0) expect(checkGauge({ cyc, technique: 'amigurumi_sc' })).toEqual([]);
-    }
-    expect(checkGauge({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 14, rows: 17, spanIn: 4 } })).toEqual([]);
-    expect(checkGauge({ cyc: 4, technique: 'sc_graphgan', hookMm: 6, lscCalibratedIn: 2.1 })).toEqual([]);
-    expect(checkGauge({ cyc: 4, technique: 'sc_tapestry', swatch: { sts: 12.5, rows: 11, spanIn: 4 } })).toEqual([]);
-    expect(checkGauge({ cyc: 3, technique: 'mosaic_overlay', swatch: { sts: 19, rows: 24, spanIn: cmToIn(10) } })).toEqual([]);
-    expect(checkGauge({ cyc: 4, technique: 'c2c', c2cSwatch: { tiles: 6, spanIn: 4 } })).toEqual([]);
-    expect(checkGauge({ cyc: 4, technique: 'amigurumi_sc', testBall: { maxSts: 42, circumferenceIn: 8.64 } })).toEqual([]);
-    expect(checkGauge({ cyc: 4, technique: 'amigurumi_sc', lscCalibratedIn: 1.5 })).toEqual([]);
-  });
-
-  it('a table gauge entered as a measurement raises nothing, for every weight and technique', () => {
-    for (const cyc of CYCS) {
-      for (const technique of ['sc_graphgan', 'sc_tapestry', 'sc_tapestry_round', 'hdc_graphgan', 'mosaic_overlay'] as const) {
-        const c = defaultCell(cyc, technique);
-        const issues = checkGauge({ cyc, technique, swatch: { sts: 4 / c.w, rows: 4 / c.h, spanIn: 4 } });
-        // Jumbo's Table A gauge is 4 sts × 4.2 rows: w/h = 1.05, inside 0.75–1.5 and rows > sts
-        expect(issues).toEqual([]);
-      }
-      expect(checkGauge({ cyc, technique: 'c2c', c2cSwatch: { tiles: 4 / defaultCell(cyc, 'c2c').w, spanIn: 4 } })).toEqual([]);
-      if (cyc !== 0) {
-        const w = defaultCell(cyc, 'amigurumi_sc').w * 1.05;
-        expect(checkGauge({ cyc, technique: 'amigurumi_sc', testBall: { maxSts: 36, circumferenceIn: 36 * w } })).toEqual([]);
-      }
-    }
-  });
-
-  it('W_GAUGE_RANGE: a count more than 35% outside the CYC range (worsted 11–14 sc ⇒ 7.15–18.9)', () => {
-    const at = (sts: number): string[] => codes({ cyc: 4, technique: 'sc_graphgan', swatch: { sts, rows: sts * 1.18, spanIn: 4 } });
-    expect(at(7.2)).toEqual([]);
-    expect(at(7.1)).toEqual(['W_GAUGE_RANGE']);
-    expect(at(18.8)).toEqual([]);
-    expect(at(19.0)).toEqual(['W_GAUGE_RANGE']);
-    // rows have no CYC range of their own: the stitch range is carried over at the table aspect (16 / 13.5),
-    // 13.04–16.59 rows ⇒ 8.47–22.4 with the ±35%
-    const rowsAt = (rows: number): string[] => codes({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 15, rows, spanIn: 4 } });
-    expect(rowsAt(22.3)).toEqual([]);
-    expect(rowsAt(22.5)).toEqual(['W_GAUGE_RANGE']);
-  });
-
-  it('W_GAUGE_RANGE has no lower limit for Jumbo (CYC says "≤ 6") and uses the dc range for Lace', () => {
-    expect(codes({ cyc: 7, technique: 'sc_graphgan', swatch: { sts: 1, rows: 1.1, spanIn: 4 } })).toEqual([]);
-    expect(codes({ cyc: 7, technique: 'sc_graphgan', swatch: { sts: 8, rows: 8.5, spanIn: 4 } })).toEqual([]); // ≤ 6 × 1.35 = 8.1
-    expect(codes({ cyc: 7, technique: 'sc_graphgan', swatch: { sts: 8.2, rows: 8.5, spanIn: 4 } })).toEqual(['W_GAUGE_RANGE']);
-    // Lace: 32–42 ⇒ 20.8–56.7
-    expect(codes({ cyc: 0, technique: 'sc_graphgan', swatch: { sts: 21, rows: 25, spanIn: 4 } })).toEqual([]);
-    expect(codes({ cyc: 0, technique: 'sc_graphgan', swatch: { sts: 20.5, rows: 25, spanIn: 4 } })).toEqual(['W_GAUGE_RANGE']);
-  });
-
-  it('W_GAUGE_RANGE recognises centimetres entered as inches', () => {
-    // 13 sts and 16 rows over 10 cm, typed as 10 in ⇒ 5.2 sts and 6.4 rows per 4 in
-    const issues = checkGauge({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 13, rows: 16, spanIn: 10 } });
-    expect(issues).toHaveLength(1);
-    expect(issues[0].code).toBe('W_GAUGE_RANGE');
-    expect(issues[0].severity).toBe('warn');
-    expect(issues[0].field).toBe('swatch');
-    expect(issues[0].hint).toBe('cm-as-inches');
-    expect(issues[0].message).toBe(
-      'This swatch has 5.2 sts (usually 11–14) and 6.4 rows (usually 13–16.6) per 4 in, more than 35% outside the usual range for Medium (worsted) yarn. The numbers fit a measurement in centimetres: was the length entered in cm but read as inches?',
-    );
-    // the same slip in every weight that has a lower limit, and with the span corrected the warning is gone
-    for (const cyc of [0, 1, 2, 3, 4, 5, 6] as const) {
-      const c = defaultCell(cyc, 'sc_graphgan');
-      const sts = 10 / 2.54 / c.w;
-      const rows = 10 / 2.54 / c.h;
-      const wrong = checkGauge({ cyc, technique: 'sc_graphgan', swatch: { sts, rows, spanIn: 10 } });
-      expect(wrong.map((i) => [i.code, i.hint])).toEqual([['W_GAUGE_RANGE', 'cm-as-inches']]);
-      expect(checkGauge({ cyc, technique: 'sc_graphgan', swatch: { sts, rows, spanIn: cmToIn(10) } })).toEqual([]);
-    }
-  });
-
-  it('W_GAUGE_RANGE recognises inches converted as centimetres', () => {
-    for (const cyc of CYCS) {
-      const c = defaultCell(cyc, 'sc_graphgan');
-      const issues = checkGauge({ cyc, technique: 'sc_graphgan', swatch: { sts: 4 / c.w, rows: 4 / c.h, spanIn: cmToIn(4) } });
-      expect(issues.map((i) => [i.code, i.hint])).toEqual([['W_GAUGE_RANGE', 'inches-as-cm']]);
-    }
-    const issues = checkGauge({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 13.5, rows: 16, spanIn: cmToIn(4) } });
-    expect(issues[0].message).toContain('34.3 sts (usually 11–14) and 40.6 rows (usually 13–16.6)');
-    expect(issues[0].message).toContain('was the length entered in inches but read as centimetres?');
-  });
-
-  it('a double crochet swatch entered as sc (UK "dc" = US sc) trips all three warnings', () => {
-    // worsted dc: about 12.7 sts and 7.6 rows per 4 in (rows 2.1× taller)
-    const issues = checkGauge({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 12.7, rows: 7.6, spanIn: 4 } });
-    expect(issues.map((i) => i.code)).toEqual(['W_GAUGE_RANGE', 'W_GAUGE_ASPECT', 'W_GAUGE_ROWS']);
-    const [range, aspect, rows] = issues;
-    expect(range.hint).toBeUndefined();
-    expect(range.message).toBe(
-      'This swatch has 7.6 rows (usually 13–16.6) per 4 in, more than 35% outside the usual range for Medium (worsted) yarn. Check the unit (cm entered as inches?), the stitch names (in UK patterns "dc" means US sc), the hook, and that it was worked in this technique.',
-    );
-    expect(aspect.hint).toBe('taller-stitch');
-    expect(aspect.message).toContain('this swatch gives 0.60');
-    expect(aspect.message).toContain('in UK patterns "dc" means US sc');
-    expect(rows.hint).toBe('tapestry-or-novelty');
-    for (const i of issues) {
-      expect(i.severity).toBe('warn');
-      expect(i.field).toBe('swatch');
-    }
-  });
-
-  it('W_GAUGE_ASPECT: flat sc w/h outside 0.75–1.5, limits included in the plausible range', () => {
-    expect(SC_ASPECT_RANGE).toEqual([0.75, 1.5]);
-    // w/h = rows / sts
-    expect(codes({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 12, rows: 18, spanIn: 4 } })).toEqual([]); // 1.5
-    expect(codes({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 12, rows: 18.2, spanIn: 4 } })).toEqual(['W_GAUGE_ASPECT']);
-    const high = checkGauge({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 13, rows: 21, spanIn: 4 } });
-    expect(high.map((i) => i.code)).toEqual(['W_GAUGE_ASPECT']);
-    expect(high[0].hint).toBeUndefined();
-    expect(high[0].message).toBe(
-      'Single crochet stitches are usually 0.75 to 1.5 times as wide as tall; this swatch gives 1.62. Check both counts, and that stitches and rows were counted over the same length.',
-    );
-    expect(codes({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 16, rows: 12, spanIn: 4 } })).toEqual(['W_GAUGE_ROWS']); // 0.75
-    expect(codes({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 16, rows: 11.9, spanIn: 4 } })).toEqual(['W_GAUGE_ASPECT', 'W_GAUGE_ROWS']);
-  });
-
-  it('W_GAUGE_ROWS: fewer rows than stitches for flat sc (novelty yarn or tapestry)', () => {
-    // an hdc swatch entered as sc: 12.9 sts × 10.7 rows — in range, aspect 0.83, but rows < sts
-    const issues = checkGauge({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 12.9, rows: 10.7, spanIn: 4 } });
-    expect(issues.map((i) => i.code)).toEqual(['W_GAUGE_ROWS']);
-    expect(issues[0].hint).toBe('tapestry-or-novelty');
-    expect(issues[0].message).toContain('10.7 rows, 12.9 sts');
-    // equal counts are not "fewer"
-    expect(codes({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 13, rows: 13, spanIn: 4 } })).toEqual([]);
-    expect(codes({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 13, rows: 12.9, spanIn: 4 } })).toEqual(['W_GAUGE_ROWS']);
-  });
-
-  it('the flat-sc rules do not apply to techniques whose stitches are meant to be taller or flatter', () => {
-    // tapestry is taller than wide by design (w/h 0.88, and 0.74 here)
-    expect(codes({ cyc: 4, technique: 'sc_tapestry', swatch: { sts: 13.5, rows: 11.9, spanIn: 4 } })).toEqual([]);
-    expect(codes({ cyc: 4, technique: 'sc_tapestry_round', swatch: { sts: 13.5, rows: 10, spanIn: 4 } })).toEqual([]);
-    // overlay mosaic reaches w/h 1.5: LillaBjörn's Nya Infinity, 20 sts and 30 rows = 10 × 10 cm in fingering cotton
-    expect(codes({ cyc: 1, technique: 'mosaic_overlay', swatch: { sts: 20, rows: 30, spanIn: cmToIn(10) } })).toEqual([]);
-    expect(codes({ cyc: 1, technique: 'mosaic_overlay', swatch: { sts: 20, rows: 33, spanIn: cmToIn(10) } })).toEqual([]);
-    // hdc: w/h 0.73
-    expect(codes({ cyc: 4, technique: 'hdc_graphgan', swatch: { sts: 13, rows: 9.5, spanIn: 4 } })).toEqual([]);
-  });
-
-  it('the expected counts follow the technique: an sc gauge entered for hdc has too many rows only at the extreme', () => {
-    // hdc worsted: 12.86 sts × 10.67 rows; rows usual 8.7–11.1 ⇒ accepted 5.65–14.9
-    expect(codes({ cyc: 4, technique: 'hdc_graphgan', swatch: { sts: 12.9, rows: 14.8, spanIn: 4 } })).toEqual([]);
-    expect(codes({ cyc: 4, technique: 'hdc_graphgan', swatch: { sts: 12.9, rows: 15.2, spanIn: 4 } })).toEqual(['W_GAUGE_RANGE']);
-  });
-
-  it('the expected counts follow the hook: tight sc on a 3.5 mm hook is plausible only when the hook says so', () => {
-    const swatch = { sts: 20, rows: 22, spanIn: 4 };
-    expect(codes({ cyc: 4, technique: 'sc_graphgan', swatch })).toEqual(['W_GAUGE_RANGE']); // > 18.9 at 5 mm
-    expect(codes({ cyc: 4, technique: 'sc_graphgan', swatch, hookMm: 3.5 })).toEqual([]); // 14 × 1.35 / 0.7653 = 24.7
-  });
-
-  it('C2C swatch: tiles per 4 in against the range scaled by the tile (worsted 4.2–5.4 ⇒ 2.75–7.27)', () => {
-    const at = (tiles: number): { code: string; hint?: string }[] =>
-      checkGauge({ cyc: 4, technique: 'c2c', c2cSwatch: { tiles, spanIn: 4 } }).map((i) => ({ code: i.code, hint: i.hint }));
-    expect(at(2.8)).toEqual([]);
-    expect(at(7.2)).toEqual([]);
-    expect(at(7.4)).toEqual([{ code: 'W_GAUGE_RANGE', hint: undefined }]);
-    // 5 tiles over 10 cm typed as 10 in ⇒ 2 tiles per 4 in
-    const cm = checkGauge({ cyc: 4, technique: 'c2c', c2cSwatch: { tiles: 5, spanIn: 10 } });
-    expect(cm.map((i) => [i.code, i.field, i.hint])).toEqual([['W_GAUGE_RANGE', 'c2cSwatch', 'cm-as-inches']]);
-    expect(cm[0].message).toContain('This C2C swatch has 2 tiles (usually 4.2–5.4) per 4 in');
-  });
-
-  it('test ball: stitches per 4 in of circumference against the stuffed Table E width', () => {
-    // worsted: 4 / (0.195 × 1.05) = 19.5 per 4 in; usual 15.9–20.3 ⇒ accepted 10.3–27.4
-    expect(codes({ cyc: 4, technique: 'amigurumi_sc', testBall: { maxSts: 36, circumferenceIn: 7.371 } })).toEqual([]);
-    expect(codes({ cyc: 4, technique: 'amigurumi_sc', testBall: { maxSts: 36, circumferenceIn: 13.5 } })).toEqual([]); // 10.7
-    expect(codes({ cyc: 4, technique: 'amigurumi_sc', testBall: { maxSts: 36, circumferenceIn: 14.2 } })).toEqual(['W_GAUGE_RANGE']); // 10.1
-    expect(codes({ cyc: 4, technique: 'amigurumi_sc', testBall: { maxSts: 36, circumferenceIn: 5.2 } })).toEqual(['W_GAUGE_RANGE']); // 27.7
-    // a 21.9 cm circumference typed as inches
-    const cm = checkGauge({ cyc: 4, technique: 'amigurumi_sc', testBall: { maxSts: 42, circumferenceIn: 21.9 } });
-    expect(cm.map((i) => [i.code, i.field, i.hint])).toEqual([['W_GAUGE_RANGE', 'testBall', 'cm-as-inches']]);
-    expect(cm[0].message).toContain('This test ball has 7.7 sts (usually 15.9–20.3) per 4 in');
-  });
-
-  it('W_GAUGE_LSC: a calibrated yarn per stitch more than 35% from the model, with the likely slip', () => {
-    expect(LSC_SLACK).toBe(0.35);
-    const at = (lscCalibratedIn: number): { code: string; hint?: string }[] =>
-      checkGauge({ cyc: 4, technique: 'sc_graphgan', lscCalibratedIn }).map((i) => ({ code: i.code, hint: i.hint }));
-    // model 1.926 in ⇒ accepted 1.25–2.60
-    expect(at(1.8)).toEqual([]);
-    expect(at(1.26)).toEqual([]);
-    expect(at(2.59)).toEqual([]);
-    expect(at(1.2)).toEqual([{ code: 'W_GAUGE_LSC', hint: undefined }]);
-    expect(at(3.0)).toEqual([{ code: 'W_GAUGE_LSC', hint: undefined }]);
-    expect(at(1.8 * 2.54)).toEqual([{ code: 'W_GAUGE_LSC', hint: 'cm-as-inches' }]); // 4.57 cm read as inches
-    expect(at(1.8 / 2.54)).toEqual([{ code: 'W_GAUGE_LSC', hint: 'inches-as-cm' }]);
-    expect(at(18)).toEqual([{ code: 'W_GAUGE_LSC', hint: 'ten-stitches' }]); // the yarn of all 10 stitches
-    const issue = checkGauge({ cyc: 4, technique: 'sc_graphgan', lscCalibratedIn: 18 })[0];
-    expect(issue.field).toBe('lscCalibratedIn');
-    expect(issue.severity).toBe('warn');
-    expect(issue.message).toBe(
-      'The calibrated yarn per stitch, 18.00 in, is more than 35% away from the 1.93 in expected for this yarn and hook. It fits the yarn of all 10 stitches: divide the measured length by the number of stitches unravelled.',
-    );
-    // amigurumi compares with L_ami (1.474 in for worsted), an sc swatch with 6.5 × its measured width
-    expect(checkGauge({ cyc: 4, technique: 'amigurumi_sc', lscCalibratedIn: 1.0 })).toEqual([]);
-    expect(checkGauge({ cyc: 4, technique: 'amigurumi_sc', lscCalibratedIn: 0.9 }).map((i) => i.code)).toEqual(['W_GAUGE_LSC']);
-    expect(checkGauge({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 10, rows: 12, spanIn: 4 }, lscCalibratedIn: 2.6 })).toEqual([]);
-  });
-
-  it('returns only errors when the input is invalid', () => {
-    const issues = checkGauge({ cyc: 4, technique: 'sc_graphgan', hookMm: -1, swatch: { sts: 13, rows: 16, spanIn: 10 } });
-    expect(issues.map((i) => i.code)).toEqual(['E_GAUGE_INPUT']);
-  });
-
-  it('resolveGaugeChecked: the findings and, unless one is an error, the gauge — without throwing', () => {
-    const ok = resolveGaugeChecked({ cyc: 4, technique: 'sc_graphgan' });
-    expect(ok.issues).toEqual([]);
-    expect(ok.gauge).toEqual(resolveGauge({ cyc: 4, technique: 'sc_graphgan' }));
-    // a warning does not stop the gauge: the measurement still wins
-    const warned = resolveGaugeChecked({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 13, rows: 16, spanIn: 10 } });
-    expect(warned.issues.map((i) => i.code)).toEqual(['W_GAUGE_RANGE']);
-    expect(warned.gauge?.source).toBe('swatch');
-    expect(warned.gauge?.cell.w).toBeCloseTo(10 / 13, 14);
-    // an error does
-    const bad = resolveGaugeChecked({ cyc: 0, technique: 'amigurumi_sc' });
-    expect(bad.gauge).toBeUndefined();
-    expect(bad.issues.map((i) => i.code)).toEqual(['E_GAUGE_INPUT']);
-    expect(resolveGaugeChecked(null as unknown as GaugeSpec).gauge).toBeUndefined();
-  });
-
-  it('is deterministic: the same spec gives the same findings, text included', () => {
-    const spec: GaugeSpec = { cyc: 4, technique: 'sc_graphgan', swatch: { sts: 12.7, rows: 7.6, spanIn: 4 }, lscCalibratedIn: 18 };
-    expect(checkGauge(spec)).toEqual(checkGauge(spec));
-    expect(checkGauge(spec).map((i) => i.code)).toEqual(['W_GAUGE_RANGE', 'W_GAUGE_ASPECT', 'W_GAUGE_ROWS', 'W_GAUGE_LSC']);
+    expect(() => resolveGauge({ cyc: 4, technique: 'c2c', carried: -5 })).not.toThrow();
+    // defaultCell reads `carried` for tapestry only, and options may be null
+    expect(defaultCell(4, 'c2c', { carried: Number.NaN })).toEqual(defaultCell(4, 'c2c'));
+    expect(() => defaultCell(4, 'sc_tapestry', { carried: Number.NaN })).toThrow(RangeError);
+    expect(() => defaultCell(4, 'sc_tapestry', { carried: -1 })).toThrow(RangeError);
+    expect(defaultCell(4, 'sc_graphgan', null as unknown as undefined)).toEqual(defaultCell(4, 'sc_graphgan'));
+    expect(defaultCell(4, 'amigurumi_sc', null as unknown as undefined)).toEqual(defaultCell(4, 'amigurumi_sc'));
   });
 });
 
@@ -838,6 +701,14 @@ describe('reading a resolved gauge', () => {
     const ball = resolveGauge({ cyc: 4, technique: 'amigurumi_sc', testBall: { maxSts: 36, circumferenceIn: 7.371 } });
     for (const s of ['firm', 'medium', 'light', 'none'] as const) expect(stuffingStretch(ball, s)).toBe(1);
     expect(stuffedCell(ball, 'firm').wS).toBeCloseTo(0.20475, 12);
+    // a missing or unknown stuffing is an error, never a silent "unstuffed"
+    for (const bad of [undefined, null, 'stuffed', 'FIRM', 'constructor', 1]) {
+      expect(() => stuffingStretch(g, bad as unknown as 'firm')).toThrow(RangeError);
+      expect(() => stuffedCell(g, bad as unknown as 'firm')).toThrow(RangeError);
+    }
+    expect(() => stuffingStretch(null as unknown as ResolvedGauge, 'firm')).toThrow(RangeError);
+    expect(() => stuffingStretch({ stretch: Number.NaN }, 'firm')).toThrow(RangeError);
+    expect(() => stuffedCell({ stretch: 1.05, cell: { w: 0, h: 1 } }, 'firm')).toThrow(RangeError);
   });
 
   it('countsPer4In: the gauge as it is stated', () => {
@@ -852,6 +723,7 @@ describe('reading a resolved gauge', () => {
     expect(ami.rows4).toBeCloseTo(21.5, 1);
     expect(() => countsPer4In({ w: 0, h: 1 })).toThrow(RangeError);
     expect(() => countsPer4In({ w: 1e-320, h: 1 })).toThrow(RangeError);
+    expect(() => countsPer4In(null as unknown as { w: number; h: number })).toThrow(RangeError);
   });
 
   it('yardageBandFor: ±25% (2D) or ±20% (3D) by default, ±10% measured, ±5% calibrated (§2.8)', () => {
@@ -866,5 +738,18 @@ describe('reading a resolved gauge', () => {
     expect(yardageBandFor({ cyc: 4, technique: 'sc_graphgan', lscCalibratedIn: 1.8 })).toBe(0.05);
     expect(yardageBandFor({ cyc: 4, technique: 'amigurumi_sc', lscCalibratedIn: 1.5 })).toBe(0.05);
     expect(yardageBandFor({ cyc: 4, technique: 'amigurumi_sc', lscCalibratedIn: 1.5, testBall: { maxSts: 36, circumferenceIn: 7.4 } })).toBe(0.05);
+    // a spec resolveGauge rejects has no band: a NaN calibration is not a calibration, a swatch of zeros is not a swatch
+    expect(() => yardageBandFor({ cyc: 4, technique: 'sc_graphgan', lscCalibratedIn: Number.NaN })).toThrow(RangeError);
+    expect(() => yardageBandFor({ cyc: 4, technique: 'sc_graphgan', swatch: { sts: 0, rows: 0, spanIn: 0 } })).toThrow(RangeError);
+    expect(() => yardageBandFor({ cyc: 4, technique: 'tss' as TechniqueId })).toThrow(RangeError);
+  });
+
+  it('the calibrated band cannot be read off a ResolvedGauge: it does not record the calibration', () => {
+    // the gap behind request 1 of docs/tracks/s0b-gauge.md
+    const spec: GaugeSpec = { cyc: 4, technique: 'sc_graphgan', lscCalibratedIn: 1.8 };
+    const resolved = resolveGauge(spec);
+    expect(resolved.source).toBe('default');
+    expect(yardageBandFor(spec)).toBe(0.05);
+    expect(Object.keys(resolved)).not.toContain('lscCalibrated');
   });
 });

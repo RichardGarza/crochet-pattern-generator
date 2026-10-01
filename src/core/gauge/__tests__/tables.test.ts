@@ -6,7 +6,7 @@ import {
   AMI_CYCS,
   C2C_TILE_WIDTH_MULT,
   CM_PER_IN,
-  CYC_SC_RANGE,
+  CYC_RANGE,
   CYCS,
   GAUGE_SPAN_IN,
   HDC_HEIGHT_MULT,
@@ -143,7 +143,7 @@ describe('Table A — base flat sc gauge by CYC weight (§2.2.1)', () => {
 
 describe('CYC ranges, sc per 4 in (§2.2.1, research 01 §1.1)', () => {
   it('pins the published ranges: 1: 21–32, 2: 16–20, 3: 12–17, 4: 11–14, 5: 8–11, 6: 7–9, 7: ≤ 6; lace 32–42 in dc', () => {
-    expect(CYC_SC_RANGE).toEqual({
+    expect(CYC_RANGE).toEqual({
       0: { lo: 32, hi: 42, stitch: 'dc' },
       1: { lo: 21, hi: 32, stitch: 'sc' },
       2: { lo: 16, hi: 20, stitch: 'sc' },
@@ -153,12 +153,13 @@ describe('CYC ranges, sc per 4 in (§2.2.1, research 01 §1.1)', () => {
       6: { lo: 7, hi: 9, stitch: 'sc' },
       7: { hi: 6, stitch: 'sc' },
     });
-    expect(CYC_SC_RANGE[7].lo).toBeUndefined();
+    expect(CYC_RANGE[7].lo).toBeUndefined();
+    expect(Object.isFrozen(CYC_RANGE) && Object.isFrozen(CYC_RANGE[4])).toBe(true);
   });
 
   it('holds the Table A stitch count of every weight', () => {
     for (const cyc of CYCS) {
-      const r = CYC_SC_RANGE[cyc];
+      const r = CYC_RANGE[cyc];
       expect(TABLE_A[cyc].sts4).toBeLessThanOrEqual(r.hi);
       if (r.lo !== undefined) expect(TABLE_A[cyc].sts4).toBeGreaterThanOrEqual(r.lo);
     }
@@ -265,6 +266,12 @@ describe('hook override: (hook / refHook)^0.75 (§2.2.2, research 01 §4.4)', ()
       expect(() => scCell(4, bad)).toThrow(RangeError);
     }
     expect(() => hookFactor(5, 5, Number.NaN)).toThrow(RangeError);
+    expect(() => hookFactor('5' as unknown as number, 5)).toThrow(/got "5" \(text\)/);
+    // a ratio that underflows to 0 or overflows is an error, never a factor of 0 or Infinity
+    expect(() => hookFactor(5e-324, 5)).toThrow(/out of range/);
+    expect(() => hookFactor(Number.MAX_VALUE, 1e-300)).toThrow(/out of range/);
+    expect(() => scCell(4, 5e-324)).toThrow(RangeError);
+    expect(() => amiCell(4, { hookMm: 5e-324 })).toThrow(RangeError);
   });
 });
 
@@ -366,6 +373,13 @@ describe('Table B — technique transforms and stitch aspect (§2.2.2)', () => {
     }
     expect(() => techniqueCell(worsted, 'amigurumi_sc' as Technique2D)).toThrow(RangeError);
     expect(() => techniqueCell(worsted, 'tss' as Technique2D)).toThrow(RangeError);
+    // a broken sc cell or strand count never becomes a NaN cell
+    for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY]) expect(() => techniqueCell(worsted, 'sc_tapestry', bad)).toThrow(RangeError);
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => techniqueCell({ w: bad, h: 0.25 }, 'sc_graphgan')).toThrow(RangeError);
+      expect(() => techniqueCell({ w: 0.3, h: bad }, 'c2c')).toThrow(RangeError);
+    }
+    expect(() => techniqueCell(null as unknown as Cell, 'c2c')).toThrow(RangeError);
   });
 
   it.each(CYCS.map((cyc) => [cyc]))('reproduces research 01 Table C for CYC %i (sc, hdc, C2C, tapestry, mosaic)', (cyc) => {
@@ -422,6 +436,23 @@ describe('Table E — amigurumi, tight sc in rounds (§2.2.3)', () => {
     expect(c.h).toBeCloseTo((0.195 * 1.105335) / 1.05, 6);
     expect(amiCell(4, { hookMm: 3.5 })).toEqual(amiCell(4));
     expect(() => amiCell(4, { hookMm: 0 })).toThrow(RangeError);
+    // options may be null (JSON), and only a real `true` is yarn under
+    expect(amiCell(4, null as unknown as undefined)).toEqual(amiCell(4));
+    expect(amiCell(4, { yarnUnder: 'false' as unknown as boolean })).toEqual(amiCell(4));
+  });
+
+  it('each weight scales from its own hook, so at one fixed hook a finer yarn is not always narrower', () => {
+    // 3.5 mm: worsted 0.195 in; DK 0.17 × (3.5 / 2.75)^0.75 = 0.2037 in; sport 0.155 × (3.5 / 2.5)^0.75 = 0.1995 in.
+    // The model is the spec's (§2.2.2); a caller that changes the yarn weight drops the hook override with it.
+    expect(amiCell(4, { hookMm: 3.5 }).w).toBeCloseTo(0.195, 12);
+    expect(amiCell(3, { hookMm: 3.5 }).w).toBeCloseTo(0.2037, 4);
+    expect(amiCell(2, { hookMm: 3.5 }).w).toBeCloseTo(0.1995, 4);
+    // with each weight's own hook the widths are ordered
+    let prev = 0;
+    for (const cyc of AMI_CYCS) {
+      expect(amiCell(cyc).w).toBeGreaterThan(prev);
+      prev = amiCell(cyc).w;
+    }
   });
 
   it('stuffing stretch s: 1.05 for firm or medium, 1.00 for light or none', () => {

@@ -9,24 +9,31 @@
 
 /** Relative width of the band below a tie (or above a whole number) that is treated as binary noise. */
 const TIE_EPS = 1e-12;
+/** The band never grows beyond this, so large values still round as `Math.round` does. */
+const TIE_EPS_MAX = 1e-6;
 
-/**
- * The nearest integer, ties up — `Math.round`'s rule, decided as in exact arithmetic: a value within 1e-12
- * (relative) below a tie rounds up. It differs from `Math.round(x)` for no other input, except that a result of
- * zero is always +0. NaN and ±Infinity pass through unchanged.
- */
-export function roundHalfUp(x: number): number {
-  if (!Number.isFinite(x)) return x;
-  return Math.floor(x + 0.5 + TIE_EPS * (1 + Math.abs(x)));
+function noise(x: number): number {
+  return Math.min(TIE_EPS * (1 + Math.abs(x)), TIE_EPS_MAX);
 }
 
 /**
- * The smallest integer ≥ x, where a value within 1e-12 (relative) above a whole number counts as that whole
- * number: 2.0000000000000004 skeins is 2 skeins, not 3. A result of zero is always +0; NaN and ±Infinity pass
- * through unchanged.
+ * The nearest integer, ties up — `Math.round`'s rule, decided as in exact arithmetic: a value within 1e-12
+ * relative (and never more than 1e-6) below a tie rounds up. For every other value the result is
+ * `Math.round(x)`, except that a result of zero is always +0. NaN and ±Infinity pass through unchanged.
+ */
+export function roundHalfUp(x: number): number {
+  if (!Number.isFinite(x) || Math.abs(x) >= 2 ** 52) return x; // from 2^52 every double is a whole number
+  const n = Math.floor(x + 0.5 + noise(x));
+  return n === 0 ? 0 : n;
+}
+
+/**
+ * The smallest integer ≥ x, where a value within 1e-12 relative (and never more than 1e-6) above a whole number
+ * counts as that whole number: 2.0000000000000004 skeins is 2 skeins, not 3. A result of zero is always +0; NaN
+ * and ±Infinity pass through unchanged.
  */
 export function ceilTolerant(x: number): number {
   if (!Number.isFinite(x)) return x;
-  const n = Math.ceil(x - TIE_EPS * (1 + Math.abs(x)));
+  const n = Math.ceil(x - noise(x));
   return n === 0 ? 0 : n;
 }

@@ -8,6 +8,7 @@ import type { ChartResult } from '../../types/chart';
 import type { Cell } from '../../types/gauge';
 import type { Issue } from '../../types/issues';
 import type { Inches } from '../../types/units';
+import { fmt, isObject, positive, present, show } from './checks';
 import { roundHalfUp } from './round';
 
 /** A snapping constraint: counts of the form `m·n + plus`. Mosaic repeat `{ m: 12, plus: 3 }`, even rows `{ m: 2, plus: 0 }`. */
@@ -40,29 +41,15 @@ export const GRID_MAX_CELLS = 1000;
 /** `|aspectErr|` above this ⇒ offer ±1 row or column (§2.3.3). */
 export const ASPECT_ERR_OFFER = 0.025;
 
-function positive(x: unknown): x is number {
-  return typeof x === 'number' && Number.isFinite(x) && x > 0;
-}
-
-function present<T>(x: T | undefined | null): x is T {
-  return x !== undefined && x !== null;
-}
-
-/** One decimal, without a trailing ".0". */
-function fmt(x: number): string {
-  const s = x.toFixed(1);
-  return s.endsWith('.0') ? s.slice(0, -2) : s;
-}
-
 function checkMult(k: Mult, fn: string): void {
-  if (!Number.isInteger(k.m) || k.m < 1 || !Number.isInteger(k.plus) || k.plus < 0) {
-    throw new RangeError(`${fn}: a multiple needs integers m ≥ 1 and plus ≥ 0, got m = ${String(k.m)}, plus = ${String(k.plus)}`);
+  if (!isObject(k) || !Number.isInteger(k.m) || k.m < 1 || !Number.isInteger(k.plus) || k.plus < 0) {
+    throw new RangeError(`${fn}: a multiple needs integers m ≥ 1 and plus ≥ 0, got m = ${show(k?.m)}, plus = ${show(k?.plus)}`);
   }
 }
 
 function checkCell(c: Cell, fn: string): void {
-  if (c === null || typeof c !== 'object' || !positive(c.w) || !positive(c.h)) {
-    throw new RangeError(`${fn}: the cell needs a positive width and height in inches, got ${String(c?.w)} × ${String(c?.h)}`);
+  if (!isObject(c) || !positive(c.w) || !positive(c.h)) {
+    throw new RangeError(`${fn}: the cell needs a positive width and height in inches, got ${show(c?.w)} × ${show(c?.h)}`);
   }
 }
 
@@ -71,8 +58,8 @@ function checkCell(c: Cell, fn: string): void {
  * n ≥ 0 (§2.3.3). Never returns 0: `{ m: 6, plus: 0 }` gives at least 6.
  */
 export function snap(x: number, k?: Mult): number {
-  if (!Number.isFinite(x)) throw new RangeError(`snap: the count must be a finite number, got ${x}`);
-  if (!k) return Math.max(1, roundHalfUp(x));
+  if (typeof x !== 'number' || !Number.isFinite(x)) throw new RangeError(`snap: the count must be a finite number, got ${show(x)}`);
+  if (!present(k)) return Math.max(1, roundHalfUp(x));
   checkMult(k, 'snap');
   const n = Math.max(0, roundHalfUp((x - k.plus) / k.m)) * k.m + k.plus;
   return n < 1 ? k.m : n;
@@ -80,7 +67,7 @@ export function snap(x: number, k?: Mult): number {
 
 /** The smallest and the largest count a constraint allows between 1 and the hard cap. */
 function feasible(k: Mult | undefined, axis: string): { min: number; max: number } {
-  if (!k) return { min: 1, max: GRID_MAX_CELLS };
+  if (!present(k)) return { min: 1, max: GRID_MAX_CELLS };
   checkMult(k, 'grid');
   const min = k.plus >= 1 ? k.plus : k.m;
   const max = k.plus > GRID_MAX_CELLS ? 0 : k.plus + Math.floor((GRID_MAX_CELLS - k.plus) / k.m) * k.m;
@@ -91,16 +78,16 @@ function feasible(k: Mult | undefined, axis: string): { min: number; max: number
 }
 
 /**
- * Border rounds (§2.7.10): `n = max(1, round(widthIn / roundH))` joined rounds of sc, 0 when `widthIn` is 0.
- * `roundH` is the sc row height, `ResolvedGauge.hSc`. The border actually worked is `n · roundH` per side.
+ * Border rounds (§2.7.10): `n = max(1, round(widthIn / roundH))` joined rounds of sc, 0 when `widthIn` is 0 or
+ * less. `roundH` is the sc row height, `ResolvedGauge.hSc`. The border actually worked is `n · roundH` per side.
  */
 export function borderRounds(widthIn: Inches, roundH: Inches): number {
   if (typeof widthIn !== 'number' || !Number.isFinite(widthIn)) {
-    throw new RangeError(`borderRounds: the border width must be a finite number of inches, got ${String(widthIn)}`);
+    throw new RangeError(`borderRounds: the border width must be a finite number of inches, got ${show(widthIn)}`);
   }
   if (!(widthIn > 0)) return 0;
   if (!positive(roundH)) {
-    throw new RangeError(`borderRounds: the round height (ResolvedGauge.hSc) must be a positive length in inches, got ${String(roundH)}`);
+    throw new RangeError(`borderRounds: the round height (ResolvedGauge.hSc) must be a positive length in inches, got ${show(roundH)}`);
   }
   const n = Math.max(1, roundHalfUp(widthIn / roundH));
   if (!Number.isSafeInteger(n)) throw new RangeError(`borderRounds: a border of ${widthIn} in at ${roundH} in per round is out of range`);
@@ -126,7 +113,7 @@ function sizeOf(c: Cell, cols: number, rows: number, a: number, nB: number, B: n
 function imageAspect(imgW: number, imgH: number, fn: string): number {
   const a = imgH / imgW;
   if (!positive(imgW) || !positive(imgH) || !positive(a)) {
-    throw new RangeError(`${fn}: the image needs a positive width and height, got ${String(imgW)} × ${String(imgH)}`);
+    throw new RangeError(`${fn}: the image needs a positive width and height, got ${show(imgW)} × ${show(imgH)}`);
   }
   return a;
 }
@@ -143,21 +130,27 @@ interface Plan {
   /** What the request asks for when the hard cap is ignored: the plain §2.3.3 result. */
   wantCols: number;
   wantRows: number;
-  /** True when `wantCols` or `wantRows` is above the cap and the chart was scaled down to fit. */
+  /** True when `wantCols` or `wantRows` is above the cap and the chart was made smaller to fit. */
   capped: boolean;
+  /** True when both a width and a height were given. */
+  both: boolean;
   cols: number;
   rows: number;
 }
 
 function plan(c: Cell, req: GridRequest): Plan {
   checkCell(c, 'grid');
-  if (req === null || typeof req !== 'object') throw new RangeError('grid: the request is missing');
+  if (!isObject(req)) throw new RangeError('grid: the request is missing');
   const a = imageAspect(req.imgW, req.imgH, 'grid'); // subject aspect AFTER crop
   const hasW = present(req.wIn);
   const hasH = present(req.hIn);
   if (!hasW && !hasH) throw new RangeError('grid: give a finished width (wIn), a finished height (hIn) or both');
-  if (hasW && !Number.isFinite(req.wIn)) throw new RangeError(`grid: the finished width must be a finite number of inches, got ${String(req.wIn)}`);
-  if (hasH && !Number.isFinite(req.hIn)) throw new RangeError(`grid: the finished height must be a finite number of inches, got ${String(req.hIn)}`);
+  if (hasW && !(typeof req.wIn === 'number' && Number.isFinite(req.wIn))) {
+    throw new RangeError(`grid: the finished width must be a finite number of inches, got ${show(req.wIn)}`);
+  }
+  if (hasH && !(typeof req.hIn === 'number' && Number.isFinite(req.hIn))) {
+    throw new RangeError(`grid: the finished height must be a finite number of inches, got ${show(req.hIn)}`);
+  }
 
   const nB = present(req.border) ? borderRounds(req.border.widthIn, req.border.roundH) : 0;
   const B = nB > 0 && present(req.border) ? nB * req.border.roundH : 0; // ACTUAL border width per side
@@ -178,18 +171,23 @@ function plan(c: Cell, req: GridRequest): Plan {
   let cols = wantCols;
   let rows = wantRows;
   const capped = wantCols > fc.max || wantRows > fr.max;
-  if (capped) {
-    // Hard cap: answer with the largest request of the same proportions that still fits. The axis that binds
-    // sits at the edge of its cap (its largest count plus half a step, the last value that still snaps to it)
-    // and the other axis is scaled by the same factor, so the capped chart keeps the requested proportions and
-    // a growing request never loses a stitch on the way to the cap.
+  const both = hasW && hasH;
+  if (capped && both) {
+    // Both sizes were given: each axis follows its own number, so each is cut at its own cap.
+    cols = Math.min(wantCols, fc.max);
+    rows = Math.min(wantRows, fr.max);
+  } else if (capped) {
+    // One size was given and the other follows the picture: answer with the largest request of the same
+    // proportions that still fits. The axis that binds sits at the edge of its cap (its largest count plus half
+    // a step, the last value that still snaps to it) and the other axis is scaled by the same factor, so the
+    // capped chart keeps the picture's proportions and a growing request never loses a stitch on the way.
     const sc = wantCols > fc.max ? (fc.max + (req.colsMult?.m ?? 1) / 2) / idealCols : Infinity;
     const sr = wantRows > fr.max ? (fr.max + (req.rowsMult?.m ?? 1) / 2) / idealRows : Infinity;
     const scale = Math.min(sc, sr);
     cols = sc <= sr ? fc.max : Math.min(fc.max, snap(idealCols * scale, req.colsMult));
     rows = sr <= sc ? fr.max : Math.min(fr.max, snap(idealRows * scale, req.rowsMult));
   }
-  return { a, nB, B, Wg: Wg as number, Hg: Hg as number, wantCols, wantRows, capped, cols, rows };
+  return { a, nB, B, Wg: Wg as number, Hg: Hg as number, wantCols, wantRows, capped, both, cols, rows };
 }
 
 /**
@@ -202,12 +200,18 @@ function plan(c: Cell, req: GridRequest): Plan {
  * - `border`: `borderRounds` rounds of height `roundH` on every side are taken off the requested size first;
  *   `actualW × actualH` include them.
  * - `aspectErr` = (chart height ÷ chart width) ÷ (image height ÷ image width) − 1, border excluded.
- * - A size too small for one stitch (also 0, or a border wider than the piece) gives the smallest chart. A size
- *   that needs more than 1000 cells on a side gives the largest chart of the same proportions that fits the cap.
- *   `gridIssues` reports both. Below the cap the result is exactly the §2.3.3 formula.
+ *
+ * The result is the normative code of §2.3.3 with three differences, each reported by `gridIssues` where it
+ * changes the size: a tie is decided as on paper (`roundHalfUp`); a count is never 0 (a size too small for one
+ * stitch, also 0 or a border as wide as the piece, gives the smallest chart); and no side exceeds 1000 cells —
+ * with one size given the largest chart of the picture's proportions that fits, with both sizes given each
+ * axis cut at its own cap.
+ *
+ * A larger size never gives fewer columns or rows.
  *
  * Throws a RangeError when the request cannot be answered: no width and no height, a non-finite size, a cell or
- * image without positive sides, an invalid constraint, or a border with no positive round height.
+ * image without positive sides, an invalid constraint or one that allows no count from 1 to 1000, or a border
+ * with no positive round height.
  */
 export function grid(c: Cell, req: GridRequest): GridSize {
   const p = plan(c, req);
@@ -216,26 +220,26 @@ export function grid(c: Cell, req: GridRequest): GridSize {
 
 /**
  * The finished size of a chart whose counts are already known (after "±1 row", a hand edit, an imported chart):
- * the same `actualW`, `actualH`, `borderRounds` and `aspectErr` as `grid` reports.
+ * the same `actualW`, `actualH`, `borderRounds` and `aspectErr` as `grid` reports for those counts.
  */
-export function gridSize(
+export function chartSize(
   c: Cell,
   cols: number,
   rows: number,
   o: { imgW: number; imgH: number; border?: { widthIn: Inches; roundH: Inches } },
 ): GridSize {
-  checkCell(c, 'gridSize');
+  checkCell(c, 'chartSize');
   if (!Number.isInteger(cols) || cols < 1 || !Number.isInteger(rows) || rows < 1) {
-    throw new RangeError(`gridSize: columns and rows must be integers ≥ 1, got ${String(cols)} × ${String(rows)}`);
+    throw new RangeError(`chartSize: columns and rows must be integers ≥ 1, got ${show(cols)} × ${show(rows)}`);
   }
-  if (o === null || typeof o !== 'object') throw new RangeError('gridSize: the image size is missing');
-  const a = imageAspect(o.imgW, o.imgH, 'gridSize');
+  if (!isObject(o)) throw new RangeError('chartSize: the image size is missing');
+  const a = imageAspect(o.imgW, o.imgH, 'chartSize');
   const nB = present(o.border) ? borderRounds(o.border.widthIn, o.border.roundH) : 0;
   const B = nB > 0 && present(o.border) ? nB * o.border.roundH : 0;
   return sizeOf(c, cols, rows, a, nB, B);
 }
 
-export type GridIssueCode = 'W_GRID_NO_ROOM' | 'W_GRID_CAPPED' | 'W_GRID_LARGE' | 'W_GRID_ASPECT';
+export type GridIssueCode = 'W_GRID_NO_ROOM' | 'W_GRID_CAPPED' | 'W_GRID_LARGE' | 'W_GRID_PROPORTIONS' | 'W_GRID_ASPECT';
 
 export interface GridIssue extends Issue {
   code: GridIssueCode;
@@ -244,9 +248,11 @@ export interface GridIssue extends Issue {
 /**
  * What to tell the user about a grid request (all warnings; same inputs as `grid`, same errors thrown):
  * - `W_GRID_NO_ROOM`: the size leaves nothing for the chart (0, or a border as wide as the piece);
- * - `W_GRID_CAPPED`: more than 1000 cells on a side were needed; the chart was scaled down to the cap;
+ * - `W_GRID_CAPPED`: more than 1000 cells on a side were needed; the chart was made smaller;
  * - `W_GRID_LARGE`: more than 300 cells on a side;
- * - `W_GRID_ASPECT`: `|aspectErr| > 0.025` — offer ±1 row or column (or, with both sizes given, crop to fit).
+ * - `W_GRID_PROPORTIONS`: a width and a height were given and they differ from the picture's proportions by
+ *   more than 2.5% (inside the border, after the cap) — "crop must match": offer crop to fit or pad;
+ * - `W_GRID_ASPECT`: otherwise `|aspectErr| > 0.025`, from rounding to whole cells — offer ±1 row or column.
  */
 export function gridIssues(c: Cell, req: GridRequest): GridIssue[] {
   const p = plan(c, req);
@@ -267,7 +273,7 @@ export function gridIssues(c: Cell, req: GridRequest): GridIssue[] {
     out.push({
       code: 'W_GRID_CAPPED',
       severity: 'warn',
-      message: `This size needs ${p.wantCols} × ${p.wantRows} cells; a chart is limited to ${GRID_MAX_CELLS} cells on a side, so it was scaled down to ${size.cols} × ${size.rows} and the piece comes out ${fmt(size.actualW)} × ${fmt(size.actualH)} in.`,
+      message: `This size needs ${p.wantCols} × ${p.wantRows} cells; a chart is limited to ${GRID_MAX_CELLS} cells on a side, so it was ${p.both ? 'cut' : 'scaled down'} to ${size.cols} × ${size.rows} and the piece comes out ${fmt(size.actualW)} × ${fmt(size.actualH)} in.`,
     });
   }
   if (size.cols > GRID_WARN_CELLS || size.rows > GRID_WARN_CELLS) {
@@ -277,7 +283,17 @@ export function gridIssues(c: Cell, req: GridRequest): GridIssue[] {
       message: `The chart is ${size.cols} × ${size.rows} cells; above ${GRID_WARN_CELLS} cells on a side it is slow to draw and a very long project.`,
     });
   }
-  if (!noRoom && Math.abs(size.aspectErr) > ASPECT_ERR_OFFER) {
+  // With both sizes given the request itself may not have the picture's shape (before rounding; after a cap,
+  // what is left of it).
+  const askedErr = p.both && !noRoom ? (p.capped ? size.aspectErr : p.Hg / p.Wg / p.a - 1) : 0;
+  if (Math.abs(askedErr) > ASPECT_ERR_OFFER) {
+    const pct = fmt(Math.abs(askedErr) * 100);
+    out.push({
+      code: 'W_GRID_PROPORTIONS',
+      severity: 'warn',
+      message: `The width and height ${p.capped ? 'of this chart' : 'given'} are ${pct}% ${askedErr > 0 ? 'taller for their width' : 'wider for their height'} than the picture; crop the picture to fit, pad it, or give only one of the two sizes.`,
+    });
+  } else if (!noRoom && Math.abs(size.aspectErr) > ASPECT_ERR_OFFER) {
     const pct = fmt(Math.abs(size.aspectErr) * 100);
     out.push({
       code: 'W_GRID_ASPECT',

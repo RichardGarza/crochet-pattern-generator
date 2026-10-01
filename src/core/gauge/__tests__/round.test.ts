@@ -69,6 +69,31 @@ describe('roundHalfUp — "Math.round = JS half-up rounding everywhere" (§2.10.
     expect(roundHalfUp(Number.POSITIVE_INFINITY)).toBe(Number.POSITIVE_INFINITY);
     expect(roundHalfUp(Number.NEGATIVE_INFINITY)).toBe(Number.NEGATIVE_INFINITY);
   });
+
+  it('stays Math.round at any size: the noise band never grows beyond 1e-6', () => {
+    expect(roundHalfUp(5e11)).toBe(5e11);
+    expect(roundHalfUp(999999999999.4)).toBe(999999999999);
+    expect(roundHalfUp(999999999999.6)).toBe(1000000000000);
+    expect(roundHalfUp(1e15 + 0.25)).toBe(1e15);
+    expect(roundHalfUp(2 ** 52 + 1)).toBe(2 ** 52 + 1);
+    expect(roundHalfUp(Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER);
+    expect(roundHalfUp(-(2 ** 52) - 1)).toBe(-(2 ** 52) - 1);
+    expect(roundHalfUp(Number.MAX_VALUE)).toBe(Number.MAX_VALUE);
+    const rng = mulberry32(7);
+    for (let i = 0; i < 20000; i++) {
+      const x = randomRange(rng, -1, 1) * 10 ** randomRange(rng, 0, 15.5);
+      expect(roundHalfUp(x)).toBe(Math.round(x) + 0);
+    }
+    // whole numbers of any size are left alone
+    for (let i = 0; i < 2000; i++) {
+      const n = Math.floor(randomRange(rng, 0, 1) * 10 ** randomRange(rng, 0, 15.9));
+      expect(roundHalfUp(n)).toBe(n);
+      expect(ceilTolerant(n)).toBe(n);
+    }
+    expect(ceilTolerant(1e12)).toBe(1e12);
+    expect(ceilTolerant(3e12 + 0.5)).toBe(3e12 + 1);
+    expect(ceilTolerant(Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER);
+  });
 });
 
 describe('ceilTolerant — whole skeins', () => {
@@ -95,12 +120,16 @@ describe('the gauge kernel is pure (§0.1, §5.1, §5.8)', () => {
 
   it('has the modules of §5.1', () => {
     for (const f of ['tables.ts', 'resolve.ts', 'grid.ts', 'sphere.ts', 'yarnPerStitch.ts', 'index.ts']) expect(sources).toContain(f);
+    expect([...sources].sort()).toEqual(['checks.ts', 'grid.ts', 'index.ts', 'resolve.ts', 'round.ts', 'sphere.ts', 'tables.ts', 'yarnPerStitch.ts']);
   });
 
   it('uses no Math.random, no Date, no DOM and no dependency outside src/types and itself', () => {
     for (const f of sources) {
       const text = readFileSync(join(dir, f), 'utf8');
-      expect(text, f).not.toMatch(/Math\.random|\bDate\b|performance\.now|\bdocument\b|\bwindow\b/);
+      // code only: comments may say "window" or "date"
+      const code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+      const banned = code.match(/Math\.random|\bDate\b|performance\.now|\bdocument\b|\bwindow\b|\bglobalThis\b|\bprocess\b/g) ?? [];
+      expect(banned, f).toEqual([]);
       for (const m of text.matchAll(/from '([^']+)'/g)) {
         expect(m[1].startsWith('./') || m[1].startsWith('../../types/'), `${f} imports ${m[1]}`).toBe(true);
       }
@@ -108,9 +137,11 @@ describe('the gauge kernel is pure (§0.1, §5.1, §5.8)', () => {
   });
 
   it('exports every module through the barrel', () => {
-    for (const name of ['resolveGauge', 'checkGauge', 'grid', 'gridIssues', 'snap', 'borderRounds', 'sphereSizing', 'sphereDiameterIn', 'lSc', 'lAmi', 'TABLE_A', 'TABLE_B', 'TABLE_E', 'roundHalfUp', 'yarnPerStitchDefaults', 'hookUsLabel']) {
+    for (const name of ['resolveGauge', 'checkGauge', 'resolveGaugeChecked', 'grid', 'chartSize', 'gridIssues', 'snap', 'borderRounds', 'sphereSizing', 'sphereDiameterIn', 'lSc', 'lAmi', 'TABLE_A', 'TABLE_B', 'TABLE_E', 'CYC_RANGE', 'roundHalfUp', 'yarnPerStitchDefaults', 'hookUsLabel']) {
       expect(gauge, name).toHaveProperty(name);
     }
+    // the internal checks stay internal
+    for (const name of ['positive', 'present', 'fmt', 'show', 'freeze', 'isTechnique']) expect(gauge, name).not.toHaveProperty(name);
   });
 
   it('gives the same answer every time (same input ⇒ same output)', () => {

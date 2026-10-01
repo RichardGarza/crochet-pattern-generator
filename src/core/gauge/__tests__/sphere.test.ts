@@ -105,7 +105,7 @@ describe('sphereSizing — the formulas of §2.2.6', () => {
     expect(sphereSizing(sphereDiameterIn(60, W * S), under, S).plainRounds).toBe(13); // round(33.3) − 20
   });
 
-  it('decides the plain-round tie at k = 10 (3 · 10 · 1.05 = 31.5) as exact arithmetic would, for every Table E width', () => {
+  it('the tie at k = 10 (3 · 10 · 1.05 = 31.5) rounds up for every Table E width: the 60-stitch ball has 12 plain rounds', () => {
     for (const w of [...WIDTHS, 0.5]) {
       for (const stretch of [1, 1.05]) {
         const s = sphereSizing(sphereDiameterIn(60, w * stretch), { w, h: w / 1.05 }, stretch);
@@ -115,6 +115,21 @@ describe('sphereSizing — the formulas of §2.2.6', () => {
         expect(s.stitches).toBe(1320);
       }
     }
+  });
+
+  it('decides a tie that binary division leaves short as exact arithmetic would (roundHalfUp)', () => {
+    // w/h = 1.15 (the hexagon end of research 01's 1.05–1.15), k = 30: 3 · 30 · 1.15 = 103.5 on paper,
+    // 103.49999999999999 in a double — plain Math.round would give 103 and one plain round fewer
+    const w = 0.195;
+    const h = w / 1.15;
+    const x = 3 * 30 * (w / h);
+    expect(x).toBeLessThan(103.5);
+    expect(Math.round(x)).toBe(103);
+    const s = sphereSizing(sphereDiameterIn(180, w * 1.05), { w, h }, 1.05);
+    expect(s.k).toBe(30);
+    expect(s.plainRounds).toBe(44); // 104 − 60
+    expect(s.rounds).toBe(103);
+    expect(s.stitches).toBe(6 * 900 + 180 * 44);
   });
 
   it('a very flat stitch has no plain rounds, never a negative number', () => {
@@ -132,7 +147,8 @@ describe('sphereSizing — the formulas of §2.2.6', () => {
     expect(loose.dActualIn).toBeCloseTo((36 * 0.195) / Math.PI, 12);
     expect(firm.dActualIn / loose.dActualIn).toBeCloseTo(1.05, 12);
     expect(loose.plainRounds).toBe(firm.plainRounds);
-    expect(sphereSizing(2.35, WORSTED)).toEqual(loose);
+    // the stretch is not optional: a stuffed ball sized without it would come out 5% larger than asked
+    expect(() => sphereSizing(2.35, WORSTED, undefined as unknown as number)).toThrow(/stuffing stretch/);
     // a test ball gauge carries the stretch in w (stretch 1): same ball
     const ball = resolveGauge({ cyc: 4, technique: 'amigurumi_sc', testBall: { maxSts: 36, circumferenceIn: 36 * W * S } });
     expect(sphereSizing(2.35, ball.cell, ball.stretch)).toMatchObject({ nMax: 36, plainRounds: 7, rounds: 18, stitches: 468 });
@@ -159,13 +175,40 @@ describe('sphereSizing — the formulas of §2.2.6', () => {
       expect(() => sphereDiameterIn(bad, 0.2)).toThrow(RangeError);
       expect(() => sphereDiameterIn(36, bad)).toThrow(RangeError);
     }
-    expect(() => sphereSizing(2, null as unknown as Cell)).toThrow(RangeError);
+    expect(() => sphereSizing(2, null as unknown as Cell, S)).toThrow(RangeError);
+    // results that cannot be expressed are errors, not Infinity
+    expect(() => sphereSizing(1, { w: 1e308, h: 1e308 }, 1)).toThrow(/out of range/);
+    expect(() => sphereDiameterIn(1e308, 1e308)).toThrow(/out of range/);
     // a ball too large for exact stitch arithmetic
     expect(() => sphereSizing(1e200, WORSTED, S)).toThrow(/out of range/);
     // large but countable is fine
     const big = sphereSizing(60, WORSTED, S);
     expect(big.nMax % 6).toBe(0);
     expect(big.stitches).toBe(6 * big.k * big.k + 6 * big.k * big.plainRounds);
+  });
+});
+
+describe('sphereSizing — conformance with the formulas of §2.2.6, written out literally', () => {
+  function sphereSpec(D: number, w: number, h: number, s: number): { k: number; nMax: number; plainRounds: number; rounds: number; stitches: number; dActualIn: number } {
+    const wS = w * s;
+    const k = Math.max(2, Math.round((Math.PI * D) / (6 * wS)));
+    const p = Math.max(0, Math.round(3 * k * (w / h)) - 2 * k);
+    return { k, nMax: 6 * k, plainRounds: p, rounds: 2 * k - 1 + p, stitches: 6 * k * k + 6 * k * p, dActualIn: (6 * k * wS) / Math.PI };
+  }
+
+  it('the copy reproduces G3 itself', () => {
+    expect(sphereSpec(2.35, 0.195, 0.195 / 1.05, 1.05)).toMatchObject({ k: 6, nMax: 36, plainRounds: 7, rounds: 18, stitches: 468 });
+  });
+
+  it('sphereSizing is bit-identical to it on random input', () => {
+    const rng = mulberry32(468);
+    for (let i = 0; i < 5000; i++) {
+      const w = randomRange(rng, 0.04, 0.7);
+      const h = w / randomRange(rng, 0.4, 1.4);
+      const s = randomRange(rng, 0.85, 1.3);
+      const d = randomRange(rng, 0.05, 40);
+      expect(sphereSizing(d, { w, h }, s)).toEqual(sphereSpec(d, w, h, s));
+    }
   });
 });
 

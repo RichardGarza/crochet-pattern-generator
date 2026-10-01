@@ -9,7 +9,7 @@ import {
   borderRounds,
   grid,
   gridIssues,
-  gridSize,
+  chartSize,
   snap,
   type GridRequest,
   type Mult,
@@ -74,6 +74,67 @@ describe('G2 — grid sizing, worsted 40 × 50 in (§2.3.3, §2.13)', () => {
   it('returns exactly the shape of ChartResult.size', () => {
     const size: ChartResult['size'] = grid(WORSTED, { wIn: 40, ...IMG });
     expect(size.cols).toBe(135);
+  });
+});
+
+describe('grid — conformance with the normative code block of §2.3.3', () => {
+  // DESIGN.md §2.3.3, verbatim
+  const snapSpec = (x: number, k?: Mult): number =>
+    !k ? Math.max(1, Math.round(x)) : Math.max(0, Math.round((x - k.plus) / k.m)) * k.m + k.plus;
+  function gridSpec(c: Cell, req: GridRequest): ChartResult['size'] {
+    const a = req.imgH / req.imgW;
+    const nB = req.border && req.border.widthIn > 0 ? Math.max(1, Math.round(req.border.widthIn / req.border.roundH)) : 0;
+    const B = nB * (req.border?.roundH ?? 0);
+    let Wg = req.wIn !== undefined ? req.wIn - 2 * B : undefined;
+    let Hg = req.hIn !== undefined ? req.hIn - 2 * B : undefined;
+    if (Wg !== undefined && Hg === undefined) Hg = Wg * a;
+    if (Hg !== undefined && Wg === undefined) Wg = Hg / a;
+    const cols = snapSpec((Wg as number) / c.w, req.colsMult);
+    const rows = snapSpec((Hg as number) / c.h, req.rowsMult);
+    return { cols, rows, borderRounds: nB, actualW: cols * c.w + 2 * B, actualH: rows * c.h + 2 * B, aspectErr: (rows * c.h) / (cols * c.w) / a - 1 };
+  }
+
+  it('the copy reproduces the goldens of §2.3.3 itself', () => {
+    expect(gridSpec(WORSTED, { wIn: 40, hIn: 50, ...IMG })).toMatchObject({ cols: 135, rows: 200, borderRounds: 0 });
+    expect(gridSpec(WORSTED, { wIn: 40, hIn: 50, ...IMG, border: { widthIn: 1, roundH: 0.25 } })).toMatchObject({ cols: 128, rows: 192, borderRounds: 4 });
+    expect(snapSpec(130, MOSAIC)).toBe(135);
+  });
+
+  it('grid is bit-identical to it wherever its result is a chart of 1 to 1000 cells a side', () => {
+    const rng = mulberry32(233);
+    const mults: (Mult | undefined)[] = [undefined, undefined, EVEN, SIXES, MOSAIC, { m: 7, plus: 2 }];
+    let same = 0;
+    for (let i = 0; i < 6000; i++) {
+      const c: Cell = { w: randomRange(rng, 0.08, 1.2), h: randomRange(rng, 0.08, 1.2) };
+      const kind = rng();
+      const req: GridRequest = {
+        wIn: kind < 0.7 ? randomRange(rng, -5, 160) : undefined,
+        hIn: kind > 0.4 ? randomRange(rng, -5, 160) : undefined,
+        imgW: 50 + Math.floor(rng() * 3000),
+        imgH: 50 + Math.floor(rng() * 3000),
+        border: rng() < 0.4 ? { widthIn: randomRange(rng, 0, 4), roundH: randomRange(rng, 0.08, 0.6) } : undefined,
+        colsMult: mults[Math.floor(rng() * mults.length)],
+        rowsMult: mults[Math.floor(rng() * mults.length)],
+      };
+      const spec = gridSpec(c, req);
+      if (spec.cols < 1 || spec.rows < 1 || spec.cols > 1000 || spec.rows > 1000) continue; // deviations 2 and 3
+      expect(grid(c, req)).toEqual(spec);
+      same++;
+    }
+    expect(same).toBeGreaterThan(4000);
+  });
+
+  it('differs only where the notes say: a tie lost to binary noise, a count of 0, the cap', () => {
+    // a tie lost to binary noise (super bulky hdc, 35 in): the normative code gives 62, exact arithmetic 63
+    const hdc: Cell = { w: 1.05 * (4 / 7.5), h: 1.5 * (4 / 8.5) };
+    expect(gridSpec(hdc, { wIn: 35, imgW: 100, imgH: 100 }).cols).toBe(62);
+    expect(grid(hdc, { wIn: 35, imgW: 100, imgH: 100 }).cols).toBe(63);
+    // a count of 0 (even rows, a size of nothing)
+    expect(gridSpec(WORSTED, { wIn: 0, ...IMG, rowsMult: EVEN }).rows).toBe(0);
+    expect(grid(WORSTED, { wIn: 0, ...IMG, rowsMult: EVEN }).rows).toBe(2);
+    // the cap
+    expect(gridSpec(WORSTED, { wIn: 400, ...IMG })).toMatchObject({ cols: 1350, rows: 2000 });
+    expect(grid(WORSTED, { wIn: 400, ...IMG })).toMatchObject({ cols: 675, rows: 1000 });
   });
 });
 
@@ -161,21 +222,32 @@ describe('grid — aspect error (§2.3.3)', () => {
       { code: 'W_GRID_ASPECT', severity: 'warn', message: 'The chart is 5.5% taller for its width than the picture; one row fewer or one column more may fit better.' },
     ]);
     // one row fewer: 4 × 4 ⇒ 1.0 / 1.1852 − 1 = −0.156 — the offer is the user's to judge
-    expect(gridSize(WORSTED, 4, 4, req).aspectErr).toBeCloseTo(-0.15625, 10);
-    expect(gridSize(WORSTED, 4, 5, req)).toEqual(size);
+    expect(chartSize(WORSTED, 4, 4, req).aspectErr).toBeCloseTo(-0.15625, 10);
+    expect(chartSize(WORSTED, 4, 5, req)).toEqual(size);
   });
 
-  it('both sizes given and a crop that does not match ⇒ a large aspect error (the UI offers crop to fit or pad)', () => {
+  it('both sizes given and a crop that does not match ⇒ W_GRID_PROPORTIONS (the UI offers crop to fit or pad)', () => {
     const req = { wIn: 40, hIn: 50, imgW: 1000, imgH: 1000 };
     const size = grid(WORSTED, req);
     expect(size).toMatchObject({ cols: 135, rows: 200 });
     expect(size.aspectErr).toBeCloseTo(0.25, 10);
-    const issues = gridIssues(WORSTED, req);
-    expect(issues.map((i) => i.code)).toEqual(['W_GRID_ASPECT']);
-    expect(issues[0].message).toContain('25% taller');
+    expect(gridIssues(WORSTED, req)).toEqual([
+      {
+        code: 'W_GRID_PROPORTIONS',
+        severity: 'warn',
+        message: 'The width and height given are 25% taller for their width than the picture; crop the picture to fit, pad it, or give only one of the two sizes.',
+      },
+    ]);
     const wide = gridIssues(WORSTED, { wIn: 50, hIn: 40, imgW: 1000, imgH: 1000 });
-    // 169 cols (168.75) × 160 rows: 40 / 50.074 − 1 = −0.2012
-    expect(wide[0].message).toBe('The chart is 20.1% wider for its height than the picture; one row more or one column fewer may fit better.');
+    expect(wide.map((i) => i.code)).toEqual(['W_GRID_PROPORTIONS']);
+    expect(wide[0].message).toContain('are 20% wider for their height than the picture');
+    // sizes that match the picture to within 2.5% are a rounding matter
+    expect(gridIssues(WORSTED, { wIn: 40, hIn: 51, ...IMG })).toEqual([]); // 2% off
+    expect(gridIssues(WORSTED, { wIn: 40, hIn: 51.5, ...IMG }).map((i) => i.code)).toEqual(['W_GRID_PROPORTIONS']); // 3% off
+    expect(gridIssues(WORSTED, { wIn: 1.2, hIn: 1.2, imgW: 100, imgH: 100 }).map((i) => i.code)).toEqual(['W_GRID_ASPECT']);
+    // the proportions are judged inside the border, where the chart is
+    expect(gridIssues(WORSTED, { wIn: 40, hIn: 50, ...IMG, border: { widthIn: 1, roundH: 0.25 } })).toEqual([]);
+    expect(gridIssues(WORSTED, { wIn: 12, hIn: 15, ...IMG, border: { widthIn: 2, roundH: 0.25 } }).map((i) => i.code)).toEqual(['W_GRID_PROPORTIONS']);
   });
 
   it('is the rounding of the two axes: a chart of 50 or more cells a side never needs the offer', () => {
@@ -322,7 +394,7 @@ describe('border rounds (§2.7.10)', () => {
   });
 
   it('G16: a 135 × 200 chart with a 1 in border finishes at 42.0 × 52.0 in', () => {
-    const size = gridSize(WORSTED, 135, 200, { ...IMG, border: { widthIn: 1, roundH: 0.25 } });
+    const size = chartSize(WORSTED, 135, 200, { ...IMG, border: { widthIn: 1, roundH: 0.25 } });
     expect(size.borderRounds).toBe(4);
     expect(size.actualW.toFixed(1)).toBe('42.0');
     expect(size.actualH.toFixed(1)).toBe('52.0');
@@ -330,25 +402,36 @@ describe('border rounds (§2.7.10)', () => {
   });
 });
 
-describe('gridSize — the finished size of known counts', () => {
-  it('agrees with grid for the counts grid returns', () => {
+describe('chartSize — the finished size of known counts', () => {
+  it('pins a hand case: 100 × 120 worsted cells with a 2-round border on a 3:4 picture', () => {
+    // 100 · 0.296296 + 2 · 0.5 = 30.63 in; 120 · 0.25 + 1 = 31 in; (30 / 29.63) / (4 / 3) − 1 = −0.2406
+    const size = chartSize(WORSTED, 100, 120, { imgW: 300, imgH: 400, border: { widthIn: 0.5, roundH: 0.25 } });
+    expect(size.cols).toBe(100);
+    expect(size.rows).toBe(120);
+    expect(size.borderRounds).toBe(2);
+    expect(size.actualW).toBeCloseTo(30.6296, 4);
+    expect(size.actualH).toBe(31);
+    expect(size.aspectErr).toBeCloseTo(-0.240625, 6);
+  });
+
+  it('consistency: agrees with grid for the counts grid returns', () => {
     const rng = mulberry32(11);
     for (let i = 0; i < 100; i++) {
       const c: Cell = { w: randomRange(rng, 0.1, 1.1), h: randomRange(rng, 0.09, 1.2) };
       const border = rng() < 0.5 ? { widthIn: randomRange(rng, 0, 2), roundH: randomRange(rng, 0.1, 0.6) } : undefined;
       const req: GridRequest = { wIn: randomRange(rng, 10, 80), imgW: 300, imgH: 400, border };
       const size = grid(c, req);
-      expect(gridSize(c, size.cols, size.rows, { imgW: 300, imgH: 400, border })).toEqual(size);
+      expect(chartSize(c, size.cols, size.rows, { imgW: 300, imgH: 400, border })).toEqual(size);
     }
   });
 
   it('rejects counts that are not integers ≥ 1 and a missing image or cell', () => {
     for (const bad of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(() => gridSize(WORSTED, bad, 10, IMG)).toThrow(RangeError);
-      expect(() => gridSize(WORSTED, 10, bad, IMG)).toThrow(RangeError);
+      expect(() => chartSize(WORSTED, bad, 10, IMG)).toThrow(RangeError);
+      expect(() => chartSize(WORSTED, 10, bad, IMG)).toThrow(RangeError);
     }
-    expect(() => gridSize(WORSTED, 10, 10, { imgW: 0, imgH: 10 })).toThrow(RangeError);
-    expect(() => gridSize({ w: 0, h: 1 }, 10, 10, IMG)).toThrow(RangeError);
+    expect(() => chartSize(WORSTED, 10, 10, { imgW: 0, imgH: 10 })).toThrow(RangeError);
+    expect(() => chartSize({ w: 0, h: 1 }, 10, 10, IMG)).toThrow(RangeError);
   });
 });
 
@@ -429,15 +512,43 @@ describe('grid — degenerate input (§2.3.3 limits)', () => {
     expect(Math.abs(landscape.aspectErr)).toBeLessThan(0.001);
   });
 
+  it('with both sizes given each axis is cut at its own cap, so one size never changes the other axis', () => {
+    // worsted, 50 in tall, picture 6:1
+    const at = (wIn: number): string => {
+      const s = grid(WORSTED, { wIn, hIn: 50, imgW: 1200, imgH: 200 });
+      return `${s.cols} × ${s.rows}, ${s.actualH} in tall`;
+    };
+    expect(at(296)).toBe('999 × 200, 50 in tall');
+    expect(at(300)).toBe('1000 × 200, 50 in tall');
+    expect(at(600)).toBe('1000 × 200, 50 in tall');
+    expect(at(1200)).toBe('1000 × 200, 50 in tall');
+    const issues = gridIssues(WORSTED, { wIn: 600, hIn: 50, imgW: 1200, imgH: 200 });
+    expect(issues.map((i) => i.code)).toEqual(['W_GRID_CAPPED', 'W_GRID_LARGE']);
+    expect(issues[0].message).toBe(
+      'This size needs 2025 × 200 cells; a chart is limited to 1000 cells on a side, so it was cut to 1000 × 200 and the piece comes out 296.3 × 50 in.',
+    );
+    // when what is left no longer has the picture's shape, that is said too
+    const squashed = gridIssues(WORSTED, { wIn: 600, hIn: 100, imgW: 1200, imgH: 200 });
+    expect(squashed.map((i) => i.code)).toEqual(['W_GRID_CAPPED', 'W_GRID_LARGE', 'W_GRID_PROPORTIONS']);
+    expect(squashed[2].message).toBe(
+      'The width and height of this chart are 102.5% taller for their width than the picture; crop the picture to fit, pad it, or give only one of the two sizes.',
+    );
+    // both over the cap
+    expect(grid(WORSTED, { wIn: 1e5, hIn: 1e5, imgW: 100, imgH: 100 })).toMatchObject({ cols: 1000, rows: 1000 });
+  });
+
   it('the cap respects the constraints', () => {
     // 12n + 3 ≤ 1000 ⇒ 999; even ≤ 1000 ⇒ 1000
     const size = grid(WORSTED, { wIn: 1e5, hIn: 1e5, imgW: 100, imgH: 100, colsMult: MOSAIC, rowsMult: EVEN });
-    expect(size.cols).toBeLessThanOrEqual(999);
-    expect((size.cols - 3) % 12).toBe(0);
+    expect(size.cols).toBe(999);
     expect(size.rows).toBe(1000);
     const cols = grid(WORSTED, { wIn: 1e5, hIn: 10, imgW: 100, imgH: 100, colsMult: MOSAIC });
     expect(cols.cols).toBe(999);
-    expect(cols.rows).toBe(1); // 40 rows scaled by the same factor
+    expect(cols.rows).toBe(40); // both sizes given: the height keeps its own 40 rows
+    // one size given: the other axis is scaled with the one that binds
+    const one = grid(WORSTED, { wIn: 1e5, imgW: 100, imgH: 100, colsMult: MOSAIC, rowsMult: EVEN });
+    expect(one.rows).toBe(1000); // rows bind (0.2963 / 0.25 = 1.185 rows per column)
+    expect(one.cols).toBe(843); // 1001 / 1.185 = 844.6 → 12 · 70 + 3
     // a constraint with no count between 1 and 1000 cannot be answered
     expect(() => grid(WORSTED, { wIn: 40, ...IMG, colsMult: { m: 2000, plus: 0 } })).toThrow(/no column count of the form 2000·n \+ 0 lies between 1 and 1000/);
     expect(() => grid(WORSTED, { wIn: 40, ...IMG, rowsMult: { m: 5, plus: 1001 } })).toThrow(RangeError);
@@ -497,7 +608,7 @@ describe('grid — degenerate input (§2.3.3 limits)', () => {
     expect(() => grid(WORSTED, { wIn: 40, imgW: 1e-308, imgH: 1e308 })).toThrow(/image needs a positive width and height/);
     expect(() => grid(WORSTED, { wIn: 40, imgW: 1e308, imgH: 1e-308 })).toThrow(/image needs a positive width and height/);
     expect(() => grid({ w: 1e-300, h: 1e300 }, { wIn: 1e-298, imgW: 100, imgH: 100 })).toThrow(/out of range/);
-    expect(() => gridSize({ w: 1e-300, h: 1e300 }, 1, 1, { imgW: 100, imgH: 100 })).toThrow(/out of range/);
+    expect(() => chartSize({ w: 1e-300, h: 1e300 }, 1, 1, { imgW: 100, imgH: 100 })).toThrow(/out of range/);
     expect(() => gridIssues(WORSTED, { ...IMG })).toThrow(RangeError);
   });
 
@@ -552,14 +663,14 @@ describe('grid — monotonicity', () => {
     expect(last.cols).toBe(999);
   });
 
-  it('with both sizes given, each axis follows its own size below the cap', () => {
+  it('with both sizes given, each axis follows its own size, below the cap and above it', () => {
     const rng = mulberry32(8086);
-    for (let i = 0; i < 300; i++) {
-      const c: Cell = { w: randomRange(rng, 0.2, 1.1), h: randomRange(rng, 0.2, 1.2) }; // at most 500 cells a side
-      const w1 = randomRange(rng, 0, 80);
-      const w2 = w1 + randomRange(rng, 0, 20);
-      const h1 = randomRange(rng, 0, 80);
-      const h2 = h1 + randomRange(rng, 0, 20);
+    for (let i = 0; i < 600; i++) {
+      const c: Cell = { w: randomRange(rng, 0.09, 1.1), h: randomRange(rng, 0.09, 1.2) };
+      const w1 = randomRange(rng, 0, 400);
+      const w2 = w1 + randomRange(rng, 0, 200);
+      const h1 = randomRange(rng, 0, 400);
+      const h2 = h1 + randomRange(rng, 0, 200);
       const a = grid(c, { wIn: w1, hIn: h1, ...IMG });
       const b = grid(c, { wIn: w2, hIn: h1, ...IMG });
       const d = grid(c, { wIn: w1, hIn: h2, ...IMG });

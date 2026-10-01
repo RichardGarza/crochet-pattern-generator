@@ -3,6 +3,7 @@ import type { Technique2D, TechniqueId } from '../../../types/gauge';
 import type { Cyc } from '../../../types/units';
 import { resolveGauge } from '../resolve';
 import { sphereSizing } from '../sphere';
+import { amiCell, scCell } from '../tables';
 import {
   C2C_TILE_YARN_MULT,
   CALIBRATION_STITCHES,
@@ -122,12 +123,17 @@ describe('the per-stitch model (§2.2.4)', () => {
     expect(lAmi(1, 3.25)).toBeGreaterThan(resolveGauge({ cyc: 1, technique: 'sc_graphgan' }).lscIn);
   });
 
-  it('L_ami grows with the hook and is never below either branch', () => {
+  it('L_ami grows with the hook and is the larger of its two branches', () => {
     for (const cyc of [1, 2, 3, 4, 5, 6, 7] as const) {
       let prev = 0;
       for (let mm = 1.5; mm <= 16; mm += 0.25) {
         const l = lAmi(cyc, mm);
         expect(l).toBeGreaterThan(prev);
+        const flat = 6.5 * scCell(cyc, mm).w;
+        const tight = 6.5 * amiCell(cyc, { hookMm: mm }).w;
+        expect(l).toBe(Math.max(flat, tight));
+        expect(l).toBeGreaterThanOrEqual(flat);
+        expect(l).toBeGreaterThanOrEqual(tight);
         prev = l;
       }
     }
@@ -141,6 +147,21 @@ describe('the per-stitch model (§2.2.4)', () => {
     expect(lscFromUnravel(18)).toBe(1.8);
     expect(lscFromUnravel(9, 5)).toBe(1.8);
     expect(CALIBRATION_STITCHES).toBe(10);
+  });
+
+  it('lscFromUnravel converts a taller stitch or a whole C2C tile to the yarn of one sc', () => {
+    // 10 hdc used 27.9 in: one hdc 2.79 in, one sc 2.79 / 1.45 = 1.924 in
+    expect(lscFromUnravel(27.9, 10, 'hdc')).toBeCloseTo(1.924, 3);
+    expect(lscFromUnravel(38.5, 10, 'dc')).toBeCloseTo(1.925, 12);
+    // one C2C tile used 14.95 in: one sc 14.95 / 7.76 = 1.9265 in
+    expect(lscFromUnravel(14.95, 1, 'c2cTile')).toBeCloseTo(1.92655, 5);
+    expect(lscFromUnravel(18, 10, 'sc')).toBe(1.8);
+    // the yardage of the unravelled stitch then comes out exactly as measured
+    expect(yarnPerCellIn('hdc_graphgan', lscFromUnravel(27.9, 10, 'hdc'))).toBeCloseTo(2.79, 12);
+    expect(c2cTileYarnIn(lscFromUnravel(44.85, 3, 'c2cTile'))).toBeCloseTo(14.95, 12);
+    expect(() => lscFromUnravel(18, 10, 'tr' as 'sc')).toThrow(RangeError);
+    expect(() => lscFromUnravel(18, 10, 'constructor' as 'sc')).toThrow(RangeError);
+    expect(() => lscFromUnravel(5e-324, 1e300)).toThrow(/out of range/);
   });
 
   it('rejects input that is not a positive length', () => {
@@ -205,7 +226,7 @@ describe('G11 — Table D, default yarn per stitch in inches (§2.2.4, §2.13)',
     }
   });
 
-  it('matches resolveGauge: lscIn is the sc column for 2D and the amigurumi column for amigurumi', () => {
+  it('consistency: resolveGauge returns the same lscIn (sc column for 2D, amigurumi column for amigurumi)', () => {
     for (const cyc of CYCS) {
       const row = yarnPerStitchDefaults(cyc);
       for (const technique of ['sc_graphgan', 'sc_tapestry', 'c2c', 'hdc_graphgan', 'mosaic_overlay'] as const) {
@@ -309,6 +330,10 @@ describe('buffer, band, skeins (§2.8)', () => {
     // amigurumi: 0.15, always
     expect(yardageBuffer({ technique: 'amigurumi_sc', colors: 1 })).toBe(0.15);
     expect(yardageBuffer({ technique: 'amigurumi_sc', colors: 5, strands: 80 })).toBe(0.15);
+    expect(() => yardageBuffer({ technique: 'tss' as TechniqueId, colors: 2 })).toThrow(RangeError);
+    expect(() => yardageBuffer({ technique: 'sc_graphgan', colors: Number.NaN })).toThrow(RangeError);
+    expect(() => yardageBuffer({ technique: 'sc_graphgan', colors: 2, strands: -1 })).toThrow(RangeError);
+    expect(() => yardageBuffer(null as unknown as { technique: TechniqueId; colors: number })).toThrow(RangeError);
   });
 
   it('band: 2D ±25% default, 3D ±20% default, ±10% measured, ±5% calibrated', () => {
@@ -324,6 +349,9 @@ describe('buffer, band, skeins (§2.8)', () => {
     expect(yardageBand({ technique: 'amigurumi_sc', source: 'swatch' })).toBe(0.1);
     expect(yardageBand({ technique: 'amigurumi_sc', source: 'swatch', calibrated: true })).toBe(0.05);
     expect(yardageBand({ technique: 'amigurumi_sc', source: 'default', calibrated: false })).toBe(0.2);
+    expect(() => yardageBand({ technique: 'tss' as TechniqueId, source: 'default' })).toThrow(RangeError);
+    expect(() => yardageBand({ technique: 'c2c', source: 'measured' as 'swatch' })).toThrow(RangeError);
+    expect(() => yardageBand(null as unknown as { technique: TechniqueId; source: 'default' })).toThrow(RangeError);
   });
 
   it('yards = inches / 36 × (1 + buffer); low and high = yards × (1 ∓ band)', () => {

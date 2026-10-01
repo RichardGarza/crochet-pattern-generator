@@ -6,6 +6,7 @@
 // because these numbers end up as the size of a blanket or a toy in someone's hands.
 import type { Cell, Technique2D, TechniqueId } from '../../types/gauge';
 import type { Cyc, Inches } from '../../types/units';
+import { freeze, isCyc, isObject, nonNegative, positive, present, show } from './checks';
 
 // ---- units
 
@@ -20,10 +21,6 @@ export function inToCm(inches: Inches): number {
 
 export function cmToIn(cm: number): Inches {
   return cm / CM_PER_IN;
-}
-
-function freeze<T extends object>(o: T): Readonly<T> {
-  return Object.freeze(o);
 }
 
 // ---- Table A: base flat sc gauge by CYC weight (§2.2.1)
@@ -68,9 +65,9 @@ export interface CycRange {
 
 /**
  * The gauge ranges CYC publishes, stitches per 4 in (§2.2.1, research 01 §1.1). Used only for the sanity
- * warnings of §2.2.5. CYC publishes stitch counts only, never row counts.
+ * warnings of §2.2.5. CYC publishes stitch counts only, never row counts; the Lace range is in double crochet.
  */
-export const CYC_SC_RANGE: Readonly<Record<Cyc, Readonly<CycRange>>> = freeze({
+export const CYC_RANGE: Readonly<Record<Cyc, Readonly<CycRange>>> = freeze({
   0: freeze({ lo: 32, hi: 42, stitch: 'dc' }),
   1: freeze({ lo: 21, hi: 32, stitch: 'sc' }),
   2: freeze({ lo: 16, hi: 20, stitch: 'sc' }),
@@ -120,8 +117,8 @@ export const HOOK_LABELS: readonly Readonly<HookLabel>[] = freeze(
 );
 
 /**
- * The sizes a hook picker offers, ascending: every labelled size plus 2.0 and 2.5 mm, which have no US letter
- * and print as mm only (§2.2.1; Table E uses 2.5 mm).
+ * The sizes §2.2.1 names, ascending: every labelled size plus 2.0 and 2.5 mm, which have no US letter and print
+ * as mm only (Table E uses 2.5 mm). A hook picker starts from these; any other size in mm is valid too.
  */
 export const HOOK_SIZES_MM: readonly number[] = freeze(
   [...HOOK_LABELS.map((l) => l.mm), 2.0, 2.5].sort((a, b) => a - b),
@@ -138,31 +135,23 @@ export const HOOK_EXPONENT = 0.75;
 /** The exponent is only known to ±0.25: sizes are shown for p = 0.5 … 1.0 (§2.2.2, research 01 §4.4). */
 export const HOOK_EXPONENT_RANGE: readonly [number, number] = freeze([0.5, 1.0] as const);
 
-function positive(x: number): boolean {
-  return Number.isFinite(x) && x > 0;
-}
-
 /**
  * `(hookMm / refHookMm)^p`. For p = 0.75, 0.5 and 1 it is computed with square roots only, which IEEE 754 rounds
- * correctly, so the result is the same on every engine (`Math.pow` is not required to be).
+ * correctly, so the result is the same on every engine (`Math.pow` is not required to be). Throws when a hook is
+ * not a positive size or the factor is not a usable number (a ratio that underflows or overflows).
  */
 export function hookFactor(hookMm: number, refHookMm: number, p: number = HOOK_EXPONENT): number {
-  if (!positive(hookMm)) throw new RangeError(`hookFactor: hook must be a positive size in mm, got ${hookMm}`);
-  if (!positive(refHookMm)) throw new RangeError(`hookFactor: reference hook must be a positive size in mm, got ${refHookMm}`);
-  if (!Number.isFinite(p)) throw new RangeError(`hookFactor: exponent must be a finite number, got ${p}`);
+  if (!positive(hookMm)) throw new RangeError(`hookFactor: hook must be a positive size in mm, got ${show(hookMm)}`);
+  if (!positive(refHookMm)) throw new RangeError(`hookFactor: reference hook must be a positive size in mm, got ${show(refHookMm)}`);
+  if (typeof p !== 'number' || !Number.isFinite(p)) throw new RangeError(`hookFactor: exponent must be a finite number, got ${show(p)}`);
   const r = hookMm / refHookMm;
-  if (p === 0.75) return Math.sqrt(r) * Math.sqrt(Math.sqrt(r));
-  if (p === 0.5) return Math.sqrt(r);
-  if (p === 1) return r;
-  return Math.pow(r, p);
-}
-
-function isCycNumber(cyc: unknown, lo: number): cyc is Cyc {
-  return typeof cyc === 'number' && Number.isInteger(cyc) && cyc >= lo && cyc <= 7;
+  const f = p === 0.75 ? Math.sqrt(r) * Math.sqrt(Math.sqrt(r)) : p === 0.5 ? Math.sqrt(r) : p === 1 ? r : Math.pow(r, p);
+  if (!positive(f)) throw new RangeError(`hookFactor: a ${hookMm} mm hook against ${refHookMm} mm is out of range`);
+  return f;
 }
 
 function tableA(cyc: Cyc): Readonly<TableARow> {
-  if (!isCycNumber(cyc, 0)) throw new RangeError(`CYC yarn weight must be an integer 0–7, got ${String(cyc)}`);
+  if (!isCyc(cyc)) throw new RangeError(`CYC yarn weight must be an integer 0–7, got ${show(cyc)}`);
   return TABLE_A[cyc];
 }
 
@@ -172,7 +161,7 @@ function tableA(cyc: Cyc): Readonly<TableARow> {
  */
 export function scCell(cyc: Cyc, hookMm?: number): Cell {
   const a = tableA(cyc);
-  const f = hookMm === undefined || hookMm === null ? 1 : hookFactor(hookMm, a.hookMm);
+  const f = present(hookMm) ? hookFactor(hookMm, a.hookMm) : 1;
   return { w: (GAUGE_SPAN_IN / a.sts4) * f, h: (GAUGE_SPAN_IN / a.rows4) * f };
 }
 
@@ -246,8 +235,13 @@ export const TABLE_B: Readonly<Record<TechniqueId, Readonly<TableBRow>>> = freez
 /**
  * Table B (§2.2.2): the cell of a 2D technique from the flat sc cell of the same yarn and hook.
  * `carried` = strands carried inside the stitches (tapestry only; default 1, each further strand adds 5% height).
+ * Throws when the sc cell does not have positive sides or `carried` is not a number ≥ 0.
  */
 export function techniqueCell(sc: Cell, technique: Technique2D, carried: number = 1): Cell {
+  if (!isObject(sc) || !positive(sc.w) || !positive(sc.h)) {
+    throw new RangeError(`techniqueCell: the sc cell needs a positive width and height in inches, got ${show(sc?.w)} × ${show(sc?.h)}`);
+  }
+  if (!nonNegative(carried)) throw new RangeError(`techniqueCell: the number of carried strands must be 0 or more, got ${show(carried)}`);
   const { w, h } = sc;
   switch (technique) {
     case 'sc_graphgan':
@@ -264,7 +258,7 @@ export function techniqueCell(sc: Cell, technique: Technique2D, carried: number 
     case 'mosaic_overlay':
       return { w, h: w / MOSAIC_ASPECT };
     default:
-      throw new RangeError(`techniqueCell: '${String(technique)}' is not a 2D technique`);
+      throw new RangeError(`techniqueCell: ${show(technique)} is not a 2D technique`);
   }
 }
 
@@ -304,11 +298,11 @@ export type Stuffing = 'firm' | 'medium' | 'light' | 'none';
 export const STUFFING_STRETCH: Readonly<Record<Stuffing, number>> = freeze({ firm: 1.05, medium: 1.05, light: 1, none: 1 });
 
 function tableE(cyc: Cyc): Readonly<TableERow> {
-  if (!isCycNumber(cyc, 1)) {
+  if (!isCyc(cyc, 1)) {
     throw new RangeError(
       cyc === 0
         ? 'CYC 0 (Lace) is not offered for amigurumi: Table E has no row for it. Choose CYC 1–7.'
-        : `CYC yarn weight must be an integer 1–7 for amigurumi, got ${String(cyc)}`,
+        : `CYC yarn weight must be an integer 1–7 for amigurumi, got ${show(cyc)}`,
     );
   }
   return TABLE_E[cyc as AmiCyc];
@@ -323,12 +317,17 @@ export function amiHookMm(cyc: Cyc): number {
  * The amigurumi cell before stuffing: Table E width, scaled by the hook factor when `hookMm` differs from the
  * Table E hook; `h = w / 1.05` (or `/ 1.11` with yarn under). This is `w_ami(CYC, hook)` of §2.2.4. Throws for
  * CYC 0.
+ *
+ * Each weight scales from its own Table E hook, so at one fixed hook a finer yarn does not always give a
+ * narrower stitch (3.5 mm: worsted 0.195 in, DK 0.204 in). A caller that changes the yarn weight should drop the
+ * hook override with it.
  */
 export function amiCell(cyc: Cyc, o: { hookMm?: number; yarnUnder?: boolean } = {}): Cell {
   const e = tableE(cyc);
-  const f = o.hookMm === undefined || o.hookMm === null ? 1 : hookFactor(o.hookMm, e.hookMm);
+  const hookMm = o?.hookMm;
+  const f = present(hookMm) ? hookFactor(hookMm, e.hookMm) : 1;
   const w = e.wIn * f;
-  return { w, h: w / (o.yarnUnder ? AMI_ASPECT.yarnUnder : AMI_ASPECT.yarnOver) };
+  return { w, h: w / (o?.yarnUnder === true ? AMI_ASPECT.yarnUnder : AMI_ASPECT.yarnOver) };
 }
 
 // ---- measured gauges
