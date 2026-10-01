@@ -238,6 +238,22 @@ describe('derivedStore.run', () => {
     expect(await store.getState().run('chart', 'h', async () => chart('fresh'))).toEqual(chart('fresh'));
   });
 
+  it('a job from before a reset stores nothing even while a new job for the same inputs runs (found by a mutation check)', async () => {
+    const store = createDerivedStore();
+    const before = deferred<ChartResult>();
+    const after = deferred<ChartResult>();
+    const old = store.getState().run('chart', 'h', () => before.promise);
+    store.getState().reset(); // another project was opened
+    const fresh = store.getState().run('chart', 'h', () => after.promise); // same input hash, new project
+    before.resolve(chart('of the project that was closed'));
+    expect(await old).toBeUndefined();
+    expect(store.getState().chart).toBeNull(); // the old project's result never lands …
+    expect(jobOf(store.getState(), 'chart')).toMatchObject({ status: 'running', inputHash: 'h' }); // … nor ends the new job
+    after.resolve(chart('of the open project'));
+    expect(await fresh).toEqual(chart('of the open project'));
+    expect(store.getState().chart).toEqual({ inputHash: 'h', value: chart('of the open project') });
+  });
+
   it('keeps the kinds apart', async () => {
     const store = createDerivedStore();
     const [c, p] = await Promise.all([store.getState().run('chart', 'h', async () => chart('c')), store.getState().run('pattern2d', 'h', async () => pattern('p'))]);

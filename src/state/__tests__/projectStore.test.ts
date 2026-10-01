@@ -1072,7 +1072,22 @@ describe('commitModelRevision', () => {
     ]);
     expect((await readRevision(store, 2)).model.parts[0].position).toEqual([9, 9, 9]);
     expect((await readRevision(store, 3)).model).toEqual(model([sphere('body', 3)]));
-    expect(store.getState().history.past.map((e) => e.label)).toEqual(['A', 'Edit', 'B']);
+    // also when the new branch shares nothing with the draft (before the fix the entry went into the detached draft)
+    await s.commitModelRevisionWith(model([sphere('body', 4)]), {
+      source: 'import',
+      label: 'C',
+      carry: 'none',
+      also: (d) => void (d.threeD = { ...structuredClone(current(d.threeD!)), ami: AMI }),
+    });
+    expect(docOf(store).threeD!.revisions.map((r) => [r.rev, r.label])).toEqual([
+      [1, 'A'],
+      [2, 'Before: B'],
+      [3, 'B'],
+      [4, 'C'],
+    ]);
+    expect((await readRevision(store, 4)).model).toEqual(model([sphere('body', 4)]));
+    expect(store.getState().history.past.map((e) => e.label)).toEqual(['A', 'Edit', 'B', 'C']);
+    expect(store.getState().undo()).toBe(true);
     expect(store.getState().undo()).toBe(true);
     expect(docOf(store)).toStrictEqual(before.doc);
   });

@@ -12,15 +12,18 @@ and all eight tracks code against the API below.
 | `src/workers/rpc.ts` | `Superseded`, `yieldMacrotask`, `createJobGate`, `latestWins`, latest-wins groups, transfer helpers, `exposeApi` — no DOM, runs in workers and in node | `workers/__tests__/rpc.test.ts` (27) |
 | `src/workers/client.ts` | `workers`: lazy typed proxies to the six workers, latest-wins job methods, callbacks as comlink proxies, terminate / crash → respawn | `workers/__tests__/client.test.ts` (18) |
 | `src/workers/decode.ts` | `decodeImage`, `decodeBlob`, HEIF brand sniffing, size limits, `/__convert` error mapping | `workers/__tests__/decode.test.ts` (24) |
-| `src/state/history.ts` | undo / redo on patches (a structural diff of the two documents), labels, coalesce keys, cap 200 — pure functions | `state/__tests__/history.test.ts` (31), `historyRecipes.test.ts` (6) |
-| `src/state/projectStore.ts` | the open project: `update`, undo / redo, read-only, asset cache, `commitModelRevision`, save hooks | `state/__tests__/projectStore.test.ts` (46) |
+| `src/state/history.ts` | undo / redo on patches (a structural diff of the two documents), labels, coalesce keys, cap 200 — pure functions | `state/__tests__/history.test.ts` (34), `historyRecipes.test.ts` (6) |
+| `src/state/projectStore.ts` | the open project: `update`, undo / redo, read-only, asset cache, `commitModelRevision`, save hooks | `state/__tests__/projectStore.test.ts` (48) |
 | `src/state/appStore.ts` | route + hash functions, preferences, capabilities, library summaries, toasts | `state/__tests__/appStore.test.ts` (20) |
-| `src/state/derivedStore.ts` | derived results and job states keyed by input hash | `state/__tests__/derivedStore.test.ts` (15) |
-| `src/core/model/revisions.ts` | `carryOver`, `carryOverWith`, `sameShapeWithin` | `core/model/__tests__/revisions.test.ts` (52) |
-| `src/test/fakes.ts` | `createFakeLocks`, `createFakeChannels`, `createFakeWorker` | `test/__tests__/fakes.test.ts` (21) |
+| `src/state/derivedStore.ts` | derived results and job states keyed by input hash | `state/__tests__/derivedStore.test.ts` (16) |
+| `src/core/model/revisions.ts` | `carryOver`, `carryOverWith`, `sameShapeWithin` | `core/model/__tests__/revisions.test.ts` (62) |
+| `src/test/fakes.ts` | `createFakeLocks`, `createFakeChannels`, `createFakeWorker` | `test/__tests__/fakes.test.ts` (24) |
 | — | the three React hooks and the worker yield under happy-dom | `state/__tests__/hooks.test.tsx` (2) |
 
-All checks pass in the worktree: `npm run typecheck`, `npm run lint`, `npm test` (552 tests in 31 files; 262 of them in the 11 files of this part).
+All checks pass in the worktree (final state of this branch, two consecutive `npm test` runs): `npm run typecheck`
+and `npm run lint` exit 0; `npm test` passes 571 tests in 31 files, 281 of them in the 11 files of this part.
+Every seeded walk and fuzz of this part has an explicit 60 s timeout (under load from other agents the longest,
+6 × 1 500 history steps, took 5.3 s against vitest's 5 s default).
 
 Not touched: the six `*.worker.ts` stubs, `src/types/**`, every config file, `docs/DESIGN.md`.
 `src/state/slices/*.ts` does not exist in the 0a commit (the 0a notes list no such placeholders); this part did
@@ -72,7 +75,7 @@ exposeApi<Chart2dApi>((gate) => ({
 | `WORKER_NAMES` | `readonly WorkerName[]` | All six. |
 | `WorkerLike` | `interface WorkerLike extends Endpoint { terminate(): void }` | What the client needs from a worker; a `Worker` is one. |
 | `SpawnWorker` | `(name: WorkerName) => WorkerLike` | |
-| `WorkerTerminated` | `class WorkerTerminated extends Error { readonly worker: WorkerName; readonly crashed: boolean }` | Rejection of calls in flight when their worker was terminated (`crashed: false`) or fired an `error` event (`crashed: true`: an uncaught error, a script that failed to load). |
+| `WorkerTerminated` | `class WorkerTerminated extends Error { readonly worker: WorkerName; readonly crashed: boolean; constructor(worker: WorkerName, crashed: boolean, detail?: string) }` | Rejection of calls in flight when their worker was terminated (`crashed: false`) or fired an `error` / `messageerror` event (`crashed: true`: an uncaught error, a script that failed to load; `detail` = the event's message). `name` is `'WorkerTerminated'`. |
 | `isWorkerTerminated` | `(error: unknown) => error is WorkerTerminated` | |
 | re-exports | `Superseded`, `isSuperseded`, `transfer`, `transferAll`, `collectTransferables` | From `rpc.ts`, so UI code imports one module. |
 
@@ -88,7 +91,7 @@ nothing else holds (never a mesh the viewport renders).
 | `decodeImage` | frozen `DecodeImageFn`: `(input: Blob \| RgbaImage) => Promise<RgbaImage>` | Blob → RGBA8 with the EXIF orientation applied; an `RgbaImage` is returned as the same object (after a check that `data.length === w·h·4`). Workers and browsers only. |
 | `decodeBlob` | `(blob: Blob, env?: DecodeEnv) => Promise<DecodedImage>` | The same, and reports what was decoded. Every failure is an `ImageDecodeError`. |
 | `DecodedImage` | `{ image: RgbaImage; source: Blob; convertedFromHeic: boolean }` | `source` is the input, or the JPEG that `/__convert` made of a HEIC photo: the blob to store as the project's source ("Converted from HEIC" chip when `convertedFromHeic`). |
-| `ImageDecodeError` | `class ImageDecodeError extends Error { readonly code: ImageDecodeErrorCode }` | `message` is written for the user. |
+| `ImageDecodeError` | `class ImageDecodeError extends Error { readonly code: ImageDecodeErrorCode; constructor(code: ImageDecodeErrorCode, message: string, options?: { cause?: unknown }) }` | `message` is written for the user; `name` is `'ImageDecodeError'`. |
 | `ImageDecodeErrorCode` | `'heic-unavailable' \| 'heic-too-large' \| 'heic-failed' \| 'unsupported' \| 'too-large' \| 'invalid-image' \| 'no-decoder'` | |
 | `isImageDecodeError` | `(error: unknown) => error is Error & { code?: ImageDecodeErrorCode }` | By name, so it also works after a worker boundary (where `code` is gone and `message` remains). |
 | `sniffHeifBrand` | `(bytes: Uint8Array) => HeifBrand \| null` | The HEIF brand in an ISO-BMFF `ftyp` box at offset 4 (major brand, else a compatible brand inside the box); null for AVIF and everything else. T8's `/__convert` can use it for its 415 check. |
@@ -96,7 +99,7 @@ nothing else holds (never a mesh the viewport renders).
 | `checkDecodeSize` | `(w: number, h: number) => void` | Throws `too-large` above `MAX_DECODE_PIXELS` / `MAX_DECODE_SIDE`, `unsupported` for a size that is not a positive integer. |
 | `convertFailure` | `(status: number) => ImageDecodeError` | Maps an answer of `/__convert`: 501/404/405/503 → `heic-unavailable` (the §2.3.1 message), 413 → `heic-too-large`, else `heic-failed`. |
 | `HEIC_EXPORT_MESSAGE` | `'This is a HEIC photo; export it as JPEG (Photos → File → Export) and add it again'` | §2.3.1. |
-| `HEIC_CONVERT_URL`, `MAX_CONVERT_BYTES`, `CONVERT_TIMEOUT_MS`, `SNIFF_BYTES`, `MAX_DECODE_PIXELS`, `MAX_DECODE_SIDE` | `'/__convert'`, `50 MB`, `30 000`, `64`, `64 000 000`, `16 384` | |
+| `HEIC_CONVERT_URL`, `MAX_CONVERT_BYTES`, `CONVERT_TIMEOUT_MS`, `SNIFF_BYTES`, `MAX_DECODE_PIXELS`, `MAX_DECODE_SIDE` | `'/__convert'`, `52 428 800` (50 MB), `30 000` (ms; the server gives `sips` 20 s), `64`, `64 000 000`, `16 384` | |
 | `DecodeEnv`, `BitmapLike`, `ConvertResponse` | interfaces | The browser seam: `decodeBitmap(blob)`, `readPixels(bitmap)`, `convert(heic, timeoutMs)`. Tests pass their own. |
 | `browserDecodeEnv` | `() => DecodeEnv` | `createImageBitmap(blob, { imageOrientation: 'from-image', premultiplyAlpha: 'none' })` → `OffscreenCanvas` → `getImageData`; `fetch(POST /__convert)`. Throws `no-decoder` in node. |
 
@@ -104,6 +107,12 @@ nothing else holds (never a mesh the viewport renders).
 
 A recipe runs in immer (`produce`); the patches are derived from the two documents by a structural diff and
 applied by path copying (see "Deviations" 1). The patch format is immer's `Patch` (`{ op, path, value? }`).
+The documents are JSON-like: values compare with `Object.is` (-0 is not 0, NaN is NaN), a key holding
+`undefined` is not a missing key, an object whose prototype changed (ordinary ↔ null-prototype) is replaced
+whole and a copied object keeps its prototype, so every round trip is exact by node's `isDeepStrictEqual`. Not
+seen: symbol keys, non-enumerable properties, extra properties on arrays, a hole versus an `undefined` element;
+a Date, typed array or class instance is one value. A recipe on a document nested more than about a thousand
+levels throws a RangeError and changes nothing (immer's own recursion stops at 1 500, the diff at 2 500).
 
 | Export | Signature | What it does |
 |---|---|---|
@@ -112,19 +121,21 @@ applied by path copying (see "Deviations" 1). The patch format is immer's `Patch
 | `History` | `{ past: readonly HistoryEntry[]; future: readonly HistoryEntry[]; open: boolean; nextId: number }` | `past` oldest first; `open` = the last entry still absorbs changes with its coalesce key. |
 | `emptyHistory` | `() => History` | |
 | `Change<T>`, `ChangeRecord` | `{ doc: T; patches: Patch[]; inverse: Patch[] }`, `{ label: string; coalesceKey?: string; patches; inverse }` | |
-| `applyRecipe` | `<T>(doc: T, recipe: (draft: Draft<T>) => unknown) => Change<T>` | Runs an immer recipe; what the recipe returns is ignored; an async recipe throws and changes nothing; a recipe that leaves the document deeply equal gives no patches and the same document. |
-| `diffDocuments` | `(base: unknown, next: unknown) => { patches: Patch[]; inverse: Patch[] }` | The patches between two JSON-like documents; branches that are the same object are not looked into. |
-| `applyPatches` | `<T>(doc: T, patches: readonly Patch[]) => T` | Applies patches by path copying (frozen copies; untouched branches and patch values are shared). Throws when a patch does not fit. |
+| `applyRecipe` | `<T extends Objectish>(doc: T, recipe: (draft: Draft<T>) => unknown) => Change<T>` | Runs an immer recipe; what the recipe returns is ignored; an async recipe throws and changes nothing; a recipe that leaves the document deeply equal gives no patches and the same document. |
+| `diffDocuments` | `(base: unknown, next: unknown) => { patches: Patch[]; inverse: Patch[] }` | The patches between two JSON-like documents; branches that are the same object are not looked into. For JSON-like data both lists are empty exactly when the two are deeply (strictly) equal; a Date or typed array that is another object counts as a change. |
+| `applyPatches` | `<T>(doc: T, patches: readonly Patch[]) => T` | Applies patches by path copying (frozen copies that keep their prototype; untouched branches and patch values are shared). Throws when a patch does not fit, and then applies nothing. |
 | `record` | `<T>(history: History, docAfter: T, change: ChangeRecord, limit?: number) => History` | Adds the change: a new entry, or merged into the open entry with the same key (re-derived from the documents before and after the run, so it stays compact); clears the redo stack; drops the oldest beyond the limit; a change without patches is ignored. |
 | `seal` | `(history: History) => History` | Ends a coalesced run. |
 | `undo`, `redo` | `<T>(history: History, doc: T) => Step<T> \| null` | `Step<T> = { history: History; doc: T; entry: HistoryEntry }`; null when there is nothing to undo / redo. Both end a coalesced run. |
-| `canUndo`, `canRedo`, `undoLabel`, `redoLabel` | `(history: History) => boolean \| string \| undefined` | |
+| `canUndo`, `canRedo` | `(history: History) => boolean` | |
+| `undoLabel`, `redoLabel` | `(history: History) => string \| undefined` | The label of the step `undo` / `redo` would take. |
 
 ### `state/projectStore.ts`
 
 | Export | Signature | What it does |
 |---|---|---|
-| `projectStore` | `const projectStore: ProjectStore` (`StoreApi<ProjectState>`) | The app's store: `projectStore.getState()`, `.subscribe((state, prev) => …)`. |
+| `projectStore` | `const projectStore: ProjectStore` | The app's store: `projectStore.getState()`, `.subscribe((state, prev) => …)`. |
+| `ProjectStore` | `type ProjectStore = StoreApi<ProjectState>` (zustand vanilla) | |
 | `useProjectStore` | `<T>(selector: (state: ProjectState) => T) => T` | React hook. Selectors must return stable values (zustand 5): select primitives or existing objects, or use `useShallow`. |
 | `createProjectStore` | `(deps?: { now?: () => Date }) => ProjectStore` | A store of its own (tests); `now` stamps `ModelRevision.at` and a ticket's `updatedAt`. |
 | `commitModelRevision` | frozen `CommitModelRevisionFn`: `(next: CrochetModelV1, o: { source: ModelRevision['source']; label: string; carry: 'by-id' \| 'none'; carryPaintAnyway?: string[] }) => Promise<CarryReport>` | §5.2.1: acts on `projectStore`. |
@@ -132,7 +143,7 @@ applied by path copying (see "Deviations" 1). The patch format is immer's `Patch
 | `Recipe` | `(draft: Draft<ProjectDoc>) => unknown` | Edits the draft; synchronous. |
 | `SaveStatus` | `'saved' \| 'unsaved' \| 'saving' \| 'error' \| 'read-only'` | |
 | `SaveTicket` | `{ id: number; doc: ProjectDoc; baseRev: number; newAssets: Map<string, Blob>; changeId: number }` | One save attempt. |
-| `CommitOptions` | `Parameters<CommitModelRevisionFn>[1] & { also?: (draft: Draft<ProjectDoc>, info: { rev: number; report: CarryReport }) => void }` | |
+| `CommitOptions` | `Parameters<CommitModelRevisionFn>[1] & { also?: (draft: Draft<ProjectDoc>, info: { rev: number; report: CarryReport }) => void }` | `also` runs inside the commit's recipe, after the model was replaced: more changes in the same undo step (import record, `qa.awaiting`, `meshAssets`, photo palette). It may edit the model or replace `threeD` as a whole, but must leave a model and must not change `threeD.revisions`, else the commit throws and nothing changes. `info.rev` = the `ModelRevision.rev` the new model gets. |
 | `ModelRevisionSnapshot` | `{ format: 'crochet-model-revision'; version: 1; model: CrochetModelV1; meshAssets: Record<string, AssetRef> }` | What a `ModelRevision.asset` holds, as canonical JSON (`MODEL_REVISION_MIME = 'application/json'`). |
 | `AssetLoader` | `(key: string, ref?: AssetRef) => Promise<Blob \| undefined>` | |
 | `ReadOnlyError`, `UnsavedChangesError`, `AssetMissingError` | error classes (`name` = class name; `AssetMissingError.key`) | |
@@ -152,10 +163,12 @@ applied by path copying (see "Deviations" 1). The patch format is immer's `Patch
 | `baseRev` | `number` | The stored rev this tab loaded or last saved. |
 | `saveStatus`, `saveError`, `savingTicket` | `SaveStatus`, `string \| null`, `number \| null` | |
 | `rejectedEdits` | `number` | Counts changes refused because the project is read-only (the banner reacts). |
-| `assets` | `ReadonlyMap<string, Blob>` | The asset cache; a new Map on every change. |
+| `assets` | `ReadonlyMap<string, Blob>` | The asset cache; a new Map whenever its content changes (the same Map otherwise). |
 | `unsavedAssetKeys` | `ReadonlySet<string>` | Assets added since the last successful save. |
 
-`ProjectState` — actions:
+`ProjectState` — actions. A recipe (and a commit's `also`) only edits its draft: every action below that writes
+the store throws when it is called from inside one (the recipe's result would overwrite what it wrote — found in
+review: a `markSaved` there left `doc.rev` and `baseRev` apart, an `endCoalescing` was lost).
 
 | Action | Signature | What it does |
 |---|---|---|
@@ -176,7 +189,7 @@ applied by path copying (see "Deviations" 1). The patch format is immer's `Patch
 | `revertToModelRevision` | `(rev: number) => Promise<void>` | Makes a stored revision current again (a new revision, source `'edit'`, with its mesh assets). |
 | `beginSave` | `() => SaveTicket \| null` | Null: nothing to save now (no project, not dirty, or a save in flight). |
 | `markSaved` | `(ticket: SaveTicket, o: { rev: number }) => boolean` | Writes `rev` and the ticket's `updatedAt`; false for a stale ticket. |
-| `markSaveFailed` | `(ticket: SaveTicket, error: unknown) => boolean` | |
+| `markSaveFailed` | `(ticket: SaveTicket, error: unknown) => boolean` | The changes stay unsaved, `saveStatus` becomes `'error'`, `saveError` the message; false for a stale ticket (a failed ticket cannot be marked saved later). |
 | `rebind` | `(ticket: SaveTicket, o: { id: string; rev: number; name?: string }) => boolean` | The conflict copy of §5.5.2. |
 
 **`commitModelRevision`** — what it guarantees:
@@ -187,14 +200,16 @@ applied by path copying (see "Deviations" 1). The patch format is immer's `Patch
    other edit, "stays in the previous revision" (§3.7.7).
 3. The model is replaced (the document gets its own copy; the caller's object is neither kept nor frozen),
    `also` runs, and a `ModelRevision { rev, at, source, label, asset }` is appended; the asset is the canonical
-   JSON of a `ModelRevisionSnapshot` of the NEW model. `rev` continues after the highest existing `rev`.
+   JSON of a `ModelRevisionSnapshot` of the NEW model (as `also` left it). `rev` continues after the highest
+   integer `rev` of the list (a malformed stored entry — NaN, 1.5 — is skipped). With `also`, a revision is
+   appended even when the model did not change, so a record that names `info.rev` always finds it.
 4. All of it is ONE history entry (label = `o.label`): one undo restores the previous model and revision list
    exactly; redo brings both back. The revision assets stay in the asset store either way.
 5. It is synchronous inside (the promise is already settled in effect when it returns), so no edit can slip
    between reading the previous model and writing the next.
 6. A commit that would change nothing (same model, no `also`) does nothing and resolves with the report.
 7. Rejects: `ReadOnlyError`; no project; no `doc.threeD`; `next` is not a crochet-model; called inside a recipe;
-   `also` throws (nothing is changed).
+   `also` throws, removes `threeD` or the model, or changes `threeD.revisions` (nothing is changed).
 
 **What T8's autosave gets** (persistence itself is T8's):
 
@@ -264,9 +279,11 @@ Division of work with the shell: `app/router.ts` listens to `hashchange` and cal
 Actions: `run(kind, inputHash, compute): Promise<value | undefined>` — the usual shape of a slice action:
 returns the stored value for the same inputs, joins a running job for the same inputs, otherwise computes and
 stores; resolves `undefined` when superseded, failed (the error is in `jobs[kind]`) or overtaken; never
-rejects · `beginJob(name, inputHash)` · `setJobProgress(name, inputHash, 0..1)` · `finishJob(name, inputHash)` ·
-`failJob(name, inputHash, error)` (ignores `Superseded` and stale jobs) · `setResult(kind, inputHash, value)` ·
-`clear(name)` · `reset()`.
+rejects · `beginJob(name, inputHash): void` · `setJobProgress(name, inputHash, progress: number): void` (clamped
+to 0..1; ignored for a job that is not the latest) · `finishJob(name, inputHash): boolean` · `failJob(name,
+inputHash, error): boolean` (false, and nothing recorded, for `Superseded` and for a job that is not the latest) ·
+`setResult(kind, inputHash, value): boolean` (false when a job for other inputs of that kind is running) ·
+`clear(name): void` · `reset(): void`.
 
 ```ts
 const hash = fnv1a64Hex(canonicalJson({ settings, gauge, edits, sourceKey }) + CODE_VERSION);
@@ -300,7 +317,11 @@ void derivedStore.getState().run('chart', hash, () => workers.chart2d.run({ imag
 
 Timing of the fakes: nothing calls back synchronously. Lock callbacks and channel messages arrive in a later
 macrotask (a MessageChannel ping that vitest's fake timers do not hold back); wait for the promise you care
-about, or `await locks.flush()` / `await hub.flush()`.
+about, or `await locks.flush()` / `await hub.flush()`. As in Chromium, a released lock goes to the next waiter
+in the same step (it is never free while someone waits), and a granted callback runs in a task of its own: on
+`steal`, the old holder's request rejects (AbortError) before the stealer's callback starts, so a two-tab test
+sees the old tab go read-only first. The same scenario scripts gave identical logs on these fakes and on
+`navigator.locks` / `BroadcastChannel` in headless Chromium ("How it was verified").
 
 ## Deviations from the spec, with reasons
 
@@ -342,7 +363,8 @@ about, or `await locks.flush()` / `await hub.flush()`.
 8. **`commitModelRevision` is synchronous inside** (the frozen async signature is kept). `crypto.subtle.digest`
    is async, and an edit that slipped in between reading the previous model and writing the next would be
    lost. The revision assets are hashed with a small synchronous SHA-256 (`sha256Hex`, checked against
-   node:crypto on 147 lengths, 0 – 300 000 bytes); `putAsset` uses `crypto.subtle` when it exists.
+   node:crypto on 149 lengths from 0 to 1 048 631 bytes and on a subarray); `putAsset` uses `crypto.subtle`
+   when it exists.
 9. **Persistence-owned fields.** Recipes must not change `schema`, `version`, `id`, `createdAt`, `updatedAt`
    or `rev` (the update throws), and undo/redo never changes them. `updatedAt` is stamped when a save starts
    (`SaveTicket.doc.updatedAt`) and written to the open document by `markSaved`; `rev` comes from
@@ -359,8 +381,8 @@ about, or `await locks.flush()` / `await hub.flush()`.
     `rejectedEdits`, the selectors; `decodeBlob` and the decode constants; `createLatestWinsGroup`, `transfer`,
     `transferAll`, `collectTransferables`, `exposeApi`, `isSuperseded`; `WorkerTerminated`, `setWorkerSpawner`;
     `probeCapabilities`, `prefsHydrated`, `sanitizePrefs`, `isProjectId`, toast keys and the cap of 5;
-    `derivedStore.run` and open-ended job names; `sameShapeWithin`, `carryOverWith`; `diffDocuments`, `applyPatches`; `createFakeWorker`, lock
-    clients (`client()`, `close()`), `flush()`.
+    `derivedStore.run` and open-ended job names; `sameShapeWithin`, `carryOverWith`; `diffDocuments`,
+    `applyPatches`; `createFakeWorker`, lock clients (`client()`, `close()`), `flush()`.
 14. **`workers.importer`**, not `workers.import` (a reserved word is awkward to destructure); the worker name
     stays `'import'`.
 15. **Decode limits.** An image above 64 megapixels or 16 384 px on a side is refused with a message
@@ -375,7 +397,8 @@ about, or `await locks.flush()` / `await hub.flush()`.
 |---|---|
 | §5.2 `ModelRevision.asset` — the spec does not say what the asset holds | The canonical JSON of `{ format: 'crochet-model-revision', version: 1, model, meshAssets }`: the model that revision introduced, plus the `threeD.meshAssets` entries of its mesh parts (`<meshRef>`, `sdf:<meshRef>`) at that time, so a revert restores the meshes that belong to it even when a mesh ref was re-pointed later (sculpting). |
 | §3.7.7 "the previous revision … kept", "[paint] stays in the previous revision" — but the user edits the model in place after a revision was made | Before replacing a model that no revision holds yet, the commit snapshots it as a revision of its own (`source: 'edit'`, `label: 'Before: <label>'`). A model that is already held by a revision (same content hash) is not snapshotted again. |
-| §5.2 `ModelRevision.rev` | A per-project sequence: highest existing `rev` + 1. It is what `ImportRecord.revision` refers to. (`CrochetModelV1.revision` is the model's own counter and is not touched.) |
+| §5.2 `ModelRevision.rev` | A per-project sequence: highest existing integer `rev` + 1 (malformed stored entries are skipped). It is what `ImportRecord.revision` refers to. After an undone commit the next commit reuses the number: the undone entry (and any record that named it) left the document with the undo; its asset stays under its own content key. (`CrochetModelV1.revision` is the model's own counter and is not touched.) |
+| §3.7.7 "Accept … a new model revision" for an import whose model equals the current one | With `also` (T7's import path) a revision is appended anyway, so the `ImportRecord.revision` that `also` writes names an existing revision; its asset is the existing one (same content key, nothing new to store). Without `also`, an unchanged model is no change at all (no entry, no history step). |
 | §4.4 "undoable and also create a persisted model revision" vs §5.3 "a named update" | The `ModelRevision` entries are part of the update, so one undo removes them again and restores the document exactly; the revision ASSETS stay in the asset store (and go out with the next save). The alternative — a revision list that undo never shrinks — would make undo restore a document that differs from the one before the step. |
 | §5.2.1 `carryOver(prev, next)` has no `carryPaintAnyway`, `commitModelRevision` has | `carryOverWith(prev, next, { carryPaintAnyway })` in the same kernel; `carryOver` is that without options. |
 | §3.7.7 "paint only when … every dim is within 10%" | Each numeric dim against its previous value (`|next − prev| ≤ 0.1·|prev|`); a previous dim of 0 must stay 0. `open` (cylinder) and `sharp` (lathe) are not dims; a torus without `arcDeg` is 360°; a `flat` must keep its `shape`, a polygon its point count (points within 10% of the larger of w, h); a `mesh` part is compared by `bboxIn`; a lathe is compared as a curve — height and largest radius within 10%, and the radius at 33 heights within 10% of the largest radius — because a re-imported body rarely keeps its number of profile points. |
@@ -388,7 +411,7 @@ about, or `await locks.flush()` / `await hub.flush()`.
 | §5.3 "toasts" | Data only; the shell's `app/toasts.ts` shows them and runs the timers. |
 | §2.3.1 "the converted JPEG is the stored source", but `decodeImage` returns only pixels | `decodeBlob` returns `{ image, source, convertedFromHeic }`; the intake flow stores `source`. |
 | §2.3.1 decode order | As written: the browser decode first, HEIF sniffing only when it fails. (A browser that decodes HEIC itself keeps the HEIC as the source.) |
-| §6.3 T8 "fake lock manager" timing | The fakes call back in a later macrotask, like the real APIs (checked against Chromium, below). |
+| §6.3 T8 "fake lock manager" timing | The fakes call back in a later macrotask, like the real APIs; a released lock goes to the next waiter in the same step, and a granted lock callback runs in a task of its own (checked against Chromium, below). |
 
 ## Requests for integration
 
@@ -397,8 +420,8 @@ about, or `await locks.flush()` / `await hub.flush()`.
    identical signatures with `expectTypeOf`.
 2. **§5.4 item 1 vs D22:** say that the job methods of one worker share one in-flight slot (deviation 3), or
    give `Cancellable.supersede` a channel argument in a later amendment.
-3. **§5.2 `ModelRevision`:** say what the asset holds and how `rev` counts (ambiguities 1–3), and that undo
-   removes the entries again.
+3. **§5.2 `ModelRevision`:** say what the asset holds, how `rev` counts and when an unchanged model still gets
+   a revision (the first four rows of "Ambiguities resolved"), and that undo removes the entries again.
 4. **T8, asset GC (§5.5.5):** `AssetRef`s inside a model-revision asset (`ModelRevisionSnapshot.meshAssets`)
    are references too; a GC that looks only at documents would delete the meshes of old revisions and break
    "old revisions kept, revertible" for mesh parts. Revision assets left behind by an undo are unreferenced
@@ -431,52 +454,97 @@ about, or `await locks.flush()` / `await hub.flush()`.
     is lost. Harmless for §2.3.2 (coverage < 0.5 ⇒ background), but worth one sentence in the spec.
 15. **`src/state/slices/*.ts`:** §5.1 assigns them to T2, T3, T6, T7, T8, but 0a created no placeholders
     there; each track creates its own.
+16. **0c / T8, console errors from `/__convert`:** Chromium logs "Failed to load resource: the server
+    responded with a status of 501 (Not Implemented)" for the HEIC conversion attempt against the Step 0 stub
+    (and against T8's plugin off macOS) — the same reason §5.5.4 gave the mirror probe a 204. A smoke spec that
+    adds a HEIC photo must allow that line, or the plugin can answer "no converter" with 200 and a non-image
+    body (e.g. `application/json`): `decodeBlob` already maps every non-image 200 to the same `heic-unavailable`
+    message, so only §5.5.4's wording would change.
+17. **T8, undo across a conflict copy:** `rebind(ticket, { name })` writes the copy's name outside the history,
+    so undoing a rename made BEFORE the conflict restores the old name in the copy too ("Teddy (copy, 12:34)" →
+    "Bunny", the original's name). Nothing is lost, but the banner and the library should tell the two apart by
+    id/updatedAt, not by name.
 
 ## How it was verified
 
-- **Unit tests** (vitest, node; one file under happy-dom): 262 tests in 11 files.
+The sessions that built this part were cut off twice by usage limits. The session that finished it treated the
+earlier notes as claims and re-ran every check below itself; a line says so where a result is only the earlier
+session's.
+
+- **Unit tests** (vitest, node; one file under happy-dom): 281 tests in 11 files; the whole suite 571 tests in
+  31 files, green in two consecutive runs, with `npm run typecheck` and `npm run lint` at exit 0.
 - **Property tests with a seeded PRNG:** undo / redo against a reference that keeps whole documents — 6 walks
   of 1 500 steps in `history.test.ts`, 3 walks of 700 steps through the store with model commits, drags and
   the cap, and 700 walks of 150 steps over 49 hostile recipes (aliasing, `original()`, `current()`, sorts,
-  moves) in `historyRecipes.test.ts`; `diffDocuments` / `applyPatches` on 4 000 random pairs of JSON values;
-  the latest-wins group on 12 random request sequences over three channels; `carryOver` on 150 random model
-  pairs (purity, idempotence, color identity of every carried paint cell); route round trips on 602 routes (300 random ids).
-- **Mutation checks** (not committed): 41 deliberate one-line breaks of the rules above, one at a time; the
-  suite caught 39. The two survivors are equivalent mutants (a type check that the dims comparison already
-  implies; the queue condition of `ifAvailable`, which for exclusive locks implies "held").
-- **In a real browser** (headless Chromium 1243 through Playwright, a throw-away page served by this
-  worktree's dev server on port 5257 and again from a production build under `vite preview`; nothing of it is
-  committed, and the committed Playwright smoke test is Step 0c's):
-  - all six real worker stubs start lazily through `workers` and reject with a recognizable
-    `NotImplementedError` (`Chart2dApi.run not implemented`, …); the build emits the six workers as separate
-    chunks from the `new Worker(new URL(…))` expressions of `client.ts`;
-  - five rapid `chart2d.run` requests on a real slow worker: jobs started `[1, 5]`, finished `[5]`,
-    `supersede` received `[2, 3, 4, 5]`, job 1 stopped after 1 of 40 stages; a newer request sent ~60 ms into
-    a job of 40 × 25 ms stages stopped it after 3 stages (76 ms in all instead of 1 s);
-  - `yieldMacrotask` let a message queued on another port run first in 50 of 50 tries; `crossOriginIsolated`
-    is false and `SharedArrayBuffer` undefined (D20);
-  - a progress callback arrived through `Comlink.proxy` (`[0.5, 1]`); a marked buffer was moved (length 0
-    afterwards, 16 bytes received), an unmarked one kept; `ml.cancel()` rejected the call in flight with
-    `WorkerTerminated` and the next call got a fresh worker; a worker script that throws while loading
-    rejected its first call with `WorkerTerminated` (`crashed: true`) and the next call spawned again;
-  - `decodeBlob` in a real worker: a PNG came back pixel-exact (except the half-transparent pixel, request
-    14); a JPEG with EXIF orientation 6 came back rotated (8 × 4 → 4 × 8, red on top); bytes with a
-    `ftyp heic` header went to the Step 0 `/__convert` stub (501) and gave the §2.3.1 message, still
-    recognizable after comlink; an `RgbaImage` passed through as the same object;
-  - the fakes against the real APIs: the same scenario scripts ran on `navigator.locks` and on
-    `createFakeLocks()` (queue order, `ifAvailable` on a held lock / behind a waiter / on a free lock, `steal`
-    with the old holder's request rejecting with `AbortError` while its callback runs and the stealer going
-    ahead of the queue, the two `NotSupportedError`s, callbacks that throw), and on `BroadcastChannel` and
-    `createFakeChannels()` (no delivery to the sender, none synchronously or in a microtask, posting order,
-    a clone taken at posting time, closed and late channels, `InvalidStateError`, `DataCloneError`): the
-    logs were identical.
+  moves) in `historyRecipes.test.ts`; `diffDocuments` / `applyPatches` on 4 000 random pairs of JSON values and
+  on 4 000 pairs of hostile values (-0, NaN, ±Infinity, `undefined`, keys such as `__proto__`, `length` and `''`,
+  null-prototype objects; half of the pairs small edits of each other); the latest-wins group on 12 random
+  request sequences over three channels; `carryOver` on 150 random model pairs (purity, idempotence, color
+  identity of every carried paint cell); route round trips on 602 routes (300 random ids).
+- **Mutation checks** (not committed): 104 deliberate one-line breaks of the rules above — the 90 of the earlier
+  session's harness (its notes reported only the first 41, 39 caught) and 14 for the fixes of the finishing session
+  — each applied alone to the final code and followed by `npm test` on its folder; 99 were caught. The 5 survivors
+  are equivalent: `sameShapeWithin` without the type check (no other part type has those dims, so the comparison
+  fails anyway); a suffix match in the array diff that may overlap the prefix (the overlapping elements are
+  identical, so removing either index gives the same document and inverse); the client's "only the current instance
+  may crash the handle" guard (a stopped instance's listeners are removed first); `supersede` spawning a worker
+  that has none (the pending request spawns it a tick later anyway); and `ifAvailable`'s "others are waiting" test
+  (the fake never leaves a lock free while someone waits — before the hand-over fix this one was NOT equivalent:
+  the earlier notes called it so, and the window was real). The first run also found one gap, closed with a test: a
+  job from before `derivedStore.reset()` could complete a new job for the same inputs.
+- **In a real browser** (headless Chromium 153.0.8010.12, Playwright's build 1243; a throw-away page and three
+  throw-away workers under `zz-verify/`, served by this worktree's dev server with `CPG_TEST=1`, a temporary
+  `CPG_PROJECTS_DIR` and port 5257, deleted afterwards — nothing of it is committed; the committed Playwright
+  smoke test is Step 0c's):
+  - **fakes against the real APIs:** the same scenario script ran on `navigator.locks` and on
+    `createFakeLocks()` (FIFO queue, nothing granted synchronously, `ifAvailable` on a held lock / behind a
+    waiter / on a free lock, `steal` with the old holder's request rejecting with `AbortError` while its
+    callback keeps running and the stealer going ahead of the waiter, steal on a free lock, the two
+    `NotSupportedError`s, callbacks that throw or reject), and on `BroadcastChannel` and `createFakeChannels()`
+    (nothing synchronously or in a microtask, no delivery to the sender, a second channel of the same name in
+    the same tab receives, posting order, a clone taken at posting time, closed and late channels,
+    `InvalidStateError`, `DataCloneError`, a reply from inside a handler), plus two hand-over scenarios
+    (`ifAvailable` asked while the holder lets go with a waiter queued, and right after the holder's request
+    resolved). Channels: identical logs (10 lines). Locks: two differences, each fixed in `fakes.ts` and then
+    identical (38 lines): on `steal`, Chromium rejects the old holder's request BEFORE the stealer's callback
+    starts (the fake started the callback first: a granted callback now runs in a task of its own); and
+    Chromium hands a released lock to the next waiter in the same step, so that waiter's callback runs before
+    a later `ifAvailable` answer (the fake handed over a task later: release and grant are now one step);
+  - **the six real worker stubs:** none running before the first call; `chart2d.run`, `geom.mask`,
+    `ml.status`, `ami.generate`, `mesh.fit`, `importer.importInputs` each spawned its worker and rejected with
+    `isNotImplementedError(e)` true and `isSuperseded(e)` false (`Chart2dApi.run not implemented`, …);
+    `crossOriginIsolated` false, `SharedArrayBuffer` undefined (D20);
+  - **latest-wins on a real slow worker** (`exposeApi` + gate, jobs of 40 stages × 25 ms of busy work): five
+    rapid `chart2d.run` requests took 1 032 ms; four rejected with `Superseded`, the last resolved; the worker
+    saw jobs `[1, 5]` started, `[5]` finished, `supersede` `[2, 3, 4, 5]`, and job 1 stopped at its first
+    check (0 of 40 stages). A newer request sent 60 ms into such a job stopped it after 2 stages; the newer
+    one resolved 15 ms after it was made;
+  - **yield:** `yieldMacrotask` let a message queued on another (younger) port run first in 50 of 50 tries;
+    no `setImmediate` in the browser, so the single ping of §5.4 is what runs there;
+  - **callbacks, transfer, cancel, crash:** a progress callback arrived through `Comlink.proxy` (`[0.5]`);
+    `ml.cancel()` then rejected the call in flight with `WorkerTerminated` (`crashed: false`) and the next call
+    spawned a fresh worker that answered; a buffer marked with `transfer()` was moved (0 bytes left, the worker
+    received 16) and an unmarked one cloned (16 left); a worker script that throws while loading rejected its
+    first call with `WorkerTerminated` (`crashed: true`, "the ml worker crashed: Uncaught Error: …") and the
+    next call spawned it again;
+  - **decode** (on the page and in a real worker behind comlink): a PNG from `encodePng` came back pixel-exact
+    for its opaque pixels; a half-transparent `[200, 100, 50, 128]` came back `[199, 100, 50, 128]` and a fully
+    transparent `[1, 2, 3, 0]` as `[0, 0, 0, 0]` (request 14); an 8 × 4 JPEG (left half red, right half blue)
+    with an EXIF orientation 6 segment inserted came back 4 × 8 with red on top; HEIC bytes (`ftyp heic`,
+    compatible `mif1 heic`) went to the Step 0 `/__convert` stub, got 501 and gave `heic-unavailable` with the
+    exact §2.3.1 message, recognizable by name also from the worker; an `RgbaImage` passed through as the same
+    object. The only console error of the whole run was that 501 (request 16).
+  - Reported by the earlier session and not re-run here: a production build under `vite preview` emits the six
+    workers as separate chunks from the `new Worker(new URL(…))` expressions of `client.ts`.
 - **Not verified here:** a real HEIC conversion (`sips` behind T8's `/__convert`), Safari and Firefox, the
-  committed e2e smoke test (0c), and `src/types/__checks__/entryPoints.check.ts` for the 0b modules (request 1).
+  committed e2e smoke test (0c: real-browser decode, the progress callback and "a nested worker answers from
+  inside another worker" of §5.4's test list are verified there), and `src/types/__checks__/entryPoints.check.ts`
+  for the 0b modules (request 1).
 
 ## Independent review
 
 Two review passes by separate agents, with the brief to read the code against §5.3, §5.4, §5.5.5 and §3.7.7
-and to break it with adversarial sequences.
+and to break it with adversarial sequences, and a third check by the session that finished this part.
 
 **First pass** (cut off by a usage limit; its scratch tests and logs were recovered and its fuzz is now
 `state/__tests__/historyRecipes.test.ts`). It found one defect, and it was a serious one:
@@ -488,4 +556,31 @@ and to break it with adversarial sequences.
 The suite now also checks, on 24 000 random steps, that the document immer PRODUCES is right in all these
 recipes (it equals what plain JavaScript gives on a copy without shared objects): only the patches were wrong.
 
-**Second pass:** running when this version of the notes was committed; its results replace this line.
+**Second pass** (also cut off by a usage limit, before it wrote any finding down; its two probe files,
+`zz-review2-history.test.ts` and `zz-review2-store.test.ts`, logged results instead of asserting them and broke
+typecheck and lint). The finishing session re-ran the probes, judged each result, turned the sound ones into
+assertions in `history.test.ts` and `projectStore.test.ts`, and deleted the files:
+
+| Probe | Result | Outcome |
+|---|---|---|
+| diff + apply on 4 000 random pairs of hostile values (-0, NaN, Infinity, `undefined`, keys like `__proto__`, null-prototype objects) | 64 of 4 000 pairs (72 directions) not exact. Every one was a prototype: `applyPatches` copied a null-prototype object as an ordinary one, and the diff saw no change when an ordinary object became a null-prototype one | fixed: copies keep their prototype, and an object whose prototype changed is replaced whole; 0 of 4 000 now (seeded test, also checks "no patches exactly when equal") |
+| store actions called from inside a recipe | `markSaved` there left `doc.rev` 3 next to `baseRev` 4 (the recipe's result overwrote the saved doc); an `endCoalescing` there was lost | fixed: every action that writes the store throws inside a recipe or `also`; test covers 13 actions and `also` |
+| hostile `also` in a commit (checked again on the code before the fix) | `delete d.threeD` went through and removed all 3D data, revisions included; wiping `threeD.revisions` removed revision 1; replacing `threeD` with a fresh copy lost the new `ModelRevision` entry (it was pushed into the detached draft) | fixed: `threeD` is read again after `also`; removing it or the model, or changing the revision list, rejects and changes nothing; tests |
+| stored revisions with `rev` NaN / 1.5 | the next rev became NaN / 2.5 | fixed: only integer revs count; test |
+| the same model committed again with an `also` that changes nothing | a new revision each time, with the same asset | kept on purpose (`info.rev` must name a revision); documented, test |
+| a commit whose revision asset is already cached | a new (equal) asset Map in the state anyway | fixed: the maps are replaced only when an asset was added |
+| SHA-256 at the padding boundaries, at 1 MiB and on a subarray | equal to node:crypto | added to the SHA test |
+| save hooks in hostile orders: undo during a save, stale tickets after a failure or a reopen, read-only during a save, `rebind` while `putAsset` hashes, `putAsset` across close + reopen, the same bytes under two mime types | consistent; the asset of a `putAsset` that was hashing during a `rebind` gets the copy's key | the sound ones kept as assertions; two mime types share one key and the first blob (content-addressed) |
+| `rebind` (with a name), then undo of a rename made before it | the copy's name goes back to the original's | documented (request 17) |
+| sparse arrays, extra properties on arrays, Dates, nesting of 3 000 levels, a 60 000-element array rewritten in one recipe | a hole reads as `undefined`; array extras unseen; an equal Date is replaced; 3 000 levels throw RangeError (1 000 work; immer itself stops at 1 500); 60 000 elements: 274 ms, undo 9 ms, exact | not project data, or fine; documented in `history.ts` |
+
+Each fix was checked against its test: with that fix reverted alone, the suite failed (8 of 8 in a first run;
+also part of the mutation run above).
+
+**Third check** (the finishing session): the browser comparison of the fakes with `navigator.locks` and
+`BroadcastChannel` described under "How it was verified". It found the two lock differences above (the order of
+the old holder's `AbortError` and the stealer's callback on `steal`; the hand-over of a released lock a task
+late), both fixed with tests that pin Chromium's order. The mutation run found the `derivedStore.reset` gap.
+It also found the heavy property tests of this part running out of vitest's default 5 s under load (5.3 s);
+they now have explicit 60 s timeouts, and the per-update cost test uses the one-frame bound its comment names
+(16 ms; measured 2.0 ms idle, 6.5 ms with all cores loaded).

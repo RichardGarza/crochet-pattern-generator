@@ -122,6 +122,43 @@ describe('createFakeLocks', () => {
     expect(free).toEqual({ name: 'p', mode: 'exclusive' });
   });
 
+  it('ifAvailable made while the holder is letting go, with a waiter queued, gets null: the waiter is next (as in Chromium)', async () => {
+    const locks = createFakeLocks();
+    const aGate = deferred();
+    const a = locks.request('p', {}, () => aGate.promise);
+    const b = locks.request('p', {}, async () => 'b');
+    await locks.flush();
+    aGate.resolve(); // A lets go a few microtasks from now …
+    const c = locks.request('p', { ifAvailable: true }, async (lock) => lock); // … while this request is on its way
+    expect(await c).toBeNull();
+    await a;
+    expect(await b).toBe('b');
+  });
+
+  it('hands a released lock to the next waiter in the same step, so it is never free while someone waits (as in Chromium)', async () => {
+    const locks = createFakeLocks();
+    const order: string[] = [];
+    const aGate = deferred();
+    const bGate = deferred();
+    const a = locks.request('p', {}, () => aGate.promise);
+    const b = locks.request('p', {}, async () => {
+      order.push('B callback');
+      await bGate.promise;
+      return 'b';
+    });
+    await locks.flush();
+    aGate.resolve();
+    await a;
+    expect(locks.query()).toEqual({ held: [{ name: 'p', mode: 'exclusive', clientId: 'tab-0' }], pending: [] }); // B holds it already …
+    expect(order).toEqual([]); // … and its callback runs in a task of its own
+    await locks.request('p', { ifAvailable: true }, async (lock) => {
+      order.push(`C answered ${lock === null ? 'null' : 'lock'}`);
+    });
+    expect(order).toEqual(['B callback', 'C answered null']);
+    bGate.resolve();
+    expect(await b).toBe('b');
+  });
+
   it('ifAvailable holds the lock like any other request once it got it', async () => {
     const locks = createFakeLocks();
     const hold = deferred();
@@ -265,6 +302,8 @@ describe('createFakeLocks', () => {
     expect(locks.query().held[0].clientId).toBe('tab-1');
     tabB.close(); // B gives up waiting
     tabA.close(); // A's tab is closed
+    expect(locks.query().held).toEqual([{ name: 'p', mode: 'exclusive', clientId: 'tab-3' }]); // handed to C at once
+    expect(cGot).toBe(false); // C's callback runs in a task of its own
     await c;
     expect(bGot).toBe(false);
     expect(cGot).toBe(true);

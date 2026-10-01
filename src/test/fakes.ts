@@ -87,10 +87,12 @@ interface HeldLock {
  *     of everything queued;
  *   - `steal` together with `ifAvailable`, and a name starting with `-`, reject with `NotSupportedError`;
  *   - a callback is never called synchronously inside `request`, and a granted callback runs in a task of
- *     its own, so a stolen holder's rejection is seen before the stealer's callback starts.
+ *     its own, so a stolen holder's rejection is seen before the stealer's callback starts;
+ *   - a released lock goes to the next waiter in the same step, so it is never free while someone waits.
  *
  * The same scenario script gave identical logs on this fake and on `navigator.locks` in headless Chromium
- * (FIFO, `ifAvailable` held / behind a waiter / free, `steal`, the two NotSupportedErrors, throwing callbacks).
+ * (FIFO, `ifAvailable` held / behind a waiter / free / while the holder lets go, `steal`, the two
+ * NotSupportedErrors, throwing callbacks, the order of a hand-over).
  *
  * `createFakeLocks()` itself is the lock manager of a default tab (`clientId` 'tab-0'); `client()` makes more
  * tabs that share the same locks.
@@ -147,10 +149,12 @@ export function createFakeLocks(): FakeLockManager {
     later(() => {
       if (closed.has(request.clientId)) return; // the tab was closed meanwhile: its callback never runs
       run(request, { name: request.name, mode: 'exclusive' }, () => {
-        // A stolen lock is no longer in the table; its callback finishing releases nothing.
+        // A stolen lock is no longer in the table; its callback finishing releases nothing. Releasing and
+        // granting the next waiter are one step, as in the real manager (checked in Chromium): the lock is
+        // never free while someone waits for it.
         if (held.get(request.name) === lock) {
           held.delete(request.name);
-          later(() => process(request.name));
+          process(request.name);
         }
       });
     });
@@ -211,7 +215,7 @@ export function createFakeLocks(): FakeLockManager {
       for (const [name, lock] of [...held]) {
         if (lock.request.clientId !== clientId) continue;
         held.delete(name);
-        later(() => process(name));
+        process(name);
       }
     },
   });
