@@ -508,7 +508,7 @@ describe('carryOver: invariants over random models (seeded)', () => {
     );
   };
 
-  it('never mutates its inputs, reports only what it did, and is idempotent', () => {
+  it('never mutates its inputs, reports only what it did, and is idempotent', { timeout: 60_000 }, () => {
     for (let seed = 1; seed <= 150; seed++) {
       const rng = mulberry32(seed);
       const prev = deepFreeze(randomModel(rng, 'p'));

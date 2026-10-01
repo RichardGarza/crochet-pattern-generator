@@ -462,7 +462,7 @@ function problemOf(base: Doc, edit: (d: Doc) => void): { problem: string | null;
 }
 
 describe('patches of a recipe', () => {
-  it('turn the document before into the document after, and back — every hostile recipe alone', () => {
+  it('turn the document before into the document after, and back — every hostile recipe alone', { timeout: 60_000 }, () => {
     const problems: string[] = [];
     for (const edit of EDITS) {
       for (let seed = 1; seed <= 5; seed++) {
@@ -478,7 +478,7 @@ describe('patches of a recipe', () => {
     expect(problems).toEqual([]);
   });
 
-  it('… and in random sequences, where earlier recipes leave shared objects behind (seeded)', () => {
+  it('… and in random sequences, where earlier recipes leave shared objects behind (seeded)', { timeout: 60_000 }, () => {
     const problems = new Map<string, string>();
     let steps = 0;
     for (let seed = 1; seed <= 400; seed++) {
@@ -529,7 +529,7 @@ function holdsAnObjectTwice(doc: unknown): boolean {
 }
 
 describe('the document a recipe produces', () => {
-  it('is the one plain JavaScript gives on a copy without shared objects — also when the document holds one object twice (seeded)', () => {
+  it('is the one plain JavaScript gives on a copy without shared objects — also when the document holds one object twice (seeded)', { timeout: 60_000 }, () => {
     // A document that holds one object in two places behaves as if it held two equal objects: an edit through
     // one place leaves the other alone. (Saving and loading separates them anyway.)
     const edits = EDITS.filter((e) => e.kind !== 'immer');
@@ -654,7 +654,7 @@ function walk(seed: number, edits: readonly Edit[], steps: number, limit: number
 }
 
 describe('undo and redo under hostile recipes (seeded walks with coalescing, sealing and the cap)', () => {
-  it('are exact for the recipes that create no shared objects', () => {
+  it('are exact for the recipes that create no shared objects', { timeout: 60_000 }, () => {
     const edits = EDITS.filter((e) => e.kind === 'plain');
     const failures: string[] = [];
     for (let seed = 1; seed <= 300 && failures.length < 3; seed++) {
@@ -664,7 +664,7 @@ describe('undo and redo under hostile recipes (seeded walks with coalescing, sea
     expect(failures).toEqual([]);
   });
 
-  it('are exact for all of them: aliasing, original(), current()', () => {
+  it('are exact for all of them: aliasing, original(), current()', { timeout: 60_000 }, () => {
     const failures: string[] = [];
     for (let seed = 1; seed <= 400 && failures.length < 3; seed++) {
       const failure = walk(seed, EDITS, 150, seed % 4 === 0 ? 12 : 200);

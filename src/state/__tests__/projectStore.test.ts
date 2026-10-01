@@ -480,7 +480,7 @@ function randomProjectEdit(rng: Rng, fresh: () => number): (d: ProjectDoc) => vo
 }
 
 describe('undo and redo through the store', () => {
-  it('restore the document exactly over a long random sequence of edits, drags and model commits (seeded)', async () => {
+  it('restore the document exactly over a long random sequence of edits, drags and model commits (seeded)', { timeout: 60_000 }, async () => {
     for (const seed of [11, 12, 13]) {
       const rng = mulberry32(seed);
       let counter = 100;

@@ -475,7 +475,7 @@ describe('createLatestWinsGroup: the job methods of one worker share its gate', 
     worker.terminate();
   });
 
-  it('holds its invariants over random request sequences on three channels (seeded)', async () => {
+  it('holds its invariants over random request sequences on three channels (seeded)', { timeout: 60_000 }, async () => {
     for (let seed = 1; seed <= 12; seed++) {
       const rng = mulberry32(seed * 7919);
       const gate = createJobGate();

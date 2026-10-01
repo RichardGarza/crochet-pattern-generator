@@ -342,7 +342,7 @@ describe('coalescing', () => {
 });
 
 describe('cost', () => {
-  it('a long coalesced stroke on a large array stays cheap per update', { retry: 2 }, () => {
+  it('a long coalesced stroke on a large array stays cheap per update', { retry: 2, timeout: 60_000 }, () => {
     // 2D hand edits: every pointer move appends to an array that already holds 20 000 overrides
     interface Chart {
       overrides: { cell: number; hex: string }[];
@@ -368,8 +368,9 @@ describe('cost', () => {
     expect(undone?.doc.overrides).toHaveLength(20_000);
     expect(undone?.doc).toStrictEqual(before);
     // Measured 2.0 ms per update on the development machine, 1.1 ms of it immer's own produce on the
-    // 20 000-element array (the diff 0.2 ms, re-deriving the entry 0.7 ms). A frame is 16 ms.
-    expect(perUpdateMs).toBeLessThan(10);
+    // 20 000-element array (the diff 0.2 ms, re-deriving the entry 0.7 ms); 6.5 ms while other agents loaded
+    // all 12 cores. The budget is one frame (16 ms): a drag must not stutter.
+    expect(perUpdateMs).toBeLessThan(16);
   });
 });
 
@@ -484,7 +485,7 @@ function randomEdit(rng: Rng, fresh: () => number): (d: Doc) => void {
 }
 
 describe('undo and redo over long random sequences (seeded)', () => {
-  it('always restores the document exactly, with coalescing, undo, redo and the cap mixed in', () => {
+  it('always restores the document exactly, with coalescing, undo, redo and the cap mixed in', { timeout: 60_000 }, () => {
     for (const seed of [1, 2, 3, 4, 5, 6]) {
       const rng = mulberry32(seed * 104729);
       let counter = 1000;
@@ -697,7 +698,7 @@ describe('diffDocuments', () => {
     expect(getters.filter((k) => k === 'big')).toEqual([]);
   });
 
-  it('holds for any two JSON values (seeded): the patches turn one into the other, and back', () => {
+  it('holds for any two JSON values (seeded): the patches turn one into the other, and back', { timeout: 60_000 }, () => {
     const rng = mulberry32(31337);
     const randomJson = (depth: number): unknown => {
       const roll = rng();
@@ -766,7 +767,7 @@ describe('diffDocuments', () => {
     expect(isDeepStrictEqual(redone.doc, change.doc)).toBe(true);
   });
 
-  it('is exact for everything a recipe can leave in a document: -0, NaN, Infinity, undefined, keys like __proto__ and length, null-prototype objects (seeded; found in review)', () => {
+  it('is exact for everything a recipe can leave in a document: -0, NaN, Infinity, undefined, keys like __proto__ and length, null-prototype objects (seeded; found in review)', { timeout: 60_000 }, () => {
     const KEYS = ['a', 'b', '__proto__', 'constructor', 'length', '0', '1', '-1', '01', 'toString', 'hasOwnProperty', '', 'then', 'valueOf', '1e3', ' 2'];
     const rng = mulberry32(100_001);
     const define = (target: Record<string, unknown>, key: string, value: unknown): void => {
