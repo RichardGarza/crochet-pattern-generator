@@ -150,12 +150,14 @@ function readable(line: unknown): line is Line {
   return Number.isInteger(l.n) && l.n >= 1 && (l.nEnd === undefined || (Number.isInteger(l.nEnd) && l.nEnd >= l.n)) && Array.isArray(l.ops) && l.ops.every((op) => isOp(op)) && (l.cues === undefined || (Array.isArray(l.cues) && l.cues.every((cue) => typeof cue === 'object' && cue !== null && typeof cue.text === 'string')));
 }
 
+const OP_FIELDS = ['k', 'st', 'n', 'loop', 'color', 'into'] as const;
+
 function sameLineOps(a: Line['ops'], b: Line['ops']): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     const x = a[i] as Record<string, unknown>;
     const y = b[i] as Record<string, unknown>;
-    for (const key of new Set([...Object.keys(x), ...Object.keys(y)])) if (x[key] !== y[key]) return false;
+    for (const key of OP_FIELDS) if (x[key] !== y[key]) return false;
   }
   return true;
 }

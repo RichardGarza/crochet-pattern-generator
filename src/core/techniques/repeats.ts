@@ -9,7 +9,7 @@
 // piece (worked into the foundation chain or ring) is never part of a block, since repeating it would not start
 // from the chain. A block whose lines are all identical is left to line folding (§2.6.2).
 import type { Line } from '../../types';
-import { canonicalJson } from '../kernel/hash';
+import { lineKey as fullKey } from '../pattern/doc';
 
 export interface BlockRepeat {
   /** First and last line of the block that is worked again. */
@@ -22,8 +22,7 @@ export interface BlockRepeat {
 }
 
 function lineKey(line: Line): string {
-  const { n: _n, nEnd: _nEnd, ...rest } = line;
-  return canonicalJson(rest);
+  return fullKey(line, { number: false });
 }
 
 /**
