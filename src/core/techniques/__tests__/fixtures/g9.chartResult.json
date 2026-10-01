@@ -1,0 +1,70 @@
+{
+ "jobId": 1,
+ "grid": {
+  "cols": 5,
+  "rows": 3,
+  "labels": [
+   1,
+   0,
+   0,
+   0,
+   0,
+   0,
+   1,
+   1,
+   1,
+   0,
+   0,
+   0,
+   1,
+   0,
+   0
+  ],
+  "palette": [
+   {
+    "code": "A",
+    "hex": "#f4efe6",
+    "name": "Cream",
+    "role": "color"
+   },
+   {
+    "code": "B",
+    "hex": "#2b5c8a",
+    "name": "Blue",
+    "role": "color"
+   }
+  ]
+ },
+ "kind": "flat",
+ "source": {
+  "w": 50,
+  "h": 30
+ },
+ "size": {
+  "cols": 5,
+  "rows": 3,
+  "borderRounds": 0,
+  "actualW": 1.482,
+  "actualH": 0.75,
+  "aspectErr": 0
+ },
+ "metrics": {
+  "confettiPct": 0,
+  "changesPerRowMean": 0,
+  "changesPerRowMax": 0,
+  "busiestRows": [],
+  "strandsPerColor": [
+   0,
+   0
+  ],
+  "ends": 0,
+  "carriedPerRowMax": 0,
+  "fidelityDE00": 0,
+  "workability": 100
+ },
+ "repeats": {
+  "verticalBlocks": []
+ },
+ "issues": [],
+ "hash": "fixture-g9"
+}
