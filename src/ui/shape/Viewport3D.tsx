@@ -31,6 +31,7 @@ import type { ViewportProps } from '../../types/ui';
 import { editorStore, transformScope, useEditorStore, type CameraView } from './editorStore';
 import { useModifierKeys, type ModifierKeys } from './modifiers';
 import { PartGeometryCache, type PartGeometry } from './partGeometry';
+import { completeSurfacePick } from './tools';
 import { useCssColor } from './useCssColor';
 import { disposeYarnMaterial, stitchRepeat, yarnMaterial } from './yarnLook';
 
@@ -247,12 +248,19 @@ function PartMesh({
       onClick={(e: ThreeEvent<MouseEvent>) => {
         e.stopPropagation();
         if (e.delta > 4 || gizmoBusy()) return; // an orbit drag or the end of a gizmo drag, not a click
+        if (editorStore.getState().surfacePick) {
+          // Add part / a start point: the clicked surface point and its outward normal, in model space.
+          const hit: Vec3 = [e.point.x, e.point.y, e.point.z];
+          const n = e.face ? e.face.normal.clone().transformDirection(e.object.matrixWorld) : new Vector3(0, 1, 0);
+          completeSurfacePick(part.id, hit, [n.x, n.y, n.z]);
+          return;
+        }
         onPick?.(part.id);
       }}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
         editorStore.getState().setHovered(part.id);
-        document.body.style.cursor = 'pointer';
+        document.body.style.cursor = editorStore.getState().surfacePick ? 'crosshair' : 'pointer';
       }}
       onPointerOut={() => {
         if (editorStore.getState().hovered === part.id) editorStore.getState().setHovered(null);

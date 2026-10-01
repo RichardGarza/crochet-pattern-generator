@@ -18,15 +18,50 @@ import { MODEL_LIMITS } from '../../core/model/limits';
 import type { Issue } from '../../types/issues';
 import type { CrochetModelV1, Part, Vec3 } from '../../types/model';
 import type { UnitPref } from '../../types/units';
-import { Badge, Banner, Button, EmptyState, IconButton, Kbd, NumberField, Panel, Select, Sidebar, Slider, formatLength } from '../common';
+import { Badge, Banner, Button, EmptyState, IconButton, Kbd, NumberField, Panel, Select, Sidebar, Slider, TabPanel, Tabs, formatLength } from '../common';
+import { MOD } from '../shell/shortcuts';
 import { dimSpecs, dimValue, prettyName, TYPE_NAMES, type DimSpec } from './dimSpecs';
-import { editorStore, transformScope, useEditorStore } from './editorStore';
+import { editorStore, transformScope, useEditorStore, type InspectorPage } from './editorStore';
+import { HowItsMade, MirrorLink, PartActions } from './PartTools';
+import { YarnSizePanel } from './YarnSizePanel';
 
 export interface InspectorProps {
   model: CrochetModelV1;
   units: UnitPref;
   issues: readonly Issue[];
   readOnly: boolean;
+}
+
+const PAGES: { id: InspectorPage; label: string }[] = [
+  { id: 'part', label: 'Part' },
+  { id: 'yarn', label: 'Yarn & size' },
+];
+
+/** The Shape tab's right column: the selected part, or the project's yarn and size (§4.5, context 'shape'). */
+export function ShapeInspector(props: InspectorProps) {
+  const page = useEditorStore((s) => s.inspectorPage);
+  const root = useRef<HTMLDivElement>(null);
+  // Another page starts at its top.
+  useEffect(() => {
+    const side = root.current?.closest('.ui-tablayout__side');
+    if (side && typeof side.scrollTo === 'function') side.scrollTo({ top: 0 });
+  }, [page]);
+  return (
+    <div className="shape-inspector" ref={root}>
+      <div className="shape-inspector__tabs">
+        <Tabs<InspectorPage> ariaLabel="Inspector" idBase="shape-inspector" items={PAGES} value={page} onChange={(p) => editorStore.getState().setInspectorPage(p)} variant="pill" size="sm" />
+      </div>
+      <TabPanel idBase="shape-inspector" id={page}>
+        {page === 'part' ? (
+          <Inspector {...props} />
+        ) : (
+          <Sidebar>
+            <YarnSizePanel context="shape" />
+          </Sidebar>
+        )}
+      </TabPanel>
+    </div>
+  );
 }
 
 export function Inspector({ model, units, issues, readOnly }: InspectorProps) {
@@ -38,7 +73,7 @@ export function Inspector({ model, units, issues, readOnly }: InspectorProps) {
       <Sidebar>
         <Panel title="Inspector" icon="sliders">
           <EmptyState icon="cube" title="Nothing selected" size="sm" level={4}>
-            <p>Click a part in the view or in the Parts list to change its size, position and color.</p>
+            <p>Click a part in the view or in the Parts list to change its size, position and color, or add a new one with “Add part”.</p>
           </EmptyState>
           <ShortcutList />
         </Panel>
@@ -55,7 +90,10 @@ function ShortcutList() {
     ['E', 'Rotate'],
     ['R', 'Resize'],
     ['F', 'Frame the selection'],
-    ['Esc', 'Clear the selection'],
+    [`${MOD}D`, 'Duplicate'],
+    ['M', 'Mirror to the other side'],
+    ['⌫', 'Delete'],
+    ['Esc', 'Clear the selection, or cancel placing'],
   ];
   return (
     <div className="shape-shortcuts">
@@ -120,9 +158,14 @@ function PartInspector({ model, part, units, issues, readOnly, others }: { model
             <dt>Attached to</dt>
             <dd>
               {parent ? (
-                <Button size="sm" variant="ghost" onClick={() => editorStore.getState().select(parent.id)} aria-label={`Attached to ${partName(parent)}: select it`}>
-                  {partName(parent)}
-                </Button>
+                <span className="shape-inspector-head__attach">
+                  <Button size="sm" variant="ghost" onClick={() => editorStore.getState().select(parent.id)} aria-label={`Attached to ${partName(parent)}: select it`}>
+                    {partName(parent)}
+                  </Button>
+                  <Button size="sm" variant="ghost" disabledReason={readOnly ? 'This project is read-only' : undefined} onClick={() => editorStore.getState().openAttach(part.id)} aria-label={`Change what ${name} is attached to`}>
+                    Change…
+                  </Button>
+                </span>
               ) : (
                 <span className="shape-muted">Nothing: this is the main piece</span>
               )}
@@ -133,6 +176,8 @@ function PartInspector({ model, part, units, issues, readOnly, others }: { model
             <dd>{childCount === 0 ? <span className="shape-muted">No attached parts</span> : `${childCount} attached ${childCount === 1 ? 'part' : 'parts'}`}</dd>
           </div>
         </dl>
+        <MirrorLink model={model} part={part} readOnly={readOnly} />
+        <PartActions model={model} part={part} readOnly={readOnly} />
         {partIssues.map((issue) => (
           <Banner key={issue.code + issue.message} tone="warn" icon="warning">
             {issue.message}
@@ -142,6 +187,10 @@ function PartInspector({ model, part, units, issues, readOnly, others }: { model
 
       <Panel title="Size" icon="ruler">
         <SizeFields model={model} part={part} units={units} readOnly={readOnly} />
+      </Panel>
+
+      <Panel title="How it's made" icon="hook">
+        <HowItsMade part={part} readOnly={readOnly} />
       </Panel>
 
       <Panel title="Position" icon="arrow-right">

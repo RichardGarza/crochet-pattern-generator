@@ -215,4 +215,127 @@ test.describe('T6 Shape tab', () => {
     expect(heightAfter).toBeLessThan(heightBefore * 2);
     await expect(page.getByText('Every part touches its parent')).toBeVisible();
   });
+
+  test('T6.2: add a part by clicking the model, mirror it, delete asks; the Yarn & size page; light and dark', async ({ page }, info) => {
+    test.setTimeout(150_000);
+    await page.goto('/');
+    await setTheme(page, 'Light');
+    await openTeddy(page);
+    await page.getByRole('group', { name: 'Camera' }).getByRole('button', { name: 'Front' }).click();
+    await page.waitForTimeout(700);
+
+    // Add part: a cone, placed by a click on the head's upper right (the toy's own left).
+    await page.getByRole('button', { name: 'Add part' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add a part' });
+    await dialog.locator('label').filter({ hasText: 'Beaks, horns, hats' }).click();
+    await expect(dialog.getByRole('radio', { name: /^Cone/ })).toBeChecked();
+    await snap(page, info, 't6-add-part-light');
+    await dialog.getByRole('button', { name: 'Choose the spot' }).click();
+    await expect(page.getByText(/Click on the model where the new cone goes/)).toBeVisible();
+    const head = await frontViewPoint(page, 7.278905, TEDDY_BOX);
+    await page.mouse.click(head.x - 45, head.y - 55);
+    await expect(page.getByRole('heading', { level: 2, name: 'Right cone' })).toBeVisible(); // the toy's own right: screen left in the Front view
+    await expect(page.getByTestId('undo')).toHaveAccessibleName(/Undo Add cone to (Head|Left Ear)/);
+    await expect(page.getByText('Every part touches its parent')).toBeVisible();
+
+    // Mirror (M): the twin on the other side, linked.
+    await page.keyboard.press('m');
+    await expect(page.getByRole('treeitem', { name: 'Left cone', exact: true })).toBeVisible();
+    await expect(page.getByText(/Mirrored with/)).toBeVisible();
+    await expect(page.getByRole('treeitem')).toHaveCount(19);
+    const xField = () => page.getByRole('spinbutton', { name: /^X left to right/ });
+    const coneX = Number(await xField().inputValue());
+    await row(page, 'Left cone').click();
+    expect(Number(await xField().inputValue())).toBeCloseTo(-coneX, 2);
+    await row(page, 'Right cone').click();
+    await snap(page, info, 't6-mirror-front-light');
+    await page.getByRole('group', { name: 'Camera' }).getByRole('button', { name: 'Reset' }).click();
+    await snap(page, info, 't6-mirror-light');
+
+    // Delete asks, and says where the children go.
+    await row(page, 'Head').click();
+    await page.keyboard.press('Backspace');
+    const del = page.getByRole('dialog', { name: 'Delete Head?' });
+    await expect(del.getByText(/will be attached to Body instead/)).toBeVisible();
+    await snap(page, info, 't6-delete-light');
+    await del.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByRole('treeitem')).toHaveCount(19);
+
+    // How it's made, then the Yarn & size page.
+    await row(page, 'Left Ear').click();
+    await page.getByRole('combobox', { name: 'Make it as' }).scrollIntoViewIfNeeded();
+    await snap(page, info, 't6-how-made-light');
+    await page.getByRole('tab', { name: 'Yarn & size' }).click();
+    await expect(page.getByRole('combobox', { name: 'Yarn weight' })).toBeVisible();
+    // The optional panels start collapsed here: really hidden, not only marked so.
+    await expect(page.getByRole('radio', { name: 'Classic' })).toBeHidden();
+    await snap(page, info, 't6-yarn-size-light');
+    await page.getByRole('button', { name: /Match your tension/ }).click();
+    await page.getByRole('spinbutton', { name: 'Stitches in the widest round' }).fill('36');
+    await page.getByRole('spinbutton', { name: 'Stitches in the widest round' }).press('Enter');
+    await page.getByRole('spinbutton', { name: /Around the widest round/ }).fill('7.2');
+    await page.getByRole('spinbutton', { name: /Around the widest round/ }).press('Enter');
+    await expect(page.getByRole('group', { name: 'Expected finished size' }).getByText('±4%')).toBeVisible();
+    await snap(page, info, 't6-yarn-size-tension-light');
+
+    await setTheme(page, 'Dark');
+    await snap(page, info, 't6-yarn-size-tension-dark');
+    await page.getByRole('tab', { name: 'Part' }).click();
+    await page.getByRole('tab', { name: 'Yarn & size' }).click();
+    await snap(page, info, 't6-yarn-size-dark');
+    // The same panel as the 3D Pattern tab's settings.
+    await page.getByRole('tab', { name: 'Pattern' }).click();
+    await expect(page.locator('[data-context="pattern"]')).toBeVisible();
+    await snap(page, info, 't6-yarn-size-pattern-dark');
+    await setTheme(page, 'Light');
+    await snap(page, info, 't6-yarn-size-pattern-light');
+    await setTheme(page, 'Dark');
+    await page.getByRole('tab', { name: 'Shape' }).click();
+    await expect(page.locator('[data-testid="shape-viewport"] canvas')).toBeVisible({ timeout: 60_000 });
+    await page.getByRole('tab', { name: 'Part' }).click();
+    await row(page, 'Right cone').click();
+    await snap(page, info, 't6-mirror-dark');
+    await page.getByRole('button', { name: 'Add part' }).click();
+    await snap(page, info, 't6-add-part-dark');
+    await page.getByRole('dialog', { name: 'Add a part' }).getByRole('button', { name: 'Cancel' }).click();
+  });
+
+  test('T6.2 keyboard path: add a part on a side, mirror, delete, all without the mouse', async ({ page }) => {
+    test.setTimeout(120_000);
+    await openTeddy(page);
+    await row(page, 'Tail').click();
+    // Open Add part from the tool bar with the keyboard.
+    await page.getByRole('button', { name: 'Add part' }).focus();
+    await page.keyboard.press('Enter');
+    const dialog = page.getByRole('dialog', { name: 'Add a part' });
+    await expect(dialog).toBeVisible();
+    // The shape radios: arrows move within the group.
+    await dialog.getByRole('radio', { name: /^Ball/ }).focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(dialog.getByRole('radio', { name: /^Oval ball/ })).toBeChecked();
+    await dialog.getByRole('radio', { name: 'Click on the model' }).focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(dialog.getByRole('radio', { name: 'On a side of a part' })).toHaveAttribute('aria-checked', 'true');
+    await expect(dialog.getByRole('combobox', { name: 'On' })).toHaveValue('tail');
+    await dialog.getByRole('combobox', { name: 'Side' }).selectOption('left');
+    await dialog.getByRole('button', { name: 'Add the oval ball' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('heading', { level: 2, name: 'Left oval ball' })).toBeVisible();
+    // M mirrors, ⌘D duplicates, ⌫ + Enter on Delete deletes.
+    await page.locator('body').focus();
+    await page.keyboard.press('m');
+    await expect(page.getByRole('treeitem', { name: 'Right oval ball', exact: true })).toBeVisible();
+    await page.keyboard.press('ControlOrMeta+d');
+    await expect(page.getByRole('heading', { level: 2, name: 'Left oval ball copy' })).toBeVisible();
+    await page.keyboard.press('Backspace');
+    const del = page.getByRole('dialog', { name: 'Delete Left oval ball copy?' });
+    await expect(del.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await del.getByRole('button', { name: 'Delete' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('treeitem', { name: 'Left oval ball copy', exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('undo')).toHaveAccessibleName('Undo Delete Left oval ball copy');
+    // The "?" list shows the Shape tab's keys.
+    await page.keyboard.press('?');
+    await expect(page.getByRole('dialog').getByText('Shape tab')).toBeVisible();
+  });
 });

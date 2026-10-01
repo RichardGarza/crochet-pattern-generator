@@ -13,10 +13,13 @@ import type { ColoredMesh } from '../../types/geometry';
 import type { CrochetModelV1 } from '../../types/model';
 import type { ShapeTabProps, ViewportProps } from '../../types/ui';
 import { Badge, Button, EmptyState, IconButton, SegmentedControl, Spinner, Switch, TabLayout, Toolbar, ToolbarDivider, Tooltip } from '../common';
-import { StatusItems } from '../shell';
-import { isEditableTarget } from '../shell/shortcuts';
+import { StatusItems, useShortcutGroup, type ShortcutGroup } from '../shell';
+import { isEditableTarget, IS_MAC } from '../shell/shortcuts';
+import { TYPE_NAMES } from './dimSpecs';
 import { editorStore, useEditorStore, type CameraView, type EditorTool } from './editorStore';
-import { Inspector } from './Inspector';
+import { ShapeInspector } from './Inspector';
+import { ShapeDialogs } from './ShapeDialogs';
+import { duplicateSelection, mirrorSelection, requestDeleteSelection } from './tools';
 import { useModifierKeys } from './modifiers';
 import { Outliner } from './Outliner';
 import './shape.css';
@@ -146,6 +149,9 @@ function Editor({ Viewport, units, readOnly }: { Viewport: ComponentType<Viewpor
   const onPick = (id: string | null) => editorStore.getState().select(id, { additive: keys.current.shift });
 
   useEditorShortcuts();
+  useShortcutGroup(SHAPE_SHORTCUTS);
+  // A click the editor was waiting for does not outlive the tab.
+  useEffect(() => () => editorStore.getState().setSurfacePick(null), []);
 
   if (!model) return null;
   const primary = selection[selection.length - 1];
@@ -155,7 +161,7 @@ function Editor({ Viewport, units, readOnly }: { Viewport: ComponentType<Viewpor
       className="shape-layout"
       sidebar={<Outliner model={model} issues={issues} />}
       sidebarLabel="Parts"
-      inspector={<Inspector model={model} units={units} issues={issues} readOnly={readOnly} />}
+      inspector={<ShapeInspector model={model} units={units} issues={issues} readOnly={readOnly} />}
       inspectorLabel="Inspector"
       mainLabel="3D view"
       mainPadding="none"
@@ -165,6 +171,7 @@ function Editor({ Viewport, units, readOnly }: { Viewport: ComponentType<Viewpor
         <Viewport model={model} meshes={NO_MESHES} selection={selection} layers={layers} onPick={onPick} />
         <CameraButtons />
         <StageHint model={model} selection={selection} tool={tool} readOnly={readOnly} />
+        <PickHint model={model} />
         <p className="shape-stage__help" aria-hidden="true">
           Drag to turn · scroll to zoom · right-drag to pan
         </p>
@@ -188,11 +195,31 @@ function Editor({ Viewport, units, readOnly }: { Viewport: ComponentType<Viewpor
         )}
         {primaryPart ? <span className="shape-muted">Selected: {primaryPart.label ?? primaryPart.id}</span> : null}
       </StatusItems>
+      <ShapeDialogs model={model} />
     </TabLayout>
   );
 }
 
 /** A line on the view when the active tool cannot act: nothing selected, or a part it cannot resize. */
+/** While the editor waits for a click on a part's surface (Add part, a sculpted part's start point). */
+function PickHint({ model }: { model: CrochetModelV1 }) {
+  const pick = useEditorStore((s) => s.surfacePick);
+  if (!pick) return null;
+  const part = pick.kind === 'seed' ? model.parts.find((p) => p.id === pick.partId) : undefined;
+  const text =
+    pick.kind === 'add'
+      ? `Click on the model where the new ${TYPE_NAMES[pick.type].toLowerCase()} goes. It hangs from the part you click.`
+      : `Click on ${part ? (part.label ?? part.id) : 'the part'} where round 1 should start.`;
+  return (
+    <div className="shape-stage__pick" role="status">
+      <span>{text}</span>
+      <Button size="sm" variant="secondary" onClick={() => editorStore.getState().setSurfacePick(null)}>
+        Cancel (Esc)
+      </Button>
+    </div>
+  );
+}
+
 function StageHint({ model, selection, tool, readOnly }: { model: CrochetModelV1; selection: string[]; tool: EditorTool; readOnly: boolean }) {
   if (readOnly || tool === 'select') return null;
   const verb = tool === 'move' ? 'move' : tool === 'rotate' ? 'turn' : 'resize';
@@ -223,6 +250,10 @@ function ShapeToolbar({ tool, readOnly }: { tool: EditorTool; readOnly: boolean 
       />
       <ToolbarDivider />
       <Switch className="shape-follow" label="Attached parts follow" size="sm" checked={follow} onChange={(on) => editorStore.getState().setFollowAttached(on)} />
+      <ToolbarDivider />
+      <Button size="sm" icon="plus" disabledReason={readOnly ? 'This project is read-only' : undefined} onClick={() => editorStore.getState().setAddDialog(true)}>
+        Add part
+      </Button>
       <span className="shape-toolbar__spacer" />
       <IconButton icon="grid" label="Ground grid" pressed={!!layers.grid} size="sm" onClick={() => editorStore.getState().setLayer('grid', !layers.grid)} />
       <IconButton icon="sun" label="Ground shadow" pressed={layers.shadow !== false} size="sm" onClick={() => editorStore.getState().setLayer('shadow', layers.shadow === false)} />
@@ -257,31 +288,82 @@ function CameraButtons() {
   );
 }
 
-/** Q / W / E / R pick the tool, F frames the selection, Escape clears it (outside text fields and dialogs). */
+/** The Shape tab's rows of the "?" shortcut list (integration task T6.1). */
+const SHAPE_SHORTCUTS: ShortcutGroup = {
+  id: 'shape',
+  title: 'Shape tab',
+  rows: [
+    { keys: [['Q']], what: 'Select' },
+    { keys: [['W']], what: 'Move' },
+    { keys: [['E']], what: 'Rotate' },
+    { keys: [['R']], what: 'Resize' },
+    { keys: [['F']], what: 'Frame the selection' },
+    { keys: [[IS_MAC ? '⌘' : 'Ctrl', 'D']], what: 'Duplicate the selected parts' },
+    { keys: [['M']], what: 'Mirror to the other side (or update the mirrored twin)' },
+    { keys: [['⌫'], ['Delete']], what: 'Delete the selected parts (asks first)' },
+    { keys: [['Esc']], what: 'Cancel a drag or placing; clear the selection' },
+    { keys: [['⌥']], what: 'Hold while dragging: move a part without the parts attached to it' },
+    { keys: [['⇧']], what: 'Hold while dragging: no snapping · ⇧-click adds to the selection' },
+  ],
+};
+
+/** Any form control (sliders, switches, radios and checkboxes included, which `isEditableTarget` lets through). */
+function isControl(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target instanceof HTMLInputElement || !!target.closest('[role="slider"], [role="radiogroup"], [role="switch"]');
+}
+
+/**
+ * Q / W / E / R pick the tool, F frames the selection, ⌘D duplicates, M mirrors, ⌫ asks to delete, Escape cancels a
+ * drag or a surface pick, then clears the selection (outside text fields and dialogs).
+ */
 function useEditorShortcuts(): void {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || isEditableTarget(e.target)) return;
+      if (e.defaultPrevented || isEditableTarget(e.target)) return;
       if (document.querySelector('dialog[open]')) return;
       const editor = editorStore.getState();
+      const readOnly = projectStore.getState().readOnly;
+      const key = e.key.toLowerCase();
+      const mod = IS_MAC ? e.metaKey : e.ctrlKey;
+      if (mod && !e.altKey && !e.shiftKey && key === 'd') {
+        // Before the browser's bookmark shortcut.
+        e.preventDefault();
+        if (!readOnly && editor.selection.length > 0) duplicateSelection();
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === 'Escape' && editor.dragging) {
         // Escape during a gizmo drag cancels it (no history step); the selection stays.
         e.preventDefault();
         editor.cancelDrag?.();
         return;
       }
-      const key = e.key.toLowerCase();
+      if (e.key === 'Escape' && editor.surfacePick) {
+        e.preventDefault();
+        editor.setSurfacePick(null);
+        return;
+      }
       const tool = TOOL_KEYS[key];
       if (tool) {
-        if (projectStore.getState().readOnly) return;
+        if (readOnly) return;
         e.preventDefault();
-        editorStore.getState().setTool(tool);
+        editor.setTool(tool);
       } else if (key === 'f') {
         e.preventDefault();
-        editorStore.getState().requestCamera('fit');
-      } else if (e.key === 'Escape' && editorStore.getState().selection.length > 0) {
+        editor.requestCamera('fit');
+      } else if (key === 'm' && !e.shiftKey) {
+        if (readOnly || editor.selection.length === 0 || isControl(e.target)) return;
         e.preventDefault();
-        editorStore.getState().select(null);
+        mirrorSelection();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Not from a slider, switch, radio or checkbox: Backspace there must never ask to delete a part.
+        if (readOnly || editor.selection.length === 0 || isControl(e.target)) return;
+        e.preventDefault();
+        requestDeleteSelection();
+      } else if (e.key === 'Escape' && editor.selection.length > 0) {
+        e.preventDefault();
+        editor.select(null);
       }
     };
     window.addEventListener('keydown', onKeyDown);
