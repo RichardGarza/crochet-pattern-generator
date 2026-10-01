@@ -82,8 +82,11 @@ export interface DerivedState {
    * (a job still running for other inputs is then stale); joins the running job for the same inputs;
    * otherwise begins a job, awaits `compute`, and stores the result. Resolves with the value, or with
    * undefined when the job was superseded, failed (the error is in `jobs[kind]`), or was overtaken by a
-   * newer `run` for other inputs. When an older job for the same inputs stored its value first (A → B → A,
-   * the first A finished first), the newest run resolves with that stored value. Never rejects.
+   * newer `run`. "Latest" is the run started last for `kind` (its own token, not its input hash): a run
+   * that a newer run overtook never changes the job state, not even when it fails or is superseded. The one
+   * exception: an overtaken run that SUCCEEDS while the newest job is still running for the same inputs
+   * (A → B → A, the first A finished first) stores its value, and the newest run then resolves with that
+   * stored value. Never rejects.
    */
   run<K extends DerivedKind>(kind: K, inputHash: string, compute: () => Promise<DerivedValues[K]>): Promise<DerivedValues[K] | undefined>;
   /** Forgets one result and its job state. */
@@ -168,6 +171,7 @@ export function createDerivedStore(): DerivedStore {
         if (entry && entry.inputHash === inputHash && !runningThese) {
           // The newest request is already answered. A job that is still running for other inputs is now stale.
           if (!job || job.status !== 'done' || job.inputHash !== inputHash) setJob(kind, { status: 'done', inputHash, progress: null, error: null });
+          running.delete(kind);
           return Promise.resolve(entry.value);
         }
         const joined = running.get(kind);
@@ -177,35 +181,52 @@ export function createDerivedStore(): DerivedStore {
         const startedIn = generation;
         const token = {};
         /**
-         * For a job that is no longer the latest: when the newest request is still for these inputs and an
-         * older job for them already stored its value (run A → B → A, the first A finished first), that value
-         * answers this run too. Otherwise undefined: superseded, or overtaken by other inputs.
+         * Settles this run. The run that was started LAST for `kind` is identified by its token (not by its
+         * inputs: in A → B → A the first and the third run share an input hash). Only that run, while its job is
+         * still running, records a result, a failure or a supersession. An overtaken run never touches the job
+         * state; the only thing it may still do is hand a value it computed to the newest job when that job is
+         * for the same inputs and still running (A → B → A, the first A finished first). Then the newest run
+         * resolves with the stored value, whatever its own compute does.
          */
-        const answeredMeanwhile = (): DerivedValues[K] | undefined => {
-          if (generation !== startedIn) return undefined;
+        const settle = (outcome: { ok: true; value: DerivedValues[K] } | { ok: false; error: unknown }): DerivedValues[K] | undefined => {
+          if (generation !== startedIn) return undefined; // a reset came in between: another project
           const now = get();
           const latest = now.jobs[kind];
           const stored = now[kind] as DerivedEntry<DerivedValues[K]> | null;
+          const stillRunningThese = latest !== undefined && latest.status === 'running' && latest.inputHash === inputHash;
+          if (running.get(kind)?.token === token && stillRunningThese) {
+            if (outcome.ok) {
+              get().setResult(kind, inputHash, outcome.value);
+              return outcome.value;
+            }
+            // Superseded by a request that did not come through `run`: there is no result and no failure.
+            if (isSuperseded(outcome.error)) setJob(kind, IDLE_JOB);
+            else get().failJob(kind, inputHash, outcome.error);
+            return undefined;
+          }
+          if (outcome.ok && stillRunningThese) {
+            get().setResult(kind, inputHash, outcome.value);
+            return outcome.value;
+          }
           return latest?.status === 'done' && latest.inputHash === inputHash && stored?.inputHash === inputHash ? stored.value : undefined;
         };
+        // Registered before `compute` is called: a compute that throws synchronously settles as this (latest) run.
+        const self: { inputHash: string; promise: Promise<unknown>; token: object } = { inputHash, promise: Promise.resolve(undefined), token };
+        running.set(kind, self);
         const promise = (async (): Promise<DerivedValues[K] | undefined> => {
+          let outcome: { ok: true; value: DerivedValues[K] } | { ok: false; error: unknown };
           try {
-            const value = await compute();
-            // Only the job that was started last may store its result.
-            if (generation !== startedIn || !isLatest(kind, inputHash)) return answeredMeanwhile();
-            get().setResult(kind, inputHash, value);
-            return value;
+            outcome = { ok: true, value: await compute() };
           } catch (error) {
-            if (generation !== startedIn || !isLatest(kind, inputHash)) return answeredMeanwhile();
-            // Superseded by a request that did not come through `run`: there is no result and no failure.
-            if (isSuperseded(error)) setJob(kind, IDLE_JOB);
-            else get().failJob(kind, inputHash, error);
-            return undefined;
+            outcome = { ok: false, error };
+          }
+          try {
+            return settle(outcome);
           } finally {
             if (running.get(kind)?.token === token) running.delete(kind);
           }
         })();
-        running.set(kind, { inputHash, promise, token });
+        self.promise = promise;
         return promise;
       },
 

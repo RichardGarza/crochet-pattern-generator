@@ -224,6 +224,65 @@ describe('derivedStore.run', () => {
     expect(jobOf(store2.getState(), 'chart')).toMatchObject({ status: 'done', inputHash: 'A', error: null });
   });
 
+  it('A → B → A: a failure of the overtaken first A does not touch the newest A job (verifier A-A7)', async () => {
+    const store = createDerivedStore();
+    const firstA = deferred<ChartResult>();
+    const againA = deferred<ChartResult>();
+    const first = store.getState().run('chart', 'A', () => firstA.promise);
+    void store.getState().run('chart', 'B', () => new Promise<ChartResult>(() => {}));
+    const latest = store.getState().run('chart', 'A', () => againA.promise);
+    firstA.reject(new Error('stale failure'));
+    expect(await first).toBeUndefined();
+    expect(jobOf(store.getState(), 'chart')).toMatchObject({ status: 'running', inputHash: 'A', error: null });
+    againA.resolve(chart('A'));
+    expect(await latest).toEqual(chart('A'));
+    expect(store.getState().chart).toEqual({ inputHash: 'A', value: chart('A') });
+    expect(jobOf(store.getState(), 'chart')).toEqual({ status: 'done', inputHash: 'A', progress: null, error: null });
+  });
+
+  it('A → B → A: the latest-wins Superseded of the first A, arriving late, does not idle the newest A job (verifier A-A7)', async () => {
+    const store = createDerivedStore();
+    const firstA = deferred<ChartResult>();
+    const b = deferred<ChartResult>();
+    const againA = deferred<ChartResult>();
+    const first = store.getState().run('chart', 'A', () => firstA.promise);
+    const middle = store.getState().run('chart', 'B', () => b.promise);
+    const latest = store.getState().run('chart', 'A', () => againA.promise);
+    // what client.ts's latest-wins does: the pending B and the in-flight first A are superseded
+    b.reject(new Superseded(2));
+    firstA.reject(new Superseded(1));
+    expect(await middle).toBeUndefined();
+    expect(await first).toBeUndefined();
+    expect(jobOf(store.getState(), 'chart')).toMatchObject({ status: 'running', inputHash: 'A' });
+    againA.resolve(chart('A'));
+    expect(await latest).toEqual(chart('A'));
+    expect(store.getState().chart).toEqual({ inputHash: 'A', value: chart('A') });
+    expect(jobOf(store.getState(), 'chart')).toMatchObject({ status: 'done', inputHash: 'A' });
+  });
+
+  it('A → B → A: the first A finishing after the newest A changes nothing', async () => {
+    const store = createDerivedStore();
+    const firstA = deferred<ChartResult>();
+    const againA = deferred<ChartResult>();
+    const first = store.getState().run('chart', 'A', () => firstA.promise);
+    void store.getState().run('chart', 'B', () => new Promise<ChartResult>(() => {}));
+    const latest = store.getState().run('chart', 'A', () => againA.promise);
+    againA.resolve(chart('newest'));
+    expect(await latest).toEqual(chart('newest'));
+    firstA.resolve(chart('older'));
+    expect(await first).toEqual(chart('newest')); // answered by the stored value of its inputs
+    expect(store.getState().chart).toEqual({ inputHash: 'A', value: chart('newest') });
+    // and a late failure of an overtaken job leaves the done state alone
+    const store2 = createDerivedStore();
+    const a1 = deferred<ChartResult>();
+    const older = store2.getState().run('chart', 'A', () => a1.promise);
+    void store2.getState().run('chart', 'B', () => new Promise<ChartResult>(() => {}));
+    expect(await store2.getState().run('chart', 'A', async () => chart('A'))).toEqual(chart('A'));
+    a1.reject(new Error('late'));
+    expect(await older).toEqual(chart('A'));
+    expect(jobOf(store2.getState(), 'chart')).toEqual({ status: 'done', inputHash: 'A', progress: null, error: null });
+  });
+
   it('never rejects: a failure is recorded in the job, and Superseded is not a failure', async () => {
     const store = createDerivedStore();
     await store.getState().run('chart', 'ok', async () => chart('good'));

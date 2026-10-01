@@ -15,7 +15,7 @@ and all eight tracks code against the API below.
 | `src/state/history.ts` | undo / redo on patches (a structural diff of the two documents), labels, coalesce keys, cap 200 — pure functions | `state/__tests__/history.test.ts` (34), `historyRecipes.test.ts` (6) |
 | `src/state/projectStore.ts` | the open project: `update`, undo / redo, read-only, asset cache, `commitModelRevision`, save hooks | `state/__tests__/projectStore.test.ts` (51) |
 | `src/state/appStore.ts` | route + hash functions, preferences, capabilities, library summaries, toasts | `state/__tests__/appStore.test.ts` (21) |
-| `src/state/derivedStore.ts` | derived results and job states keyed by input hash | `state/__tests__/derivedStore.test.ts` (17) |
+| `src/state/derivedStore.ts` | derived results and job states keyed by input hash | `state/__tests__/derivedStore.test.ts` (20) |
 | `src/core/model/revisions.ts` | `carryOver`, `carryOverWith`, `sameShapeWithin` | `core/model/__tests__/revisions.test.ts` (63) |
 | `src/test/fakes.ts` | `createFakeLocks`, `createFakeChannels`, `createFakeWorker` | `test/__tests__/fakes.test.ts` (26) |
 | — | the three React hooks and the worker yield under happy-dom | `state/__tests__/hooks.test.tsx` (2) |
@@ -278,9 +278,11 @@ Division of work with the shell: `app/router.ts` listens to `hashchange` and cal
 
 Actions: `run(kind, inputHash, compute): Promise<value | undefined>` — the usual shape of a slice action:
 returns the stored value for the same inputs, joins a running job for the same inputs, otherwise computes and
-stores; resolves `undefined` when superseded, failed (the error is in `jobs[kind]`) or overtaken by a run for
-other inputs; when an older job for the same inputs stored its value first (A → B → A), the newest run resolves
-with that value; never rejects · `beginJob(name, inputHash): void` · `setJobProgress(name, inputHash, progress: number): void` (clamped
+stores; resolves `undefined` when superseded, failed (the error is in `jobs[kind]`) or overtaken by a newer
+run. "Latest" is the run started last for the kind, identified by a token of its own, not by its input hash: an
+overtaken run never changes the job state, not even by failing or by a late `Superseded`. The one exception: an
+overtaken run that succeeds while the newest job is still running for the SAME inputs (A → B → A, the first A
+finished first) stores its value, and the newest run then resolves with that stored value; never rejects · `beginJob(name, inputHash): void` · `setJobProgress(name, inputHash, progress: number): void` (clamped
 to 0..1; ignored for a job that is not the latest) · `finishJob(name, inputHash): boolean` · `failJob(name,
 inputHash, error): boolean` (false, and nothing recorded, for `Superseded` and for a job that is not the latest) ·
 `setResult(kind, inputHash, value): boolean` (false when a job for other inputs of that kind is running) ·
@@ -608,3 +610,9 @@ defect). The repro files were deleted; each requirement they test now lives in t
 | A-A8 `putAsset` dedupe returned a ref whose `mime` differed from the stored blob; the mime was not normalized | low | fixed: the ref names the stored blob's type, normalized as `Blob` does; the earlier test that expected the caller's label was changed on purpose |
 | A-A9 `isProjectId` accepted a lone UTF-16 surrogate, which `formatHash` cannot encode (URIError) | low | fixed: well-formed UTF-16 required (a regex: `String.prototype.isWellFormed` is ES2024, the lib is ES2023); round-trip test |
 | C-C3 the client test named "would not be cloneable" checked only the proxied half | low | fixed: the test now also shows the `DataCloneError` of a plain function sent without `Comlink.proxy` |
+
+**Fifth pass** (verifier round 2, one finding; reproduced first by two new tests that failed on the old code).
+
+| Finding | Severity | Outcome |
+|---|---|---|
+| A-A7 (reopened) `derivedStore.run` still chose the latest job by input hash, so in A → B → A the overtaken first A counted as the latest while the newest A ran: its late failure recorded `error` (the newest A's value then never stored), and its late `Superseded` from latest-wins set the job idle and threw the newest A's value away. The fourth-pass row overstated the fix | medium | fixed: the latest run is identified by its own token (`running.get(kind).token`) and its job must still be running for its inputs; an overtaken run never writes the job state; it may only hand a successful value to a newest job running for the same inputs. The token is registered before `compute` is called, so a compute that throws synchronously still settles as the latest run. Tests: the stale failure, the late `Superseded` (the client's latest-wins order), and the first A finishing after the newest A. The hash-based `setJobProgress` / `finishJob` / `failJob` keep their hash-based signatures: a slice that calls them directly for A → B → A cannot tell two A jobs apart, which is why `run` is the recommended path |
