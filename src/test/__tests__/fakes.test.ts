@@ -3,6 +3,7 @@
 // the Playwright spec persist.spec, §6.4).
 import { wrap } from 'comlink';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { yieldMacrotask } from '../../workers/rpc';
 import { createFakeChannels, createFakeLocks, createFakeWorker, type FakeLock } from '../fakes';
 
 afterEach(() => {
@@ -157,6 +158,7 @@ describe('createFakeLocks', () => {
     });
     const stolen = await a; // settles at once, although A's callback has not returned
     expect(aFinished).toBe(false);
+    expect(bLock).toBe('not called'); // as in Chromium: the old holder learns it first, then B's callback runs
     expect(stolen.ok).toBe(false);
     const error = (stolen as { ok: false; error: unknown }).error;
     expect(error).toBeInstanceOf(DOMException);
@@ -267,6 +269,21 @@ describe('createFakeLocks', () => {
     expect(bGot).toBe(false);
     expect(cGot).toBe(true);
     await expect(tabA.request('p', {}, async () => {})).rejects.toThrow('closed');
+  });
+
+  it('a tab closed after its lock was granted, before its callback ran: the callback never runs and the lock moves on', async () => {
+    const locks = createFakeLocks();
+    const tabA = locks.client('tab-a');
+    let aRan = false;
+    void tabA.request('p', {}, async () => {
+      aRan = true;
+    });
+    await yieldMacrotask(); // the grant has happened; the callback's own task is still queued
+    expect(locks.query().held).toEqual([{ name: 'p', mode: 'exclusive', clientId: 'tab-a' }]);
+    expect(aRan).toBe(false);
+    tabA.close();
+    expect(await locks.request('p', {}, async (lock) => lock)).toEqual({ name: 'p', mode: 'exclusive' });
+    expect(aRan).toBe(false);
   });
 
   it('works under fake timers', async () => {

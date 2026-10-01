@@ -86,7 +86,11 @@ interface HeldLock {
  *     `AbortError` DOMException, while its callback keeps running — and the stealing request is granted ahead
  *     of everything queued;
  *   - `steal` together with `ifAvailable`, and a name starting with `-`, reject with `NotSupportedError`;
- *   - a callback is never called synchronously inside `request`.
+ *   - a callback is never called synchronously inside `request`, and a granted callback runs in a task of
+ *     its own, so a stolen holder's rejection is seen before the stealer's callback starts.
+ *
+ * The same scenario script gave identical logs on this fake and on `navigator.locks` in headless Chromium
+ * (FIFO, `ifAvailable` held / behind a waiter / free, `steal`, the two NotSupportedErrors, throwing callbacks).
  *
  * `createFakeLocks()` itself is the lock manager of a default tab (`clientId` 'tab-0'); `client()` makes more
  * tabs that share the same locks.
@@ -138,12 +142,17 @@ export function createFakeLocks(): FakeLockManager {
   const grant = (request: LockRequest): void => {
     const lock: HeldLock = { request };
     held.set(request.name, lock);
-    run(request, { name: request.name, mode: 'exclusive' }, () => {
-      // A stolen lock is no longer in the table; its callback finishing releases nothing.
-      if (held.get(request.name) === lock) {
-        held.delete(request.name);
-        later(() => process(request.name));
-      }
+    // As in the real manager, the callback runs in a task of its own after the grant: what the grant settled
+    // first — a stolen holder's AbortError — is seen before the new holder's callback starts (checked in Chromium).
+    later(() => {
+      if (closed.has(request.clientId)) return; // the tab was closed meanwhile: its callback never runs
+      run(request, { name: request.name, mode: 'exclusive' }, () => {
+        // A stolen lock is no longer in the table; its callback finishing releases nothing.
+        if (held.get(request.name) === lock) {
+          held.delete(request.name);
+          later(() => process(request.name));
+        }
+      });
     });
   };
 
