@@ -288,6 +288,26 @@ describe('folder mirror sync', () => {
     expect(await t.repo.getAssetByKey(ref.key)).toBeDefined();
   });
 
+  it('a folder copy saved by a newer app version is never overwritten or loaded; restoring it explains', async () => {
+    const f = await folder();
+    const w = world();
+    const a = w.tab();
+    const m = mirrorFor(w, a, f);
+    await a.repo.create(makeDoc('p1', 'picture', 'Mine'));
+    await m.reconcile();
+    // Another, newer app wrote version 99 into the folder; this browser edits too.
+    const newer = { ...folderDoc(f, 'p1'), version: 99, name: 'From the future' };
+    fs.writeFileSync(path.join(f.projectsDir, 'p1', 'project.json'), JSON.stringify(newer));
+    await a.repo.save(makeDoc('p1', 'picture', 'Mine, edited'), new Map(), { baseRev: 1 });
+    await expect(m.push('p1')).rejects.toThrow(/newer version of the app/);
+    expect(folderDoc(f, 'p1')).toMatchObject({ version: 99, name: 'From the future' });
+    expect((await a.repo.peek('p1'))?.name).toBe('Mine, edited');
+    // Only in the folder: restoring it says why it cannot.
+    await f.store.writeDoc('future', Buffer.from(JSON.stringify({ ...makeDoc('future'), version: 99 })), null);
+    await expect(m.restoreFromFolder('future')).rejects.toThrow(/newer version of the app/);
+    expect(await a.repo.peek('future')).toBeUndefined();
+  });
+
   it('a project id the folder cannot hold is not mirrored, and says so', async () => {
     const f = await folder();
     const w = world();

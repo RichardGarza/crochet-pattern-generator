@@ -1086,6 +1086,8 @@ export function projectFolder(options: ProjectFolderOptions = {}): Plugin {
   return {
     name: 'cpg:project-folder',
     configureServer(server) {
+      // Vitest runs a Vite server of its own (mode 'test'): no app is served, so no mirror and no log line.
+      if (server.config.mode === 'test') return;
       server.middlewares.use(setup(server.config.root, server.config.logger));
     },
     configurePreviewServer(server) {

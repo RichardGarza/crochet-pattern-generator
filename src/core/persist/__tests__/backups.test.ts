@@ -20,6 +20,7 @@ import {
   unreferencedAssets,
   type BackupInfo,
 } from '../backups';
+import { CURRENT_DOC_VERSION, MIGRATIONS, checkMigrationTable } from '../migrations';
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
@@ -156,5 +157,18 @@ describe('cap and free space', () => {
     expect(freeSpaceMessage(1.5 * GB)).toMatch(/^Only 1.5 GB free on this disk — backups are paused/);
     expect(formatGB(34.9 * GB)).toBe('34 GB');
     expect(formatGB(0)).toBe('0 GB');
+  });
+});
+
+describe('migrations scaffold', () => {
+  it('the app’s migration table is complete for CURRENT_DOC_VERSION', () => {
+    expect(checkMigrationTable(MIGRATIONS, CURRENT_DOC_VERSION)).toEqual([]);
+  });
+
+  it('a raised version without its step, or a stray step, is reported', () => {
+    const up = { up: (d: Record<string, unknown>) => ({ ...d, version: 2 }) };
+    expect(checkMigrationTable({}, 3)).toEqual(['no migration from version 1 to 2', 'no migration from version 2 to 3']);
+    expect(checkMigrationTable({ 1: up, 2: up }, 3)).toEqual([]);
+    expect(checkMigrationTable({ 1: up, 5: up }, 2)).toEqual(['a migration from version 5, outside 1…1']);
   });
 });
