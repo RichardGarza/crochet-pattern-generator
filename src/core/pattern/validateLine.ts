@@ -25,9 +25,10 @@
 //                     (T4 then raises W_FAN3) or one more round. It always comes with E_CONSUME or E_PRODUCE
 //                     and says why they cannot be repaired by moving stitches.
 //   E_COLOR           a color code that is not in the palette (checked only when a palette is given).
-//   E_ROUNDTRIP (R10) the encoded form that is printed does not expand back to the line's ops, or adds up to
-//                     another count. It guards the encoder and the renderer: it cannot fire unless one of them
-//                     has a bug.
+//   E_ROUNDTRIP (R10) the encoded form that is printed (`lineItems`) does not expand back to the line's ops as
+//                     printed (`displayOps`: no `loop: 'both'`, no header color), or adds up to another count,
+//                     or the encoder throws. It guards the encoder and the renderer: it cannot fire unless one
+//                     of them has a bug.
 //
 // Not here: rules that need the chart, the piece or the 3D model (E_RUN_SUM, E_C2C_TILES, E_BORDER, E_FOLD,
 // E_SPIRAL_CHAIN, E_CLOSE, the limits per piece of E_SANITY, the W_* rules, …) belong to the 2D and 3D
