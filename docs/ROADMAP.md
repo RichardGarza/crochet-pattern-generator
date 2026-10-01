@@ -3,7 +3,7 @@
 The living plan for Crochet Pattern Generator. The full specification is [`DESIGN.md`](DESIGN.md); the research
 behind it is in [`research/`](research/). This file says what gets built in what order, and where things stand.
 
-**Last updated:** 2026-10-01 · **Now:** Sprint 0b (shared kernels, five in parallel)
+**Last updated:** 2026-10-01 · **Now:** Sprint 0c (app shell and design system)
 
 ## What "done" means
 
@@ -40,8 +40,8 @@ Every sprint goes through the same loop, and nothing moves on until its step is 
 |---|---|---|
 | Research | 7 fact-checked research reports, real Claude Design exports captured, design spec v1.2 after two reviews | ✅ done |
 | 0a | Toolchain (Node 22), dependencies, config, shared types, base kernels (color, hashing, PNG), stubs for every module | ✅ done (290 tests) |
-| 0b | Shared kernels in parallel: geometry (marching cubes, smoothing, distance transforms) · gauge tables and sizing · 3D model schema, builder and attach tree · pattern encoder and validator · app state and worker plumbing | ⏳ in progress |
-| 0c | Merge, app shell and design system, review, the full Step 0 acceptance list, push | ◻ next |
+| 0b | Shared kernels in parallel: geometry (marching cubes, smoothing, distance transforms) · gauge tables and sizing · 3D model schema, builder and attach tree · pattern encoder and validator · app state and worker plumbing | ✅ done (1,758 tests) |
+| 0c | Merge, app shell and design system, review, the full Step 0 acceptance list, push | ⏳ in progress |
 | 1 | Eight tracks, first sprint each (see below) · Claude Design send-side trial (bunny and teddy, full and compact prompt) | ◻ |
 | 2 | Tracks, second sprint each | ◻ |
 | Checkpoint | Merge the finished halves to `master`, full test run, shared-type amendments | ◻ |
@@ -92,3 +92,4 @@ See `DESIGN.md` §0.2 for all 23. The ones you would notice:
 - **2026-10-01** Research verified (7 reports, 718 claims checked, 85 corrections). Design spec v1.2 after two review rounds (74 issues fixed). Roadmap written. Sprint 0 started.
 - **2026-10-01** Sprint 0a done: Node 22 toolchain, 251 packages, shared types proven identical to the spec by a script (134 declarations), base kernels, stubs for every module; 290 tests. Spec amended to v1.3 with the type decisions made at the freeze.
 - **2026-10-01** Sprint 0b: five kernels built in parallel worktrees (geometry, gauge, 3D model, pattern encoder, state and workers), each independently reviewed from two angles, fixed and confirmed. Two interruptions from usage limits; nothing lost. Four merged to `master` (1,454 tests green); the 3D model kernel has one last limb-resizing fix in progress.
+- **2026-10-01** Sprint 0b done: all five kernels merged (1,758 tests green, shared types still identical to the spec). Sprint 0c (app shell and design system) started.
