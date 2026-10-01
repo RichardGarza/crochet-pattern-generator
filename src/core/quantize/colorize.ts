@@ -25,7 +25,7 @@ import { isMixOf, removeBlendCenters } from './blend';
 import { featureToLab } from './colors';
 import { cellPoints, pixelHistogram, type PixelHistogram, type WeightedPoints } from './points';
 import { pMedian } from './pmedian';
-import { nearestCenter, quantize } from './quantize';
+import { nearestCenter, quantize, type Quantized } from './quantize';
 import { MERGE_DE00, mergeCenters, salientGroups } from './salience';
 
 /** Hand-edit colors closer than this to a center map to that center (§5.5.5). */
@@ -327,17 +327,20 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
 
   let centers: Center[] = [];
   let autoK: Colorized['autoK'];
+  let autoQ: Quantized | undefined;
   const freeK = (): number => {
     if (!auto) return cap;
     const a = chooseK(points, cap);
     autoK = { k: a.k, curve: a.curve };
+    autoQ = a.result;
     return Math.max(1, a.k);
   };
 
   if (mode === 'auto') {
     // ---- free centers, merged (§2.4.2–2.4.3)
     if (points.n > 0) {
-      const q = quantize(points, freeK());
+      const k = freeK();
+      const q = autoQ ?? quantize(points, k);
       const labs: Color3[] = [];
       for (let c = 0; c < q.k; c++) labs.push(featureToLab(q.centers[c * 3], q.centers[c * 3 + 1], q.centers[c * 3 + 2]));
       const keep = mergeCenters(labs, q.weights, () => false);
