@@ -60,9 +60,10 @@ export function isWorkerTerminated(error: unknown): error is WorkerTerminated {
 
 /**
  * The client's view of a worker API: no `supersede` (the latest-wins channels send it), and a job method
- * takes its request without `jobId` (the channel assigns it).
+ * takes its request without `jobId` (the channel assigns it). An optional method of the API (`MeshApi.redoSculpt`)
+ * is always present on the client; a worker without it rejects the call.
  */
-export type ClientOf<Api> = { [K in Exclude<keyof Api, 'supersede'>]: ClientMethod<Api[K]> };
+export type ClientOf<Api> = { [K in Exclude<keyof Api, 'supersede'>]-?: ClientMethod<NonNullable<Api[K]>> };
 
 /** A method whose only parameter is a request with a `jobId` is a job method; every other method is unchanged. */
 type ClientMethod<F> = F extends (...args: infer A) => infer P
