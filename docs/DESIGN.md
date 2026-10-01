@@ -3401,6 +3401,10 @@ export function notesFor(kind: 'flat-graph' | 'tapestry' | 'tapestry-round' | 'c
          roundLean?: ChartSettings['roundLean']; rounds?: number; stitch?: 'sc' | 'hdc' }): string[];
 export function abbreviationsFor(lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog'): PatternDoc['abbreviations'];
 export function specialStitchesFor(lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog'): PatternDoc['specialStitches'];
+// T2 — core/techniques/validate2d.ts, frozen in v1.5 for T8's pre-export check: every 2D rule over a whole 2D pattern
+// ([] for 3D); pass the project's settings and gauge so the border is checked against them
+export function validateDoc2D(doc: PatternDoc, o?: { settings?: Partial<Pick<ChartSettings, 'roundLean' | 'startCorner' | 'border'>>;
+  gauge?: Pick<ResolvedGauge, 'cell' | 'wSc' | 'hSc'> }): Issue[];
 // T3 — core/recon/fit.ts
 export interface FitResult { type: PartType; dims: Dims; position: Vec3; rotationDeg: Vec3; residual: number }
 export function fitPart(mesh: ColoredMesh, o?: { tolerance?: number }): FitResult;
@@ -3411,6 +3415,9 @@ export function generateAmigurumi(req: AmiRequest, deps: { pathB?: MeshApi['path
 export interface PlacementHighlight { partId: string; rounds: [number, number]; stitches: number[]; color?: Hex; label?: string }
 export function renderPlacementImage(model: CrochetModelV1, partId: string, highlights: PlacementHighlight[],
   o?: { widthPx?: number; view?: 'auto' | ViewLabel }): Promise<Blob>;           // PNG; T8 falls back to text
+// T6 — ui/shape/openAttachTool.ts (v1.5, stub until T6.3): T7's attach chips open the Attach tool with the part
+// selected and show the Shape tab
+export function openAttachTool(partId: string): void;
 // T6 — ui/shape/YarnSizePanel.tsx, ShapeTab.tsx
 export interface YarnSizePanelProps { context: 'pre-model' | 'post-import' | 'shape' | 'pattern'; onDone?(): void }
 export interface ViewportProps { model: CrochetModelV1; meshes: Record<string, ColoredMesh>; selection: string[];

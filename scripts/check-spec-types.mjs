@@ -109,6 +109,7 @@ const imports = {
   spec521:
     "import type { ManifoldToplevel } from 'manifold-3d';\nimport type { ComponentType, ReactNode } from 'react';\n" +
     "import type { CrochetModelV1, Dims, Hex, Part, PartType } from './spec351';\nimport type { Repair } from './spec371';\n" +
+    "import type { Issue } from './spec52';\n" +
     'import type { AmiRequest, AmiResult, AssetRef, ChartGrid, ChartRequest, ChartResult, ChartSettings, ColoredMesh, GaugeSpec, Hand, Line, MeshApi,\n' +
     '  ModelRevision, PatternDoc, ProjectDoc, ProjectSummary, ResolvedGauge, RgbaImage, TechniqueId, Terms, UnitPref, Vec3, ViewLabel, Yarn,\n' +
     "} from './spec52';\n",

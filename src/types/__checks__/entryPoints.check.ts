@@ -105,6 +105,7 @@ export type T2EntryPoints = [
   // `decMethod` (design v1.4) is taken since T2.2; design v1.5 restored the exact checks.
   Check<SameSignature<typeof import('../../core/pattern/terminology').abbreviationsFor, E.AbbreviationsForFn>>,
   Check<SameSignature<typeof import('../../core/pattern/terminology').specialStitchesFor, E.SpecialStitchesForFn>>,
+  Check<SameSignature<typeof import('../../core/techniques/validate2d').validateDoc2D, E.ValidateDoc2DFn>>,
   Check<SameProps<typeof import('../../ui/pattern/PatternView').PatternView, U.PatternViewProps>>,
   Check<SameProps<typeof import('../../ui/pattern/MaterialsView').MaterialsView, U.MaterialsViewProps>>,
 ];
@@ -118,6 +119,7 @@ export type T4EntryPoints = [Check<SameSignature<typeof import('../../core/ami/g
 // ---- T6
 export type T6EntryPoints = [
   Check<SameSignature<typeof import('../../ui/shape/placement').renderPlacementImage, E.RenderPlacementImageFn>>,
+  Check<SameSignature<typeof import('../../ui/shape/openAttachTool').openAttachTool, E.OpenAttachToolFn>>,
   Check<SameProps<typeof import('../../ui/shape/ShapeTab').ShapeTab, U.ShapeTabProps>>,
   Check<SameProps<typeof import('../../ui/shape/Viewport3D').Viewport3D, U.ViewportProps>>,
   Check<SameProps<typeof import('../../ui/shape/YarnSizePanel').YarnSizePanel, U.YarnSizePanelProps>>,

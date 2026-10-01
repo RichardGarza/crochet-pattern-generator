@@ -24,6 +24,7 @@ const CORE_ENTRY_POINTS: [path: string, names: string[], load: Loader][] = [
   ['core/yarn/match', ['nearestYarn'], () => import('../../core/yarn/match')],
   ['core/techniques/index', ['buildPattern2D'], () => import('../../core/techniques/index')],
   ['core/techniques/export', ['exportChart'], () => import('../../core/techniques/export')],
+  ['core/techniques/validate2d', ['validateDoc2D'], () => import('../../core/techniques/validate2d')],
   ['core/pattern/render', ['renderLine', 'renderFoundation', 'renderLineExtras'], () => import('../../core/pattern/render')],
   ['core/pattern/text', ['renderPatternText'], () => import('../../core/pattern/text')],
   ['core/pattern/skill', ['computeSkill'], () => import('../../core/pattern/skill')],

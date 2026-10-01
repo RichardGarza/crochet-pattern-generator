@@ -14,6 +14,7 @@ import type { ChartGrid, ChartRequest, ChartResult, ChartSettings } from './char
 import type { GaugeSpec, ResolvedGauge, TechniqueId } from './gauge';
 import type { ColoredMesh, RgbaImage, ViewLabel } from './geometry';
 import type { ImportContext, ImportInput, ImportResult, Repair } from './importer';
+import type { Issue } from './issues';
 import type { CrochetModelV1, Dims, Hex, Part, PartType, Vec3 } from './model';
 import type { Line, PatternDoc } from './pattern';
 import type { AssetRef, ModelRevision, ProjectDoc, ProjectSummary } from './project';
@@ -185,6 +186,15 @@ export type NotesForFn = (
 /** `decMethod`: the decrease the pattern uses (`AmiSettings.decMethod`), so the other is not listed. */
 export type AbbreviationsForFn = (lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog') => PatternDoc['abbreviations'];
 export type SpecialStitchesForFn = (lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog') => PatternDoc['specialStitches'];
+/**
+ * Design v1.5 (T8's pre-export check, §2.13): every 2D rule over a whole 2D pattern; [] for a 3D one. Pass the
+ * project's settings and gauge so the border's round count and S_side are checked against them (without them the
+ * tapestry lean and the C2C corner are read from the lines).
+ */
+export type ValidateDoc2DFn = (
+  doc: PatternDoc,
+  o?: { settings?: Partial<Pick<ChartSettings, 'roundLean' | 'startCorner' | 'border'>>; gauge?: Pick<ResolvedGauge, 'cell' | 'wSc' | 'hSc'> },
+) => Issue[];
 
 // ---- T3 — core/recon/fit.ts
 
@@ -220,6 +230,11 @@ export type RenderPlacementImageFn = (
   highlights: PlacementHighlight[],
   o?: { widthPx?: number; view?: 'auto' | ViewLabel },
 ) => Promise<Blob>;
+
+// ---- T6 — ui/shape/openAttachTool.ts (design v1.5; T7's attach chips)
+
+/** Selects the part, opens the Shape tab's Attach tool for it and shows the Shape tab of the open project. */
+export type OpenAttachToolFn = (partId: string) => void;
 
 // ---- T7 — core/importer/index.ts (§3.7.1; runs in import.worker)
 
