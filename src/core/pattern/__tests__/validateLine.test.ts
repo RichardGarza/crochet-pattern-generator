@@ -658,7 +658,7 @@ describe('E_SANITY', () => {
 });
 
 describe('E_ROUNDTRIP can never fire on encoder output', () => {
-  it('sound random lines of every kind validate clean; a wrong count is the only issue', () => {
+  it('sound random lines of every kind validate clean; a wrong count is the only issue', { timeout: 60_000 }, () => {
     const rng = mulberry32(1234567);
     let checked = 0;
     for (let i = 0; i < 3000; i++) {

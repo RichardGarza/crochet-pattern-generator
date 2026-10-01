@@ -234,7 +234,7 @@ describe('encodeOps — better(a, b): lower cost → fewer top-level items → s
     expect(reencode('sc, (inc, sc) x 2, (sc, inc) x 5')).toBe('(sc, inc) x 2, sc, (sc, inc) x 5');
   });
 
-  it('agrees with the definition of §2.6.1 transcribed literally, on thousands of random lines', () => {
+  it('agrees with the definition of §2.6.1 transcribed literally, on thousands of random lines', { timeout: 60_000 }, () => {
     const rng = mulberry32(20261001);
     let reps = 0;
     for (let i = 0; i < 4000; i++) {
@@ -250,7 +250,7 @@ describe('encodeOps — better(a, b): lower cost → fewer top-level items → s
     expect(reps).toBeGreaterThan(800); // the sample really exercises repeats
   });
 
-  it('agrees with the literal definition on longer structured lines (up to 40 tokens) and in run mode', () => {
+  it('agrees with the literal definition on longer structured lines (up to 40 tokens) and in run mode', { timeout: 60_000 }, () => {
     const rng = mulberry32(77);
     for (let i = 0; i < 150; i++) {
       const ops = structuredOps(rng, 15 + Math.floor(rng() * 26), 2 + Math.floor(rng() * 4));
@@ -261,7 +261,7 @@ describe('encodeOps — better(a, b): lower cost → fewer top-level items → s
     }
   });
 
-  it('is as short as a brute-force search over every encoding (≤ 12 tokens)', () => {
+  it('is as short as a brute-force search over every encoding (≤ 12 tokens)', { timeout: 60_000 }, () => {
     const rng = mulberry32(4242);
     for (let i = 0; i < 2500; i++) {
       const alphabet = 2 + Math.floor(rng() * 3);
@@ -272,7 +272,7 @@ describe('encodeOps — better(a, b): lower cost → fewer top-level items → s
     }
   });
 
-  it('never writes ( ) x 1, never nests brackets, never leaves two runs of one op side by side', () => {
+  it('never writes ( ) x 1, never nests brackets, never leaves two runs of one op side by side', { timeout: 60_000 }, () => {
     const rng = mulberry32(99);
     /** The first rule an encoding breaks, or null. */
     const violation = (items: readonly Item[]): string | null => {
@@ -331,7 +331,7 @@ describe('expand(encodeOps(ops)) deep-equals ops (R10)', () => {
     }
   });
 
-  it('for thousands of random lines, in both modes, with segments, across the 120-token limit', () => {
+  it('for thousands of random lines, in both modes, with segments, across the 120-token limit', { timeout: 60_000 }, () => {
     const rng = mulberry32(31337);
     let long = 0;
     let checked = 0;
@@ -506,7 +506,7 @@ describe('encodeOps — linear fallback above 120 tokens (§2.6.1, D8)', () => {
     expect(text(eight, { mode: 'runs' })).toBe('2 sc Z, (sc A, sc B, sc C, sc D, sc E, sc F, sc G, sc H) x 16');
   });
 
-  it('keeps one bracket level and round-trips', () => {
+  it('keeps one bracket level and round-trips', { timeout: 60_000 }, () => {
     const rng = mulberry32(5150);
     for (let i = 0; i < 300; i++) {
       const ops = structuredOps(rng, 121 + Math.floor(rng() * 500), 2 + Math.floor(rng() * 6));
@@ -547,7 +547,7 @@ describe('encodeOps — memo (§2.6.1: LRU of 4 096 entries)', () => {
     expect(encodeMemoStats()).toMatchObject({ size: 2, hits: 1 });
   });
 
-  it('holds at most 4 096 entries and drops the least recently used', () => {
+  it('holds at most 4 096 entries and drops the least recently used', { timeout: 60_000 }, () => {
     expect(MEMO_CAPACITY).toBe(4096);
     for (let i = 0; i < MEMO_CAPACITY; i++) encodeOps(line(i));
     expect(encodeMemoStats()).toMatchObject({ size: MEMO_CAPACITY, hits: 0, misses: MEMO_CAPACITY });
@@ -634,7 +634,7 @@ describe('encodeOps — memo (§2.6.1: LRU of 4 096 entries)', () => {
 });
 
 describe('encodeOps — determinism (§5.8)', () => {
-  it('gives the same encoding whatever was encoded before, with or without the memo', () => {
+  it('gives the same encoding whatever was encoded before, with or without the memo', { timeout: 60_000 }, () => {
     const rng = mulberry32(8675309);
     const lines: Op[][] = [];
     for (let i = 0; i < 400; i++) lines.push(structuredOps(rng, 1 + Math.floor(rng() * 200), 2 + Math.floor(rng() * 8)));

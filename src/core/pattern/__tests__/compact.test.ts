@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Line, LineStart, Op } from '../../../types';
 import {
+  chainOvalSide,
   compactBody,
   compactCount,
   compactEncodeMode,
@@ -9,9 +10,11 @@ import {
   compactLabel,
   lineItems,
   renderCompactLine,
+  sharedLoop,
 } from '../compact';
+import { mulberry32 } from '../../kernel/prng';
 import { canonicalCompact, encodeOps, expand, resetEncodeMemo } from '../encode';
-import type { CompactNames } from '../ops';
+import { type CompactNames, consumed, displayOps } from '../ops';
 import { colored, dc, dec, foldPlain, hdc, inc, inc3, inLoop, parseBody, placeRound, plain, rnd, row, sc, slst, spiralLines, tile, times } from './helpers';
 
 beforeEach(() => {
@@ -157,10 +160,64 @@ describe('amigurumi rounds (§2.10.8, §2.10.11)', () => {
     expect(renderCompactLine(rnd(5, inLoop(times(24, sc), 'BLO'), 24, { colorHeader: 'B' }))).toBe('Rnd 5 (B): BLO sc in each st around (24)');
   });
 
+  it('sharedLoop: BLO or FLO when every op shares it, else undefined', () => {
+    expect(sharedLoop(inLoop(parseBody('(2 sc, dec) x 6'), 'BLO'))).toBe('BLO');
+    expect(sharedLoop(inLoop(times(3, inc), 'FLO'))).toBe('FLO');
+    expect(sharedLoop([...inLoop(times(3, sc), 'BLO'), sc])).toBeUndefined();
+    expect(sharedLoop([{ k: 'st', st: 'sc', loop: 'BLO' }, { k: 'st', st: 'sc', loop: 'FLO' }])).toBeUndefined();
+    expect(sharedLoop([{ k: 'st', st: 'dc', loop: 'FLO', into: 'flo2below' }])).toBeUndefined(); // the mosaic long dc
+    expect(sharedLoop(times(3, { k: 'st', st: 'sc', loop: 'both' }))).toBeUndefined();
+    expect(sharedLoop([tile('A')])).toBeUndefined();
+    expect(sharedLoop([])).toBeUndefined();
+  });
+
   it('loop "both" prints as no loop, so it never splits a run ("18 sc, 18 sc") or a repeat', () => {
     const both: Op = { k: 'st', st: 'sc', loop: 'both' };
     expect(compactBody(rnd(5, [...times(18, sc), ...times(18, both)], 36))).toBe('sc in each st around');
     expect(compactBody(rnd(5, [...times(3, sc, inc), ...times(3, both, { k: 'inc', n: 2, loop: 'both' })], 12))).toBe('(sc, inc) x 6');
+  });
+});
+
+describe('the printed text is the line: read back with the independent parser of the tests (R10)', () => {
+  it('random rounds and rows with colors, header colors, loops, shared loops and segments', { timeout: 60_000 }, () => {
+    const rng = mulberry32(2024);
+    const alphabet: Op[] = [
+      sc,
+      inc,
+      dec,
+      slst,
+      hdc,
+      inc3,
+      { k: 'dec', n: 3 },
+      colored(sc, 'A'),
+      colored(sc, 'B'),
+      { k: 'st', st: 'sc', loop: 'BLO' },
+      { k: 'dec', n: 2, loop: 'BLO' },
+      colored(inc, 'A'),
+      { k: 'st', st: 'sc', loop: 'both' },
+      { k: 'st', st: 'dc', loop: 'FLO', color: 'B' },
+    ];
+    const pick = (size: number): Op => ({ ...alphabet[Math.floor(rng() * size)] });
+    for (let i = 0; i < 3000; i++) {
+      const size = 1 + Math.floor(rng() * alphabet.length);
+      const length = 1 + Math.floor(rng() * (i % 10 === 0 ? 300 : 40));
+      let ops: Op[] = [];
+      if (i % 3 === 0) {
+        const loop = rng() < 0.5 ? 'BLO' : 'FLO';
+        ops = inLoop(Array.from({ length }, () => pick(Math.min(size, 7))), loop); // a BLO / FLO round
+      } else {
+        while (ops.length < length) {
+          const block = Array.from({ length: 1 + Math.floor(rng() * 4) }, () => pick(size));
+          for (let r = 1 + Math.floor(rng() * 5); r > 0; r--) ops.push(...block.map((op) => ({ ...op })));
+        }
+        ops = ops.slice(0, length);
+      }
+      const segments: Line['segments'] =
+        i % 6 === 0 && ops.length > 3 ? [{ at: 0, kind: 'end' }, { at: Math.floor(ops.length / 3), kind: 'side' }, { at: Math.floor((2 * ops.length) / 3), kind: 'end' }] : undefined;
+      const line: Line = { kind: i % 5 === 0 ? 'row' : 'rnd', n: 5, ops, prevCount: consumed(ops), stated: 1, colorHeader: i % 4 === 0 ? 'B' : undefined, segments };
+      const body = compactBody(line, { docKind: i % 7 === 0 ? '2d' : '3d' });
+      expect([body, parseBody(body, consumed(ops))]).toStrictEqual([body, displayOps(line)]);
+    }
   });
 });
 
@@ -271,6 +328,17 @@ describe('ovals worked around a chain (§2.10.6, research 07 §6.9)', () => {
       { at: 10, kind: 'end' },
     ];
     expect(renderCompactLine(rnd(4, times(32, sc), 32, { segments }))).toBe('Rnd 4: sc in each st around (32)');
+  });
+
+  it('chainOvalSide: S of the canonical Rnd 1, or null (the sentence is printed only for that round)', () => {
+    for (const n of [3, 4, 10, 15]) expect(chainOvalSide([...times(n - 2, sc), inc3, ...times(n - 3, sc), inc])).toBe(n - 3);
+    expect(chainOvalSide([...times(8, sc), inc3, ...times(6, sc), inc])).toBeNull(); // sides differ
+    expect(chainOvalSide([...times(8, sc), inc, ...times(7, sc), inc3])).toBeNull(); // ends swapped
+    expect(chainOvalSide([...times(8, sc), inc3, ...times(7, sc), inc, sc])).toBeNull();
+    expect(chainOvalSide([...times(8, colored(sc, 'B')), inc3, ...times(7, sc), inc])).toBeNull(); // a tag to print
+    expect(chainOvalSide(inLoop([...times(8, sc), inc3, ...times(7, sc), inc], 'BLO'))).toBeNull();
+    expect(chainOvalSide(times(17, sc))).toBeNull();
+    expect(chainOvalSide([])).toBeNull();
   });
 
   it('a chain-oval line with other ops prints them as they are', () => {

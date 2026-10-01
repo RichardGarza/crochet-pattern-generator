@@ -118,8 +118,12 @@ function loopOf(op: Op): 'BLO' | 'FLO' | undefined {
   return op.k !== 'tile' && (op.loop === 'BLO' || op.loop === 'FLO') ? op.loop : undefined;
 }
 
-/** The loop every op of the line is worked in, when they all share BLO or FLO: the line then prints it once. */
-function sharedLoop(ops: readonly Op[]): 'BLO' | 'FLO' | undefined {
+/**
+ * The loop every op of a line is worked in, when they all share BLO or FLO (and none is a mosaic long stitch,
+ * `into: 'flo2below'`): the compact line then prints it once, as a prefix (`BLO (2 sc, sc2tog) x 6`, §2.10.5).
+ * Undefined for an empty list or mixed loops.
+ */
+export function sharedLoop(ops: readonly Op[]): 'BLO' | 'FLO' | undefined {
   let shared: 'BLO' | 'FLO' | undefined;
   for (const op of ops) {
     const loop = loopOf(op);
@@ -154,9 +158,11 @@ function opsText(items: readonly Item[], text: TokenTextOptions, phrase: { where
 
 /**
  * The canonical first round of a chain oval (§2.10.6): `(S + 1) sc, inc3, S sc, inc`, through both loops and
- * with no color tag to print. Returns S, the stitches along each side, or null when the ops are anything else.
+ * with no color tag to print. Returns S (= chains − 3, the stitches along each side), or null when the ops are
+ * anything else; such a round prints as a plain list. Pass the ops as printed (`displayOps`), so that the
+ * header's color and `loop: 'both'` do not hide the pattern.
  */
-function ovalSide(shown: readonly Op[]): number | null {
+export function chainOvalSide(shown: readonly Op[]): number | null {
   const bare = (op: Op): boolean => loopOf(op) === undefined && op.color === undefined;
   const plain = (op: Op): boolean => op.k === 'st' && op.st === 'sc' && op.into === undefined && bare(op);
   let i = 0;
@@ -222,7 +228,7 @@ export function compactBody(line: Line, o: CompactOptions = {}): string {
       body = loopPrefix + opsText(encode(0), text, { where, into: 'st' });
       break;
     case 'chainOval': {
-      const side = ovalSide(shown);
+      const side = chainOvalSide(shown);
       if (side === null) {
         body = loopPrefix + opsText(encode(0), text, { where, into: 'ch' });
       } else {

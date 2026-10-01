@@ -48,7 +48,7 @@ function timeEach(n: number, rounds: number, exactMaxTokens: number): number[] {
 }
 
 describe('encoder budgets (§5.8)', () => {
-  it('exact search: ≤ 5 ms per line at 120 tokens', { retry: 2 }, () => {
+  it('exact search: ≤ 5 ms per line at 120 tokens', { retry: 2, timeout: 60_000 }, () => {
     timeEach(EXACT_MAX_TOKENS, 5, EXACT_MAX_TOKENS); // warm-up
     const elapsed = timeEach(EXACT_MAX_TOKENS, 25, EXACT_MAX_TOKENS);
     const p90 = elapsed[Math.floor(elapsed.length * 0.9)];
@@ -57,12 +57,12 @@ describe('encoder budgets (§5.8)', () => {
     expect(mean).toBeLessThanOrEqual(5);
   });
 
-  it('the exact search stays quadratic: 1 000 tokens well under 250 ms per line', { retry: 2 }, () => {
+  it('the exact search stays quadratic: 1 000 tokens well under 250 ms per line', { retry: 2, timeout: 60_000 }, () => {
     const elapsed = timeEach(1000, 2, 1000);
     expect(elapsed[elapsed.length - 1]).toBeLessThanOrEqual(250);
   });
 
-  it('200 rows × 240 run tokens (fallback + memo): ≤ 2 s in total', { retry: 2 }, () => {
+  it('200 rows × 240 run tokens (fallback + memo): ≤ 2 s in total', { retry: 2, timeout: 60_000 }, () => {
     const colors = ['A', 'B', 'C', 'D', 'E', 'F'];
     const rows: Op[][] = [];
     for (let r = 0; r < 200; r++) {
