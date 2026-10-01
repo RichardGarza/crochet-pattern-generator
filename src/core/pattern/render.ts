@@ -3,7 +3,7 @@
 //
 //   Compact US  Row 11 (RS) ←: Ch 1, turn. 4 sc A, 3 sc B, 33 sc A (40 sts) · carry A
 //   Compact UK  Row 11 (RS) ←: Ch 1, turn. 4 dc A, 3 dc B, 33 dc A (40 sts) · carry A
-//   Verbose US  Row 11 (RS): Ch 1, turn. With A, sc in first 4 sts; change to B, sc in next 3 sts; change to A,
+//   Verbose US  Row 11 (RS) ←: Ch 1, turn. With A, sc in first 4 sts; change to B, sc in next 3 sts; change to A,
 //               sc in last 33 sts. (40 sc) · carry A
 //   Verbose 3D  Rnd 3: [Sc in next st, 2 sc in next st] 6 times. (18 sts)
 //
@@ -358,10 +358,9 @@ function verboseCount(line: Line, docKind: DocKind, names: Readonly<VerboseNames
   return `(${n} ${n === 1 ? 'st' : 'sts'})`;
 }
 
-/** The label of a verbose line: the compact label without the reading arrow (C2C rows keep it). */
+/** The label of a verbose line: the compact label, reading arrow included (§2.7.2; research 07 §7.7). */
 function verboseLabel(line: Line): string {
-  if (line.kind === 'c2c' || line.arrow === undefined) return compactLabel(line);
-  return compactLabel({ ...line, arrow: undefined });
+  return compactLabel(line);
 }
 
 /** Everything between the colon and the count, in the verbose dialect. */

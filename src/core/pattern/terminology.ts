@@ -107,6 +107,13 @@ export function toTerms(text: string, terms: Terms): string {
 
 // ---- Abbreviations (research 07 §1.1: only those used)
 
+/** The decrease a pattern uses (`AmiSettings.decMethod`); undefined = not said (both are listed). */
+type DecMethodOption = 'invdec' | 'sc2tog' | undefined;
+
+function decMethodOf(value: unknown): DecMethodOption {
+  return value === 'invdec' || value === 'sc2tog' ? value : undefined;
+}
+
 interface AbbreviationDef {
   /** US and UK spelling of the abbreviation. */
   us: string;
@@ -182,7 +189,9 @@ function loopOf(op: Op): 'BLO' | 'FLO' | undefined {
 }
 
 /** The US abbreviations the lines use: their stitches, starts, joins, sides, labels and cue / note words. */
-function usedAbbreviations(lines: readonly Line[]): Set<string> {
+function usedAbbreviations(lines: readonly Line[], decMethod: DecMethodOption): Set<string> {
+  // The decrease the verbose dialect writes: both when the pattern does not say (`dec` = invdec or sc2tog).
+  const decWords = decMethod === 'sc2tog' ? ['sc2tog'] : decMethod === 'invdec' ? ['invdec'] : ['invdec', 'sc2tog'];
   const used = new Set<string>();
   const add = (key: string): void => {
     used.add(key);
@@ -193,7 +202,7 @@ function usedAbbreviations(lines: readonly Line[]): Set<string> {
     if (line.kind === 'rnd' || line.kind === 'border') add('rnd(s)');
     if (line.kind === 'rnd' && line.side === undefined && line.arrow === undefined) {
       // An amigurumi round: its Notes block (§2.10.11) defines inc, dec (invdec or sc2tog) and BLO/FLO rounds.
-      for (const key of ['inc', 'dec', 'invdec', 'sc2tog', 'BLO', 'FLO']) add(key);
+      for (const key of ['inc', 'dec', ...decWords, 'BLO', 'FLO']) add(key);
     }
     if (line.side === 'RS' || line.side === 'WS') {
       add('RS');
@@ -252,10 +261,9 @@ function usedAbbreviations(lines: readonly Line[]): Set<string> {
           if (loop !== undefined) {
             add(op.n === 3 ? 'sc3tog' : 'sc2tog');
           } else {
-            // The verbose dialect writes invdec or sc2tog (decMethod); both are listed.
+            // The verbose dialect writes invdec or sc2tog (decMethod); without one, both are listed.
             add(op.n === 3 ? 'dec3' : 'dec');
-            add('invdec');
-            add('sc2tog');
+            for (const word of decWords) add(op.n === 3 && decMethod === 'sc2tog' ? 'sc3tog' : word);
           }
           break;
         case 'tile':
@@ -288,13 +296,22 @@ function byAbbreviation(a: { abbr: string }, b: { abbr: string }): number {
  * section 7: only those used). Read from the lines' data, not from rendered text, so the list is the same for
  * both dialects; a decrease brings `dec`, `invdec` and `sc2tog` (the verbose dialect prints one of them), an
  * amigurumi round also brings what its Notes block defines (inc, dec, invdec, sc2tog, BLO, FLO), a C2C row what
- * the C2C Notes block uses (yo, sl st, the inc/dec tags). Never throws: malformed lines contribute what can be read from them.
+ * the C2C Notes block uses (yo, sl st, the inc/dec tags). `decMethod` (`AmiSettings.decMethod`) names the
+ * decrease the pattern uses, so the other one is not listed; without it both are. Never throws: malformed lines
+ * contribute what can be read from them.
  */
-export function abbreviationsFor(lines: Line[], terms: Terms): PatternDoc['abbreviations'] {
+export function abbreviationsFor(lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog'): PatternDoc['abbreviations'];
+/**
+ * Bridge overload (remove it when integration restores `SameSignature` for this function): the signature guard
+ * still pins the v1.3 parameter list through `PendingSignature`, which reads the LAST overload; callers resolve
+ * to the first one and can pass `decMethod`.
+ */
+export function abbreviationsFor(lines: Line[], terms: Terms): PatternDoc['abbreviations'];
+export function abbreviationsFor(lines: Line[], terms: Terms, decMethod?: DecMethodOption): PatternDoc['abbreviations'] {
   const list = Array.isArray(lines) ? lines : [];
   const out: PatternDoc['abbreviations'] = [];
   const seen = new Set<string>();
-  for (const key of usedAbbreviations(list)) {
+  for (const key of usedAbbreviations(list, decMethodOf(decMethod))) {
     const def = ABBREVIATIONS[key];
     if (def === undefined) continue;
     const abbr = terms === 'uk' ? def.uk : def.us;
@@ -325,11 +342,28 @@ const SPECIAL: ReadonlyArray<{ key: string; name: string; text: string }> = [
       'loop; insert the hook in the following st, yo, draw up a loop; yo and draw through all 3 loops.)',
   },
   {
+    key: 'invdec only',
+    name: 'Invisible decrease (dec, invdec)',
+    text:
+      'Insert the hook in the front loop only of each of the next 2 sts, yo and draw through both front loops, yo ' +
+      'and draw through the 2 loops on the hook.',
+  },
+  {
+    key: 'sc2tog',
+    name: 'Decrease (dec, sc2tog)',
+    text: 'Insert the hook in the next st, yo and draw up a loop; insert the hook in the following st, yo and draw up a loop; yo and draw through all 3 loops.',
+  },
+  {
     key: 'invdec3',
     name: 'Decrease over 3 stitches (dec3)',
     text:
       'Insert the hook in the front loop only of each of the next 3 sts, yo and draw through all 3 front loops, yo ' +
       'and draw through the 2 loops on the hook.',
+  },
+  {
+    key: 'sc3tog',
+    name: 'Decrease over 3 stitches (dec3, sc3tog)',
+    text: 'Insert the hook in each of the next 3 sts, yo and draw up a loop in each, yo and draw through all 4 loops.',
   },
   {
     key: 'BLO sc2tog',
@@ -370,10 +404,16 @@ const SPECIAL: ReadonlyArray<{ key: string; name: string; text: string }> = [
 /**
  * The special stitches the lines use, with how to work them, in the given terms (§5.2.1; research 07 §1.1,
  * §2.10.11): the magic ring, the invisible decrease (dec) and its 3-stitch form, BLO/FLO sc2tog and sc3tog, the
- * C2C tile and the mosaic long stitch. In UK terms the texts go through `toTerms` (names: `BLO dc2tog`). Never
- * throws.
+ * C2C tile and the mosaic long stitch. In UK terms the texts go through `toTerms` (names: `BLO dc2tog`).
+ * `decMethod` names the decrease of the pattern: `sc2tog` lists the sc2tog (and sc3tog) instead of the invisible
+ * decrease, `invdec` the invisible decrease without the sc2tog alternative; without it the invisible decrease is
+ * listed with sc2tog as the alternative. Never throws.
  */
-export function specialStitchesFor(lines: Line[], terms: Terms): PatternDoc['specialStitches'] {
+export function specialStitchesFor(lines: Line[], terms: Terms, decMethod?: 'invdec' | 'sc2tog'): PatternDoc['specialStitches'];
+/** Bridge overload, as for `abbreviationsFor`: remove it when integration restores `SameSignature`. */
+export function specialStitchesFor(lines: Line[], terms: Terms): PatternDoc['specialStitches'];
+export function specialStitchesFor(lines: Line[], terms: Terms, decMethod?: DecMethodOption): PatternDoc['specialStitches'] {
+  const method = decMethodOf(decMethod);
   const used = new Set<string>();
   for (const line of Array.isArray(lines) ? lines : []) {
     if (typeof line !== 'object' || line === null) continue;
@@ -384,7 +424,11 @@ export function specialStitchesFor(lines: Line[], terms: Terms): PatternDoc['spe
       else if (op.k === 'st' && op.into === 'flo2below') used.add('long');
       else if (op.k === 'dec') {
         const loop = loopOf(op);
-        if (loop === undefined) used.add(op.n === 3 ? 'invdec3' : 'invdec');
+        if (loop === undefined) {
+          if (method === 'sc2tog') used.add(op.n === 3 ? 'sc3tog' : 'sc2tog');
+          else if (op.n === 3) used.add('invdec3');
+          else used.add(method === 'invdec' ? 'invdec only' : 'invdec');
+        }
         else used.add(`${loop} ${op.n === 3 ? 'sc3tog' : 'sc2tog'}`);
       }
     }
