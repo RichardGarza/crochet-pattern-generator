@@ -1,6 +1,6 @@
 # Crochet Pattern Generator — Design Specification
 
-Status: build-ready, v1.4 (2026-10-01), revised after two design reviews, the Step 0a type freeze and the Sprint 1 integration (see §8 Revision log). This is the single
+Status: build-ready, v1.5 (2026-10-01), revised after two design reviews, the Step 0a type freeze and the Sprint 1 and Sprint 2 integrations (see §8 Revision log). This is the single
 specification the implementation agents follow. During the parallel tracks this file is owned by the integration
 agent; tracks propose changes under "Requests for integration" in `docs/tracks/tN.md` (§6.1 rule 8).
 It condenses `docs/research/01`–`08` (all fact-checked). Where research documents disagree, this document
@@ -452,6 +452,14 @@ tiny nose bobble is made).
   each working pixel to the brush cell under its center through the inverse flip, rotation and crop (nearest
   neighbour). A stored brush whose size is not that grid (the source was replaced) is ignored with
   `W_BG_EDITS_STALE`. Brushed pixels win over the flood fill, before the subject guard; only with "remove".
+  **Brush and fill (v1.5, T1 decision 13):** brushed subject pixels are never filled and stop the flood fill like a
+  wall; brushed background pixels are background and let a fill that reaches them pass, but never start one (an
+  enclosed hole is background exactly where it was brushed; a brushed channel from the border opens it). Without a
+  plain background (the ring test failed) the brushed pixels alone are the background, worked in their mean color,
+  and `W_BG_NOT_FOUND` is not raised. On a transparent picture brushed background pixels join the transparency; a
+  brushed-subject transparent pixel has no color and stays background. A brush whose data length is not w·h is
+  stale. With "keep" the brush is ignored silently. The fallback cache id of a source without `sourceId` hashes every
+  pixel (two 32-bit lanes; a cache key, not a content address).
 - Background is a label outside the K budget, always rendered as one chosen yarn (default: the nearest palette
   yarn to the border color; for transparent images the reference line's white). v1 has no "no stitch" cells: every
   row and round is worked across the full chart width, because the flat writers (§2.7) have no edge shaping and
@@ -570,7 +578,11 @@ Sampling:
   [1,1,1]) at the SSE-optimal cut (prefix sums over the stable-sorted projection).
 - Refine: weighted Lloyd, ≤ 30 iterations, stop when `(SSE_prev − SSE)/SSE < 1e-3`; empty cluster re-seeded at the
   point with the largest weighted error; ties → lowest index.
-- Output sorted by population (desc) → codes `A, B, C, …` (A = main color). Never "MC" (clashes with magic circle).
+- Output sorted by population (desc) → codes `A, B, C, …, Z, AA, AB, …` (A = main color; ties in first-found order;
+  the background entry included). Never "MC" (clashes with magic circle).
+- **Pooled points (v1.5):** above 4096 points, the D(K) curve of auto-K and p-median's bins use the points pooled into
+  ΔEOKr2 0.02 cubes (1 JND); the chosen K is then quantized on the real points. The variance-split sequence is
+  computed once for every K (the splits are nested).
 
 #### 2.4.3 Choosing K, salience and merges [06 §2.4]
 
@@ -582,10 +594,35 @@ Sampling:
 | amigurumi (whole toy) | 6 | 8 | 2 per round (3 with warning) |
 
 - **Auto-K:** quantize K = 2…Kmax, `D(K) = √(SSE/W)`; normalize x and y to [0,1]; knee = argmax `(1 − y_n) − x_n`.
+  **Exact K first (v1.5):** the smallest K with D(K) = 0 (at most Kmax distinct colors: pixel art, clean graphics)
+  wins before the knee, which would drop a real color there (3 exact colors give the curve [D, 0], knee K = 2).
+- **Anti-aliasing blends (flat art only, v1.5):** Kneedle always scores K = 2 at 0, so an anti-aliased two-color logo
+  keeps 3–5 "colors" that are edge blends (G14 cannot pass without this). A center is removed as a blend when its
+  color is within ΔEOKr2 0.05 of a 5–95% mix of two other centers — mixed in linear light or in sRGB (most renderers
+  anti-alias in sRGB) — and at least half of its pixels have both of those centers within 1 px (3 × 3 window), or
+  within 2 px (5 × 5) when the center is a ramp (the weighted std of its mix fraction ≥ 0.05: blurred or resampled
+  edges). Every qualifying pair is tried; the most edge-bound center goes first, then all pixels are reassigned.
+  Protected centers are never removed; photos are never touched (their mid-tones are real). A designed 2 px outline
+  between two colors is kept; a 1 px line whose color is exactly a mix of its neighbours is removed (accepted).
+- **Color budget:** "Kmax" of the rules below is the budget in force — `maxColors` when it is a number (clamped to
+  1 … the technique's Max K), else the technique's Max K; the background is outside it. Hand-edit colors are kept even
+  beyond it (`W_OVERRIDE_COLORS`), up to 200 distinct ones (labels are bytes; the rarest beyond 200 take the nearest
+  kept color, same warning).
 - **Salience guard:** cells with ΔE00 ≥ 20 to their assigned center that form a 4-connected component of ≥ 2 cells
   become a protected center (eyes, a red nose, a logo dot). If that exceeds Kmax, drop the lowest-population
-  unprotected center and reassign.
-- **Merge:** centers closer than ΔE00 5 merge into the more populous one (within one yarn line shades are ΔE00 6–10 apart).
+  unprotected center and reassign. Details (v1.5, T1 decision 20): neighbouring salient cells join a group only when
+  alike (ΔE00 < 10), so a red eye next to a blue one is two groups; groups within ΔE00 5 share one center; a group
+  covers at most 0.3% of the subject cells (at least 8 cells; larger far-off regions mean a palette that does not
+  fit, not details); cells that are a mix of two colors (current centers and the background yarn — a box average
+  straddling an edge) are never salient; a cell given a textured yarn is measured against the nearest solid chosen
+  yarn; salient groups get at most `Kmax − 1 − protected` centers (largest first). A salient cell moves to its
+  protected center when that is nearer (ΔEOKr2) than its own or its own is textured, and protected pixels survive the
+  flat-art despeckle. Yarn modes: a group whose nearest solid candidate is already the yarn most of its cells have is
+  skipped; otherwise that yarn is fixed and p-median rerun with k = min(Kmax, chosen + new), so a chosen yarn is
+  displaced only when the budget is full.
+- **Merge:** centers closer than ΔE00 5 merge into the more populous one (within one yarn line shades are ΔE00 6–10
+  apart). Free centers only (auto mode), right after quantizing; yarn modes rely on p-median (two chosen yarns closer
+  than ΔE00 5 lower its cost, so they are kept).
 
 #### 2.4.4 Palette sources and yarn matching [06 §7, 02 §4.3]
 
@@ -594,7 +631,25 @@ Sampling:
 | Auto (default) | free centers | §2.4.2–2.4.3; each center is *named* by its nearest shade in the reference line (default Red Heart Super Saver), "approximate" if ΔE00 > 10 |
 | Yarn line(s) | solid shades of the chosen lines | **p-median**: BUILD greedily adds the shade that most reduces `Σ_bins w·ΔEOKr2(bin, nearest chosen)`; SWAP chosen↔unchosen until no gain (≤ 50 passes). K = max colors or auto-K |
 | My stash | user's saved yarns | same p-median |
-| Custom CSV | lines `#hex,name[,brand,code,yds_per_skein]` | fixed palette; p-median subset if K < rows |
+| Custom CSV | lines `#hex,name[,brand,code,yds_per_skein]` | fixed palette (with max colors "auto" every row is a candidate, k = min(rows, Max K), rows no cell is nearest drop out); p-median subset only for a numeric max colors below the row count; skipped or capped rows `W_CSV_ROW` |
+
+- **p-median (v1.5):** SWAP runs from BUILD and from both snap-after-quantize sets (snapping by ΔEOKr2 and by ΔE00);
+  the cheapest wins, so "costs ≤ snap-after-quantize" holds by construction; distance ΔEOKr2. A palette mode with no
+  yarns falls back to auto (`W_PALETTE_EMPTY`); a line id that is not available is skipped (`W_YARN_LINE_UNKNOWN`).
+- **Background yarn:** auto mode — the chosen `backgroundColor`, else the border color (plain), else the reference
+  line's white (transparent: the nearest shade to #ffffff). Yarn modes — the chosen yarn when the candidates have its
+  id, else the nearest candidate to the chosen / border / white color; the cells are re-composited over the new hex. A
+  color entry of the same yarn (yarn modes) or an unprotected center within ΔE00 5 (auto) shares the background's
+  entry (one white, not two); the background entry counts the cells left background after hand edits and is dropped
+  when none are left.
+- **Naming:** auto entries carry `yarn` = the center's nearest reference shade (ΔE00; textured shades skipped for
+  protected entries), `name` = its name + " (approximate)" when the shown ΔE00 > 10; the shown ΔE00 is the cluster mean
+  (the mean color of the entry's cells) vs the yarn, except for a hand-edit color (that color vs the yarn). Yarn-mode
+  entries are the yarn itself.
+- **Ids:** the reference line is `red-heart-super-saver` (`DEFAULT_REFERENCE_LINE_ID`, also the default `lineIds`);
+  yarn ids `<lineId>:<number>`; CSV ids `custom:<rrggbb>:<name-slug>` (stable when rows move). `nearestYarn` searches
+  the shipped lines (its frozen signature has no line data); `colorize` searches the request's lines first. Textured
+  shades are recognised by name (heather, marl, fleck, tweed, …) at import and in CSVs.
 
 - Heathers/marls/flecks match on mean color and are flagged "reads textured"; never assigned to protected labels.
 - Every match shows ΔE00 (cluster mean vs yarn hex); > 10 shows "no close yarn in this line".
@@ -709,10 +764,16 @@ run and advance. O(n) per position in the worst case; at most one bracket level,
   `match(0, dx) ≥ 0.92`, same for `p_y`, confirm with `match(p_y, p_x)`. Consensus regularization (each lattice
   orbit → its mode, protected cells skipped) is applied automatically at ≥ 0.95 and offered at 0.92–0.95.
 - **Vertical block repeats:** hash each worked row's token list; the longest consecutively repeated block of length
-  L ≥ 2 becomes `Rows 13–24: rep Rows 1–12`. Flat work requires **even L** (RS/WS parity); rounds any L.
+  L ≥ 2 becomes `Rows 13–24: rep Rows 1–12`. Flat work and turned rounds require **even L** (RS/WS parity); other
+  rounds any L. v1.5 (T2): the repeat is kept as a note `Rows 13–24: rep Rows 1–12.` on the block's last line and the
+  repeated lines are left out (the frozen `Line` has no repeat field); the first line of a piece is never in a block
+  (repeating it would not start from the chain); a block of identical lines is left to folding; one repeat per piece,
+  the one saving the most lines; two lines are "the same" when everything but their number is equal.
+  `applyRepeats`: `auto` and `ask` both write repeats (`ask` is the Chart tab's offer, T2.3), `off` never.
 - **Identical consecutive lines** fold into `Rows a–b (k rows)` only when the token list is direction-independent
   (single run or palindrome); rounds fold whenever identical (`Rnds 7–12 (6 rnds)`). Never fold across a color
-  change, a BLO round, a note or an assembly reference (`E_FOLD`).
+  change, a BLO round, a note or an assembly reference (`E_FOLD`). Turned tapestry rounds never fold (consecutive
+  rounds alternate sides); folded non-turned rounds keep their side and arrow.
 - **Stripes mode:** if row dominance ≥ 0.85 for ≥ 70% of rows, snap those rows to their dominant label and write
   the stripe sequence with its period (`Rows 1–4 A, Rows 5–6 B; rep these 6 rows 5 times`).
 - **Symmetry:** best mirror axis agreement `A ≥ 0.92` → report "symmetric about column X"; offer symmetrize.
@@ -803,7 +864,11 @@ LH Row 3 (RS) →: Ch 1, turn. sc B, 4 sc A (5 sts)
 Same line structure as §2.7.3. Every color that appears in a row is carried through the whole row (worked over).
 A color is joined at the start of the first row that needs it; a color absent from the next 2 rows is cut at the row
 end (6 in tail); otherwise it keeps being carried. Lines end with `· carry B, C`. Cap: 3 colors per row (cleanup
-step 4). Gauge uses the tapestry cell (taller than wide, Table B). Notes add: "Carried yarn stays hidden only with
+step 4). Cue words (v1.5): `join B` (no bobbin number: one ball per color), `carry A, B` (every held color that is
+not worked on every stitch of the line — worked colors first in working order, then the colors only carried, in
+palette order), `cut C`; the last line cuts nothing (the piece is fastened off) and the foundation color is not
+joined. A color is "carried" in a line when it is held (joined, not yet cut) and at least one stitch of the line is
+another color. Gauge uses the tapestry cell (taller than wide, Table B). Notes add: "Carried yarn stays hidden only with
 firm tension; check the RS."
 
 #### 2.7.5 `sc_tapestry_round` (joined rounds)
@@ -868,7 +933,11 @@ for (let n = 1; n <= W + H - 1; n++) {
 | **start dec:** Sl st in next 3 dc and in ch-3 sp, ch 3, 3 dc in same sp | steady row (0) | decrease row (−1) |
 
 Line format: `↗ Row 4 (WS) [inc beg · dec end]: 1 A, 1 B, 1 A (3 tiles)`; runs always print a count (`1 A`).
-Phases: increase `min(W,H)` rows, steady `|W−H|`, decrease `min(W,H) − 1`; one-time note at row `min(W,H)+1`.
+Phases: increase `min(W,H)` rows, steady `|W−H|`, decrease `min(W,H) − 1`; one-time note at row `min(W,H)+1`:
+"One side now has its full length: …" (W ≠ H) or "The piece now has its full width: …" (W = H). Region cues (v1.5):
+a row prints `· join B (bobbin n)` where a new region starts (a region keeps its number from its first to its last
+row; a new one takes the lowest free number of its color, so the highest number is the bobbins to wind; every region
+has 2 tails); the goldens below are the bare text (`cues: false`), like G9.
 Bobbins: **6-connected** regions per color on the (transformed) chart — orthogonal neighbors plus the
 (r±1, c±1) diagonal, never the (r±1, c∓1) diagonal [07 §4.6]. Color change on the last yo of the last dc of the
 tile before. Golden 5×3 (chart top-down `B A A A A / A B B B A / A A B A A`):
@@ -948,6 +1017,10 @@ Golden 100 × 60: 159 rows; rows 61–100 hold 60 tiles; row 101 has 59.
     (≈ 2.6 sc per tile edge).
   - The printed spacing hint is the best ratio `a/b` (b ≤ 6) within 4% of `(S − 2)/units`: "about 5 sc per 6 row
     ends"; `b = 1` prints "1 sc in each row end".
+- **Per-side counts are at least 2** (`S = max(2, …)`, v1.5): a side includes one stitch of each corner group, so a
+  1-stitch or 1-row panel cannot have less; an edge with S − 2 = 0 prints no edge phrase. Without a ratio within 4%
+  the hint is `{k} sc over {units} row ends`. Hints print on the first vertical edge (rows) and on the first
+  horizontal and first vertical edge (C2C), as G16/G22 do.
 - **Where Rnd 1 starts** is generated from the last worked line, never left to an "if" in the text ([07 §7.7]: never
   assume the last row is RS). The writer knows the last line's side, the corner where it ends, and the color of its
   last stitch:
@@ -958,7 +1031,7 @@ Golden 100 × 60: 159 rows; rows 61–100 hold 60 tiles; row 101 has 59.
     - last row **RS** (odd row count): RH ends at the top **left** corner, LH at the top right, with the RS already
       facing. Opening: "Do not turn; ch 1 (does not count), 3 sc in the last st made (top {left|right} corner)"; the
       side below that corner comes first.
-  - **Join** (another color, and always for C2C, whose last tile is at the corner opposite the start corner, e.g.
+  - **Join** (another color; always for mosaic, which cuts the yarn every row; and always for C2C, whose last tile is at the corner opposite the start corner, e.g.
     top left for a BR start): "Fasten off. With RS facing, join {color} with a sl st in the top {right (RH) | left
     (LH)} corner st (C2C: in the outer corner of that corner tile); ch 1 (does not count), 3 sc in same st
     (corner)"; the top edge comes first.
@@ -985,6 +1058,14 @@ Golden 100 × 60: 159 rows; rows 61–100 hold 60 tiles; row 101 has 59.
   `kind: 'border'`; Rnd 1 starts `{ k: 'edge' }` (exempt from `E_CONSUME`, like a foundation row) and corners are
   `inc3` ops; Rnds 2–n start `{ k: 'join' }` and are validated individually even though they print as one line
   (the single permitted fold of lines with different counts).
+  **Start corner and join in the `Line` (v1.5, no new field):** Rnd 1's `arrow` points at its start corner and a
+  `join B` color cue marks a join; `E_BORDER` reads both. The whole border text (the fold of Rnds 2–n, the spacing
+  hints, the C2C words) needs the technique and the panel size, which the frozen `renderLine` options do not carry:
+  `renderLine` prints each border round on its own with row words and no hints (still correct), and whole patterns —
+  the Pattern view, text export and the PDF (T8) — are printed through `renderPatternText` / `PatternView`, which
+  print the exact §2.7.10 text. Border color: unset → palette `A` (or the first entry); a `ColorRef` with a yarn id or
+  hex of the chart → that color; otherwise a new code (the next free letter) with its own Materials line, accepted by
+  `E_COLOR`.
 - **Validation `E_BORDER`:** `S_top`, `S_side` as above; `c1 = 2·S_top + 2·S_side + 4`; every later round adds
   exactly 8 with one `inc3` in each corner center stitch; the printed per-side counts sum to the stated total.
 - **Yardage** (§2.8): border stitches × `L_sc` + per round one ch 1 and one sl st (`0.92·L_sc`) + 2 × 6 in tails,
@@ -1027,7 +1108,9 @@ worked_c   sc techniques: n_c · L_sc (× 1.1 for tapestry);  hdc: n_c · 1.45 L
 carried_c  tapestry: Σ_rows where c is carried (cells of the row not worked in c) · 1.1 · w_cell;
            graphgan short carries: gap stitches · 1.1 · w_cell
 tails_c    starts_c · 2 · 6 in      (starts = strands / bobbins / C2C regions / joins; mosaic: 2 per row of c)
-extra_c    border (§2.7.10), charged to the border color: border sts · L_sc + rounds · 0.92 L_sc + 12 in
+extra_c    border (§2.7.10), charged to the border color: border sts · L_sc + rounds · 0.92 L_sc + 12 in;
+           a tapestry tube's ring (ch C + sl st) and each round's ch 1 + joining sl st are charged to the round's
+           first color, turning chains to their row's first color; C2C has no extra chains (inside the 7.76 L tile)
 buffer     the higher rule wins: 0.20 for C2C, tapestry, or > 50 strands in total; else 0.10 for a single-color
            piece (colors ≤ 1); else 0.15. Amigurumi is always 0.15
 band:      2D ±25% with default gauge, ±10% with a swatch; 3D ±20% with default gauge (Table E is calibrated for
@@ -1039,6 +1122,10 @@ yardsLow_c, yardsHigh_c = yards_c × (1 ∓ band)
 skeins_c = ceil(yardsHigh_c / skeinYards)   // buy for the high end: a second dye lot rarely matches
 grams_c  = yards_c / ydPer100g × 100        (the high end printed beside it)
 ```
+
+Grams need the yarn's yd/100 g (or its skein weight and length) and skeins its skein length; without them the line
+prints yards only (`buildPattern2D` has no CYC to fall back on). `MaterialsLine.strands` = the bobbins to wind
+(graphgan `bobbinsPerColor`, C2C the most regions of the color in use at once, tapestry 1).
 
 3D (amigurumi) per color: produced stitches · `L_ami` + 0.2 `L_ami` per dec + 3 in per magic ring + chain-oval
 chains · 0.42 `L_ami` + floats carried inside (absent stitches inside a round · 1.1 · w) + joined rounds
@@ -1157,11 +1244,34 @@ function classicalMask(img: ImageData, o = { band: 0.04, tau: 0.14, closeR: 2, k
 - **Front-view rounding (multi-view only):** inflation height from the front mask
   `T(p) = √(d(p)·(2·R_loc(p) − d(p)))`, where `d` = inside EDT and `R_loc` = largest inscribed disc containing p
   (paint ridge discs in increasing radius order). With `z_c(x,y)` = midpoint of the hull's occupied z-interval:
-  `f = min(f_hull, κ·T_front(x,y) − |z − z_c(x,y)|)`, κ = 1.0. Never round from side or top views (IoU 0.37) [04 §4.5].
+  `f = min(f_hull, κ·T_front(x,y) − |z − z_c(x,y)|/s)`, κ = 1.0 regardless of `settings.kappa` (the single-image
+  slider). Never round from side or top views (IoU 0.37) [04 §4.5]. **v1.5 (T3.2):** T assumes a round cross-section
+  (depth = width), so the literal bound (s = 1) cut a fish or a dachshund seen head-on to 0.45 of its length; the
+  rounding is stretched along z by one factor per build, `s = max(1, median over the thickest rays (T ≥ 0.9·max T) of
+  the hull's half-depth / κT)` (exact for an ellipsoid; sphere and teddy give s ≈ 1.00–1.01). `R_loc` is computed
+  exactly (a ridge disc is painted whole, a disc contained within a slack of 0.35 step paints only the far cap its
+  larger neighbour can miss; discs compared through whole-number squared radii), equal to an integer brute force. T
+  is computed on the mask reduced by a whole factor so that a voxel spans about 2 mask pixels, then sampled
+  bilinearly onto the plane grid (≤ ¼ voxel of rim bias). `z_c` uses the sub-voxel zero crossings next to the first
+  and last inside samples of each ray.
+- **Views on one plane** (front + back, or left + right; or several photos of which only one has a mask): front +
+  back alone do not constrain Z, so they build the single-image inflation of the united silhouette with
+  `settings.kappa` in the object frame (`E_VIEWS` is not fatal there). Top/bottom only ⇒ `E_VIEWS`.
+- **Failures** (v1.5): `GeomApi.build` rejects with an Error named `ReconError` whose message starts with the code
+  (`E_VIEWS`, `E_MASK_EMPTY` with `where.view` when one photo or every photo is empty, `E_RECON_EMPTY` nothing left
+  after carving, `E_RECON_INVALID` manifold-3d rejected the mesh, `E_RECON_SIZE` a part would exceed 48 in at the
+  target size), because a `ReconResult.model` must pass `validateModel`; comlink keeps only `name` and `message`, so
+  the main thread reads the code back from the message (F2 step 7's error panel). Malformed requests (N ∉ {64, 128,
+  192}, target ≤ 0 or > 60 in, κ ≤ 0, a mask of the wrong length, an invalid `align`, no views, a gauge cell ≤ 0)
+  throw `RangeError`. A top photo whose companions are all empty is built alone (`W_VIEW_EMPTY` on the others).
+- **Badges** (v1.5): `report.iouPerView` is the final volume projected onto each view against that view's own table;
+  below 0.9 it raises `W_RECON_IOU` on that photo. The §2.9.2 consistency badge (`W_VIEW_IOU`) is always computed at
+  N = 128, so the N = 64 preview and the final build report the same badge.
 - **Single image:** built in the **photo frame** (image u → x', v → y', toward the camera → z'):
   `f = min(sd_photo(x',y'), κ·T(x',y') − |z'|)`, κ = 0.9 default (UI slider 0.5–1.3). Then the volume is turned into
   the object frame by the view the user chose in F3 step 1 (`ReconSettings.photoView`, stored also as the photo's
-  `PhotoView.label`, so Apply photo colors projects along the right axis; the §2.9.2 conventions):
+  `PhotoView.label`, so Apply photo colors projects along the right axis; the §2.9.2 conventions; with one photo only
+  `align.rot90` and `align.mirror` are used — there is nothing to scale or shift it against):
   `front` identity; `left` (object's own left, camera at +X) R_y(+90°), i.e. (x', y', z') → (z', y', −x'); `right`
   R_y(−90°), (x', y', z') → (−z', y', x'); `top` (object's front at the photo bottom) R_x(−90°),
   (x', y', z') → (x', z', −y'). On the N³ grid these are exact axis permutations with flips (no resampling), applied
@@ -1216,7 +1326,10 @@ choice (`backColors`, §2.9.6). Adding a back photo turns the project into a two
    smoothed at their boundary too (every mesh of the pipeline is closed).
 4. Decimate at most 3× with meshoptimizer `simplify` + `Regularize`; target edge ≈ `min(w, h)/3`.
 5. Validate with manifold-3d: status `NoError`, `decompose()` → keep the largest part, `genus() === 0` (or the user
-   accepted a handle via "keep holes"), volume > 0; features thinner than 2 voxels flagged "crochet flat". Solids
+   accepted a handle via "keep holes", else `W_RECON_GENUS`), volume > 0; dropped pieces ≥ 0.5% of the volume raise
+   `W_RECON_DETACHED`; features thinner than 2 voxels (erosion with the 6-neighbour cross, dilation with the 3 × 3 × 3
+   cube) flagged "crochet flat" — one `I_RECON_THIN` note per build when they are ≥ 0.2% of the inside, per-part flags
+   with the parts (§2.9.7). Solids
    are built with `manifoldFromMesh` / `manifoldReport` (`core/kernel/geom/manifold.ts`), never `new Manifold(mesh)`
    inside a `try`: manifold-3d 3.5.4 leaks the rejected object. `ManifoldReport.genus` of several parts is the genus
    of the largest by |volume|.
@@ -1244,7 +1357,7 @@ choice (`backColors`, §2.9.6). Adding a back photo turns the project into a two
     label. With it off (default for side photos) `'mirror'` copies them too, so a side-profile animal gets both
     eyes; the toggle is the "One-sided detail" checkbox of F3 (a logo on one side of a car keeps it on).
 - **Persisted for later re-projection:** the build stores, per view, the label image as an asset
-  (`PhotoView.labelsKey`; mime `application/x-cpg-labels`: bytes 0–3 `CPGL`, u16 LE version 1, u16 reserved, u32 LE
+  (`PhotoView.labelsKey`; codec §5.5.6; mime `application/x-cpg-labels`: bytes 0–3 `CPGL`, u16 LE version 1, u16 reserved, u32 LE
   w, u32 LE h, then w·h Int8 labels row-major, −1 outside the mask), the mask (`maskKey`), the alignment, and once
   per project the joint palette `ProjectDoc.threeD.photoPalette` (label index → `{ hex, name? }`). Labels index this
   photo palette, never `model.palette`, which Claude Design or the user may change. Apply photo colors reads only
@@ -1651,14 +1764,28 @@ by hand. A property test checks that every symmetric profile gives symmetric cou
 
 #### 2.10.7 Path B: general mesh parts [03 §2.2, §6.2, §6.6]
 
-1. Re-mesh the part to edge ≈ `min(w, h)/3` (voxelize, MC, Taubin). Seed: `crochet.seed` (nearest vertex) else the
-   tip geodesically farthest from the attachment boundary; root part: lowest vertex.
-2. **Heat method:** cotan Laplacian `L` (PSD) and lumped mass `M`; `t = (mean edge)²`; solve `(M + tL)u = δ_seed`;
-   `X = −∇u/|∇u|` per face; solve `Lφ = ∇·X` (Jacobi-PCG, relative tol 1e-8, ≤ 2000 iterations, ε·M regularization,
-   shift so φ(seed) = 0). Double t (≤ 6 times) while adjacent critical points remain (a vertex whose one-ring
-   changes sign ≥ 4 times = saddle).
+1. Re-mesh the part to edge ≈ `min(w, h)/3` (voxelize, MC, Taubin), coarsened (`coarsened: true`) so the part stays
+   ≤ 30 k vertices (a 6 in ball at fingering gauge would be 90 k vertices and 3 s for this share alone; rows stay
+   ≥ 1.8 edges apart). A part with < 8 voxels³ inside is refused (`bad-mesh`). With `remesh: false` the winding is
+   checked (inconsistent ⇒ `bad-mesh`; inside-out ⇒ flipped). The re-mesh keeps the largest piece: when
+   `remesh.components > 1` the result carries `W_MESH_PIECES`, and when the input was open (`remesh.oddColumns > 0`:
+   parity columns that do not close) `W_MESH_OPEN` (overlapping unmerged shells of one mesh come out as union minus
+   lens under the parity rule of §2.9.8). Seed (`MeshApi.pathB`'s `seed` and `attach`, v1.5, part-local, filled by
+   the caller from the model): `seed` = `crochet.seed` (nearest vertex); else the tip geodesically farthest from the
+   `attach` points (the attachment boundary); root part (no `attach`): the vertex nearest the area-weighted centroid
+   of the connected patch within one mean edge of the lowest height (on a round bottom that is the lowest point; the
+   lowest vertex alone lands on the rim of a flat base).
+2. **Heat method:** cotan Laplacian `L` (PSD) and lumped mass `M`; `t = (mean edge)²`, floored at `(D/600)²` with D
+   the multi-source Dijkstra eccentricity (past ≈ 745 edges the heat kernel underflows to exact 0; an underflowed u
+   also forces a doubling); solve `(M + tL)u = δ_seed` by sparse Cholesky (nested dissection, deterministic; an
+   iterative solver cannot deliver the far field of u); `X = −∇u/|∇u|` per face; solve `Lφ = −∇·X` (with L PSD the
+   sign is minus) by a direct solve pinned at the seed, factored once per call (Jacobi-PCG, relative tol 1e-8,
+   ≤ 2000 iterations, ε·M regularization, stays available as an option with a direct fallback); shift so φ(seed) = 0.
+   Faces with area < 1e-10·(longest edge)² are left out of the operators. Double t (≤ 6 times) while adjacent
+   critical points remain (a vertex whose one-ring changes sign ≥ 4 times = saddle; "adjacent" = at most 2 edges
+   apart, which catches the spurious max–saddle pairs one vertex apart).
 3. **Rows:** `N = round(max φ / hS)`, isolines at `k·hEff` by marching triangles. More than one loop on any level ⇒
-   `NeedsSplit` with the level; the editor proposes a cut there.
+   `NeedsSplit` with the level and `loops` (each loop's length, inches); the editor proposes a cut there.
 4. **Counts:** `n_k = round(isolineLength / wS)` with hysteresis 0.75, then the same pole rule as Path A
    (`clampPoles`, §2.10.5: magic-ring start 5–8 and no decrease while widening; closed tip ≥ 5 with trailing
    duplicates dropped) and the fan clamp; slope limit `|Δn| ≤ ⌈2πh/w⌉` (warn beyond). Sample counts in step 5 use
@@ -1687,10 +1814,23 @@ changeIdx even ⇒ rotate base left by ceil(g/2) ops;  odd ⇒ no rotation
 
 Oval rounds apply this placement per segment (`Line.segments`, §2.10.2): circular changes inside the two end
 segments, side changes at the middle of each side segment; the rotations below then act inside one segment.
-Two overrides of the rotation, each choosing the smallest extra left rotation that still satisfies R8 against the
+**Ovals (v1.5, T4.2):** the end that holds the round start prints as two segments (its first stitches open the round,
+the rest close it: G8 `inc | 7 sc | 3 inc | 7 sc | 2 inc`) but is one physical end, so it is placed as one arc and
+then cut at the round start. The circular change is split between the two end arcs: no `inc3`/`dec3` when avoidable,
+then balanced ends, then the fewest changes (an end never hands a stitch to the other), then the odd stitch to end A
+on odd rounds and end B on even ones. A side growing from 0 sts gets its stitches from the end before it; a side
+shrinking to 0 is worked into that end. A decrease never straddles the round start: the arc is rotated until a cut
+exists, else its two parts are placed apart, else the next split or the other neighbour is tried, and as a last
+resort (2-st ends at a tiny open edge) the cut goes to the nearest op boundary. Plain oval rounds print without
+segment hints (`25 sc, sl st`); shaped ones keep them, so the sides stay readable (G8).
+Three overrides of the rotation, each choosing the smallest extra left rotation that still satisfies R8 against the
 previous change round (else the default rotation stays and the stated fallback applies): the round before a
 BLO/FLO round must **end** with a plain sc (jogless prep, §2.10.5); a shaped round in a joined-round section must
-**start** with a plain sc (§2.11.3; fallback "ch 1, inc in same st as join, …").
+**start** with a plain sc (§2.11.3; fallback "ch 1, inc in same st as join, …"); and (v1.5) a change round in R8's
+scope whose default rotation violates R8 — consecutive change rounds with equal k but different g or r (a circular
+box decreasing 47 → 41 → 35 put its sites 0.035 of a round apart against 1/24) — takes the smallest extra left
+rotation that satisfies R8 (fallback: the default rotation and `W_STAGGER`). The goldens' default rotations already
+satisfy R8, so their text is unchanged.
 
 Golden text (textbook sphere, k = 6, w/h = 1.0; Compact dialect) — must match exactly:
 
@@ -1914,7 +2054,7 @@ rounds, T4 for amigurumi rounds.
 | `E_BORDER` | error | border per-side counts, Rnd 1 = 2·S_top + 2·S_side + 4, +8 per later round with `inc3` at each corner center; Rnd 1 opens at the corner where the last line ends or with a join (§2.7.10) | 2D |
 | `E_COLOR` | error | every color code is in the palette | all |
 | `E_FOLD` | error | folded line ranges are identical in ops, colors, loops, notes (border Rnds 2–n: identical instruction, counts listed) | all |
-| `E_SPIRAL_CHAIN` | error | spiral rounds never begin with a turning chain; lines with `join` (joined-round sections, §2.11.3) are exempt | 3D |
+| `E_SPIRAL_CHAIN` | error | spiral rounds never begin with a turning chain; lines with `join` (joined-round sections, §2.11.3) and lines with `start: { k: 'join' }` (the template's "Rnd b+1 … do not join", v1.5) are exempt | 3D |
 | `E_INC_INFEASIBLE` / `E_DEC_INFEASIBLE` (R3, R4) | error | T > 2P with inc only / T < P/2 with dec only; `inc3`/`dec3` make it feasible and raise `W_FAN3` | 3D |
 | `E_START` (R2) | error | MR: 5 ≤ n₁ ≤ 8 (flattened 4–8; classic exactly 6); chain oval n₁ = 2N = 2S + 6; joint = Σ live + 2·chains; no decrease while `ideal_k < n₁` (pole rule) | 3D |
 | `E_CORNER` (R6) | error | no stitch is part of both an inc and a dec (Path B) | 3D |
@@ -1925,17 +2065,18 @@ rounds, T4 for amigurumi rounds.
 | `E_OPEN_EDGE` | error | open-edge assembly steps reference open pieces only; each open piece has exactly one (§2.12) | 3D |
 | `E_EYE_ORDER` | error | each safety-eye cue precedes the stuffing cue and the closing round of its host piece (§2.10.6) | 3D |
 | `E_SANITY` (R15) | error | integers ≥ 1; < 200 rounds and < 20,000 sts per piece; ≤ 1000 cells per chart side | all |
-| `W_RUFFLE` (R5) | warn | \|n_k − n_{k−1}\| ≤ ⌈2πh/w⌉; ghost steps drawn flat (§2.10.10) | 3D |
+| `W_RUFFLE` (R5) | warn | \|n_k − n_{k−1}\| ≤ ⌈2πh/w⌉; on oval rounds the bound applies to the circular part only (v1.5: the side growth 2ΔS lengthens the straight sides, it does not flare the end); ghost steps drawn flat (§2.10.10) | 3D |
 | `W_SPACING` (R7) | warn | gaps between specials differ by ≤ 1 — over the whole round, or, in an oval round, inside each **side** segment with ≥ 2 specials; oval **end** segments are exempt (the circular changes cluster there by design) (Path A, regularized B) | 3D |
-| `W_STAGGER` (R8) | warn | consecutive change rounds with equal k and g ≥ 1 in both (rounds made only of specials are exempt): min circular offset between change-site centers ≥ 1/(4k) − 1e-9 of a round; site center = (stitches consumed before it + CONS/2) / P. Oval rounds: evaluated per side segment with ≥ 2 specials (as a fraction of the segment); end segments and single mid-side changes are exempt | 3D |
-| `W_STACKED` | warn | in R8's frame and scope: for ≥ 3 consecutive change rounds that **all have g ≥ 3**, some site center lies within 1/P of a site center of the previous change round (with g ≤ 2 there is no room to stagger: G5's Rnd 4 increases sit on Rnd 3's) | 3D |
+| `W_STAGGER` (R8) | warn | consecutive change rounds (consecutive in the list of change rounds: plain rounds between do not break a pair, v1.5) with equal k and g ≥ 1 in both (rounds made only of specials are exempt): min circular offset between change-site centers ≥ 1/(4k) − 1e-9 of a round; site center = (stitches consumed before it + CONS/2) / P. Oval rounds: evaluated per side segment with ≥ 2 specials (as a fraction of the segment); end segments and single mid-side changes are exempt | 3D |
+| `W_STACKED` | warn | in R8's frame and scope: for ≥ 3 consecutive change rounds that **all have g ≥ 3** (both consecutive pairs in R8's scope), some site center lies within 1/P (P of the later round, inclusive, +1e-9) of a site center of the previous change round (with g ≤ 2 there is no room to stagger: G5's Rnd 4 increases sit on Rnd 3's); one warning per run | 3D |
 | `W_SIZE` (R11) | warn | suggests "style: exact" (or more rounds). Length: \|N·hS − L\| ≤ hS/2 (+1.5·hS per pole shortened by the pole rule; textbook path \|(T + 1)·hS − A\| ≤ hS/2). Widest round against the generator's own target: exact \|max(n_circ)·wS − 2π·r_max\| ≤ wS; classic batched ≤ (sym/2)·wS; textbook sphere/capsule \|6k·wS − 2π·r\| ≤ 3·wS; ovals \|(2S + n_circ)·wS − P_stadium\| ≤ wS with `P_stadium = 4(a − b) + 2π·b` at that round. Ghost within 5% (§2.10.10, e.g. worsted D = 2.6 in → 42 sts, D_actual +5.3%) | 3D |
-| `W_SINGLE_ST` (R12) | warn | a color run of 1 st that is not flagged embroidery | 3D |
+| `W_SINGLE_ST` (R12) | warn | a color run of 1 worked st, measured along the whole spiral (runs continue across rounds). v1.5: embroidered details are `Feature`s printed as finishing notes, never `Op`s, so nothing in a `Line` is "flagged embroidery" and every worked run is checked | 3D |
 | `W_MIN_PART` (R14) | warn | circumference < 5 sts and the part was not turned into a chain/embroidery | 3D |
 | `W_GAP` | warn | a part's gap to its parent > 0.1 in (from the importer, the editor or inference) | 3D |
-| `W_LONG_CARRY`, `W_ROW_COLORS`, `W_ROUND_COLORS`, `W_JOG`, `W_EYE_OPENING`, `W_CLOSE`, `W_FAN3` | warn | as described above (`W_ROW_COLORS`: > 6 strands in a flat row, §2.7.3) | — |
+| `W_JOG` | warn | v1.5: a BLO/FLO round, or a whole-round color change (§2.11.3), in a spiral piece begins with a jog — the jogless prep could not be used and the jog note is printed instead | 3D |
+| `W_LONG_CARRY`, `W_ROW_COLORS`, `W_ROUND_COLORS`, `W_EYE_OPENING`, `W_CLOSE`, `W_FAN3` | warn | as described above (`W_ROW_COLORS`: > 6 strands in a flat row, §2.7.3; `W_EYE_OPENING`: checked against the stated count of the round the eye cue follows; `W_LONG_CARRY` is the 2D rule of §2.7.3, > 8) | — |
 
-Track codes (v1.4; the input and setup checks of each stage — they never block a pattern export, except where an
+Track codes (v1.4, extended in v1.5; the input and setup checks of each stage — they never block a pattern export, except where an
 error means nothing could be made):
 
 | Code | Severity | Rule | Owner |
@@ -1947,10 +2088,16 @@ error means nothing could be made):
 | `I_BG_TRANSPARENT` | info | "remove background" used the picture's transparency | T1 |
 | `W_PIXEL_SIZE`, `W_PIXEL_MULTIPLE`, `W_PIXEL_UNAVAILABLE` | warn | pixel-art sizing and override (§2.3.4) | T1 |
 | `I_PIXEL_ASPECT`, `I_SIZE_DEFAULT` | info | non-square stitches change the proportions; no size given (60 sts wide) | T1 |
+| `W_YARN_LINE_UNKNOWN`, `W_PALETTE_EMPTY`, `W_CSV_ROW`, `W_OVERRIDE_COLORS`, `W_EDITS_INVALID` | warn | v1.5: a yarn line id that is not available; a palette mode with no yarns (auto used); custom-palette rows skipped or capped; hand-edit and detail colors exceed max colors (all kept); hand edits outside the chart or without a valid hex dropped (§2.4.3–2.4.4, §5.5.5) | T1 |
+| `I_EDITS_REMAPPED` | info | v1.5: hand edits made at another size moved by relative position (§5.5.5) | T1 |
 | `E_MASK_EMPTY` | error | no object found in a photo (§2.9.1) | T3 |
 | `W_MASK_BORDER`, `W_MASK_COVERAGE` | warn | mask touches the photo border; coverage < 15% or > 90% | T3 |
 | `E_VIEWS` | error | the views do not constrain X, Y and Z (§2.9.2) | T3 |
 | `W_VIEW_EMPTY`, `W_VIEW_SCALE`, `W_VIEW_DUPLICATE`, `W_VIEW_IOU` | warn | a view without a mask, top-view scale mismatch > 8%, two views of one label, consistency IoU < 0.9 | T3 |
+| `E_RECON_EMPTY`, `E_RECON_INVALID`, `E_RECON_SIZE` | error | v1.5: nothing left after carving; manifold-3d rejected the mesh; a part would exceed 48 in at the target size (a `ReconError`, §2.9.3) | T3 |
+| `W_RECON_DETACHED`, `W_RECON_GENUS`, `W_RECON_IOU` | warn | v1.5: pieces not connected to the body dropped (≥ 0.5% of the volume); genus > 0 without "keep holes"; the final shape matches a photo below IoU 0.9 (§2.9.3, §2.9.5) | T3 |
+| `I_RECON_THIN` | info | v1.5: parts ≤ 2 voxels thick (≥ 0.2% of the inside) — crochet them flat (§2.9.5) | T3 |
+| `W_MESH_PIECES`, `W_MESH_OPEN` | warn | v1.5: Path B's re-mesh kept the largest of several pieces; the mesh part was open (odd parity columns) and was closed (§2.10.7) | T5 |
 | `E_IMPORT_NO_MODEL` (E8), `E_IMPORT_PARSE`, `E_IMPORT_INVALID`, `E_IMPORT_UNSAFE`, `E_IMPORT_TOO_LARGE`, `E_IMPORT_ARCHIVE`, `E_IMPORT_UNSUPPORTED`, `E_IMPORT_PROJECT_FILE` | error | nothing usable was imported from that input (§3.7) | T7 |
 | `W_IMPORT_TYPE`, `W_IMPORT_DEFAULTED`, `W_IMPORT_CANDIDATE`, `W_ARCHIVE_ENTRY`, `W_IMPORT_PARSE` | warn | an unknown part type replaced, a value made up, an archive candidate or entry skipped, a part of a page (the standalone template) that could not be read while the import went on | T7 |
 | `I_MIN_FEATURE`, `I_FORMAT_DRIFT`, `I_HTML_ENTITY`, `I_IMPORT_PARSE` | info | a part thinner than `MIN_FEATURE_IN` (normal for noses and linings), a page without a known fingerprint, an unknown entity kept, an entity-decoding remark | T7 (Sprint 2 renames: Sprint 1 shipped the first three with `W_` prefixes and reused `E_IMPORT_PARSE` at warn and info) |
@@ -2570,11 +2717,12 @@ through the real `import.worker`.
 | `.json` | `{` | `schema == "crochet-model"` → spec; glTF JSON (`asset.version`) → glTF path; `.crochet.json` (§5.5.3) → project import |
 | `.html`, `.htm`, `.dc.html` | `<!doctype`, `<html`, `<script` | HTML ladder §3.7.4 |
 | `.zip` | `PK\x03\x04` | our central-directory reader + fflate `inflateSync` per entry into a buffer of the declared size (limits checked on the directory before anything is inflated; entry times from the UT extra field — the DOS time is UTC wall time; duplicate names kept apart); **collect every spec candidate** (below), and only when there is none fall back to geometry `.glb/.gltf` › `.obj+.mtl` › `.ply/.stl` › images. Teddy archive: flat `Amigurumi Teddy Bear.html` + `three-d-stage.js` + `.thumbnail` |
-| `.tar.gz`, `.tgz` (handoff bundle) | `1F 8B` then `ustar` at 257 | `gunzipSync` + 60-line ustar reader; same candidate rule; no `project/` ⇒ "Claude was still waiting for your answer — reply in Claude Design and re-export" |
+| `.tar.gz`, `.tgz` (handoff bundle) | `1F 8B` then `ustar` at 257 | streamed gunzip + 60-line ustar reader; same candidate rule; no `project/` ⇒ "Claude was still waiting for your answer — reply in Claude Design and re-export" |
+| plain `.tar`; a single gzipped file (`teddy.obj.gz`, `spec.json.gz`) (v1.5) | `ustar` at 257; `1F 8B` without `ustar` | the tar as above; a gzipped file is inflated and detected again by its inner bytes and name; a gzip inside a gzip is refused. Every inflation (zip entry or gzip) is streamed and stops at the declared size: one that inflates past it is `E_IMPORT_TOO_LARGE` (never truncated) |
 | `.glb` | `glTF`, version 2 | §3.7.5 |
 | `.gltf` (+ `.bin`) | JSON with `asset` | as GLB; sibling files from the same drop or zip |
 | `.obj` (+ `.mtl`) | `v `/`f `/`o ` lines; `newmtl` | §3.7.5 |
-| `.ply`, `.stl` | `ply\n`; binary `84 + 50n` bytes or `solid … facet` | three's PLYLoader/STLLoader → geometry path |
+| `.ply`, `.stl` | `ply\n`; binary `84 + 50n` bytes or `solid … facet` | PLY: our own reader (v1.5: three's PLYLoader converts 8-bit colors to linear and back, `#C81E28` became `#C81C28`; every element's count is checked against the bytes left); STL: three's STLLoader → geometry path |
 | `.png`, `.jpg`, `.webp` | magic | offer F3 (the stage background `#f0eee6`/`#f4efe6` segments easily) |
 | `.pdf`, `.pptx` | `%PDF-` / zip with `ppt/` | v1.1 (text search for the JSON, else images) |
 | folder drop | `webkitGetAsEntry` | as zip |
@@ -2713,8 +2861,12 @@ inside a `<textarea>` is found by E4; a `<script id="crochet-model">` inside a c
      target height") and confirm.
   3. No E: the three-d-stage MTL header and `h ≤ 1.524` (a meter reading within the schema's 60 in limit) ⇒ meters,
      because the stage documents meters (`reason: 'stage-header'`); otherwise `h < 1.5` ⇒ meters
-     (`reason: 'small-bbox'`); both with the confirm pre-set to meters; otherwise inches. The observed teddy OBJ
-     (header present, `h = 9.88`) stays inches: 9.88 m is 389 in.
+     (`reason: 'small-bbox'`); both with the confirm pre-set to meters; otherwise inches (`reason: 'default'`,
+     v1.5). The observed teddy OBJ (header present, `h = 9.88`) stays inches: 9.88 m is 389 in. v1.5: an inches
+     reading above the schema's 60 in tries mm, then cm, and takes the first that fits, with the confirm set
+     (`reason: 'default'`; a 251 mm STL otherwise failed validation). GLB step 3 uses its exact ratio unless the user
+     answered (`ctx.units` wins) and sets the confirm when the parts' sizes disagree with their meshes by > 5%;
+     `expectedHeightIn` outside 0.1–60 in is ignored.
   Every decision adds a `units` chip ("read as meters: 0.251 → 9.88 in"); `units.confirm` opens a dialog showing
   both readings ("0.25 in tall, or 9.9 in tall?"), whose answer re-runs the import with `ctx.units`.
 - Mesh results that fail the fit become `mesh` parts (Path B).
@@ -2892,10 +3044,10 @@ project (in/cm); the model stays in inches.
 | Parameters | per-type numeric fields + sliders; lathe profile editor (2D polyline: drag, add, delete, toggle `sharp`); children re-anchored | `dims` |
 | Proportions | panel: **head : body** slider (chibi 1:1 … realistic 1:3) and **limb length** chips (nubs · short · medium · long), both the Step 0 kernel `applyProportions` below (the Q&A `q_parts` controls call the same kernel); the slider and chips show the model's current values (`readProportions`) and are disabled with the kernel's reason when the parts are missing; one history step each | `dims`, positions (whole model) |
 | Scale model to height | toolbar and Yarn & size panel: uniform scale of every part about the ground center (positions, dims, profiles, mesh vertices) to a typed height; one history step and a new model revision | whole model |
-| Add part | choose a primitive, click on a part's surface: placed by the Step 0 kernel `placeChildOnSurface` (0.1 in overlap along the clicked normal), `attach.to` = that part | new `Part` |
-| Duplicate (⌘D) / Delete (⌫) | duplicate offset +0.5 in X; delete asks, children re-attach to the deleted part's parent | parts |
-| Mirror (M) | create/update `<id>_r` from `<id>_l` across x = 0 (x and rotation y, z negated), `mirrorOf` link; linked edits propagate until "Unlink" | parts |
-| Attach | pick a new parent (cycles refused; the root has none; there is no "detach", so the model stays one tree); choose open end (top/bottom/none) and method; opened from an `attach-inferred` chip with that part selected | `attach` |
+| Add part | choose a primitive, click on a part's surface: placed by the Step 0 kernel `placeChildOnSurface` (0.1 in overlap along the clicked normal), `attach.to` = that part. v1.5: round shapes and blocks turn their length (local Y) along the clicked normal, flat pieces and rings their face (a horn sticks out, a patch lies on the surface); default size 0.35 × the parent's middle extent (0.3–3 in); named by side ("Left cone", `cone_l`; the toy's own left is +X) with unique labels | new `Part` |
+| Duplicate (⌘D) / Delete (⌫) | duplicate offset +0.5 in X: the selected parts only (not their subtrees), "<name> copy" (then "copy 2"), `mirrorOf` dropped, a copy of the root hangs from the root. Delete asks, children re-attach to the deleted part's parent, and offers "Also delete the N parts attached to it" (off by default); deleting the root makes the largest part left without a parent (by volume) the root; deleting every part is refused; a delete stores a model revision (§4.4) | parts |
+| Mirror (M) | create/update `<id>_r` from `<id>_l` across x = 0 (x and rotation y, z negated), `mirrorOf` link; linked edits propagate until "Unlink". v1.5: the twin takes the other side's id token (`_l` ↔ `_r`, left/right, fl/fr, bl/br) and label ("Left …" ↔ "Right …"); a part without one gets `_l`/`_r` by the side each lands on. An unlinked part of the same type already on the other side is updated and linked, not duplicated. Refused for mesh parts (until T6.4's mesh plumbing) and for a part that overlaps its own image (\|center x\| < max(0.05 in, half its width)). Linked edits copy only the field groups that changed (place, shape, color, stuffing/flatten, regions, paint, crochet hints, stored limb end) — never id, label, attach, notes or other `x-*` keys — and only when exactly one side changed (moving the pair's common parent rewrites neither); "Mirror again" rewrites the whole twin and carries its subtree | parts |
+| Attach | pick a new parent (cycles refused; the root has none; there is no "detach", so the model stays one tree); choose open end (top/bottom/none) and method; opened from an `attach-inferred` chip with that part selected (`openAttachTool(partId)`, §5.2.1, T7 → T6). v1.5: Attach does not move the part (a part far from its new parent shows `W_GAP`); "Neither" = `openEnd: 'none'`, "Sewn on (default)" = no `method` key; a top/bottom open end deletes `x-cpg-proximal` | `attach` |
 | Make as | auto · crocheted piece · flat appliqué · embroidery · safety eye · color of parent · skip | `crochet.make` |
 | Start / axis | primitives: start pole (bottom/top), axis (auto/x/y/z), style (classic/exact); mesh parts: "pick start point" on the surface and a draggable seam handle | `crochet.*` |
 | Sculpt (B) | mesh parts only ("Convert to sculptable mesh" for primitives): Inflate, Deflate, Smooth, Flatten; radius `[`/`]` 0.05–2 in, strength 0.05–1, X-symmetry toggle; kernels §2.9.8 in `mesh.worker` | mesh asset |
@@ -3004,14 +3156,20 @@ history step):
 | Hook (mm, US label) | `gauge.hookMm` | default Table E hook; hook factor §2.2.2 |
 | Yarn over / yarn under | `gauge.yarnUnder` | w/h 1.05 / 1.11 (D17) |
 | Test ball (max sts N, circumference C) | `gauge.testBall` | swatch rule of `resolveGauge` (§2.2.5): w·s = C/N, stored as w = C/N / 1.05 |
-| Finished height | before a model exists (F2/F3 step 5): `threeD.recon.targetHeightIn`; afterwards the model itself | with a model: shows the toy ghost height (§2.10.10) with its band and offers **Scale model to height…** (uniform, one history step, new model revision; §4.2) |
+| Finished height | before a model exists (F2/F3 step 5): `threeD.recon.targetHeightIn` (T3 creates `threeD.recon` with its defaults before showing the pre-model panel; the panel never invents `ReconSettings` and shows a sentence instead of the field without it); afterwards the model itself | with a model: shows the toy ghost height (§2.10.10) with its band and offers **Scale model to height…** (uniform, one history step, new model revision; §4.2). Until the live loop (T6.3) the panel shows the model's height with the gauge band `× (1 ± tol)`, widened by the hook-exponent range when the hook is not the recommended one and nothing was measured; Scale is refused for models with mesh parts until T6.4 and when a dim would pass 48 in |
 | Default stuffing | `threeD.ami.defaultStuffing` | parts without `stuffing` (§2.10.1) |
 | Yarn per stitch ("Unravel 10 sc of your test ball and measure the yarn: __ in") | `gauge.lscCalibratedIn` (= length / 10) | replaces `L_ami` and narrows the yardage band to ±5% (§2.8) |
-| Spiral lean (sts per round) | `threeD.ami.leanStPerRnd` | default 0.25, 0 = off (§2.11.2). **Calibrate…** opens the test tube: "6 sc in MR, increase to 24 sts, then work 12 plain rounds, moving your marker up every round as usual. Hold a ruler upright through the marked stitch of the first plain round; on the last round count the stitches between the ruler and the marker" ⇒ lean = count / 12 (signed: positive when the marker moved against your working direction) |
+| Spiral lean (sts per round) | `threeD.ami.leanStPerRnd` | default 0.25, 0 = off (§2.11.2). **Calibrate…** opens the test tube: "6 sc in MR, increase to 24 sts, then work 12 plain rounds, moving your marker up every round as usual. Hold a ruler upright through the marked stitch of the first plain round; on the last round count the stitches between the ruler and the marker" ⇒ lean = count / 12 (signed: positive when the marker moved against your working direction). v1.5: the dialog asks which side of the ruler the marker is on (left / right, seen from the outside) and maps it with `ami.hand` (right-handed + right of the ruler = against = positive) |
 | Stitch style, crisp stripes, decrease method, eyes, terms, hand, dialect | `threeD.ami.*` (`AmiSettings`) | |
 
 On import, `model.yarn` pre-fills CYC and hook (§3.7.7); a model with `weightCYC: 0` is offered as CYC 1 (CYC 0 is
-rejected for amigurumi). The E2E below holds because the pre-fill's hook is cleared when the weight changes. The R4 3D size conversion is therefore user-controlled on
+rejected for amigurumi) with the note (v1.5 wording; v1.4 said "larger", but lace worked to CYC 1 counts makes
+smaller stitches): "Lace yarn is sized as CYC 1 (super fine) for toys. Worked in lace yarn, the toy comes out a
+little smaller than shown; measure a test ball for an exact size." Pre-filling happens in the `post-import` context
+when the import created the project (origin `claude-design` or `describe`) and the gauge is still the untouched
+default — also when the model arrives after the panel opened, once per suggestion, dismissable ("Keep my yarn", for
+the session); otherwise the panel offers "Use it", never overwriting a user-set gauge. On the Shape tab the panel is
+the inspector's second page ("Part | Yarn & size"). The E2E below holds because the pre-fill's hook is cleared when the weight changes. The R4 3D size conversion is therefore user-controlled on
 every path (R2, R3, R5, R6). E2E: on the imported teddy, changing CYC 4 → 3 increases the round counts of the body
 while the toy ghost height stays within 5% of the model height.
 
@@ -3037,6 +3195,9 @@ scripts/project-folder.ts   (Vite plugin: /__projects mirror + backups, /__conve
 scripts/copy-ort.mjs        (copies the one ORT wasm/mjs pair into public/ort/; postinstall)  S0
 scripts/ports.ts            (the port rules of §5.5.4 as tested functions + the portGuard Vite plugin)  S0
 scripts/check-spec-types.mjs (proves src/types identical to this document's four type blocks; runs in npm test)  S0
+scripts/perf.mjs            (`npm run perf`: the wall-clock budget tests, strict and serial; §6.1 rule 5, v1.5)  S0
+scripts/__tests__/*.test.ts (each belongs to the owner of the script it tests: project-folder, project-folder-backups,
+                             folder-sync → T8 (v1.5); ports, check-spec-types, image-metadata, strip-exif → S0)
 scripts/image-metadata.mjs  (metadata scanner shared by strip-exif and the fixture-privacy test)  S0
 scripts/import-yarns.mjs                                                            T1
 scripts/make-fixtures.mjs   (synthetic view fixtures of §6.3 T3; writes only its four folders, refuses real/)  T3
@@ -3057,7 +3218,9 @@ src/
   types/*.ts                (§5.2, frozen; entryPoints.ts + ui.ts = §5.2.1, index.ts = barrel,
                              __checks__/entryPoints.check.ts = signature guard)      S0
   core/stub.ts              (NotImplementedError, stub(), isImplemented())          S0
-  core/kernel/{color,hash,prng,stable,vec,png}.ts  (png = RGBA8 PNG encode/decode on fflate, §2.3.1)   S0
+  core/kernel/{color,hash,prng,stable,vec,png,assetCodecs,heif}.ts  (png = RGBA8 PNG encode/decode on fflate, §2.3.1;
+                    assetCodecs = the mesh / SDF / photo-label asset formats of §5.5.6, v1.5; heif = HEIF brand
+                    sniffing without imports, shared by workers/decode.ts and the folder plugin, v1.5)   S0
   core/kernel/geom/{marchingCubes,taubin,edt,manifold,meshMeasures,sdfVolume}.ts  (shared by T3, T5 and T7;
                     manifold = the loader of §5.4 + manifoldFromMesh; sdfVolume = SdfVolume encode/decode/sample)  S0
   core/gauge/{tables,resolve,grid,sphere,yarnPerStitch,round,checks,index}.ts       S0
@@ -3090,7 +3253,8 @@ src/
   ui/photos/** T3 (PhotosTab) · ui/shape/** T6 (ShapeTab, YarnSizePanel, placement) · ui/qa/** T7 (QaWizard)
   ui/import/** T7 (ImportTab) · ui/library/** T8 (StartScreen, useAutosave) · ui/export/** T8 (ExportTab)
   data/yarns/*.json + data/yarns/ATTRIBUTION.md T1 · data/templates/*.json T7
-  test/{setup.ts, rgba.ts (synthetic RgbaImage helpers), fakes.ts (LockManager, BroadcastChannel)}   S0
+  test/{setup.ts, rgba.ts (synthetic RgbaImage helpers), fakes.ts (LockManager, BroadcastChannel),
+       timing.ts (wall-clock budgets: `PERF`, `budget`, `bestOf`; §6.1 rule 5, v1.5)}   S0
   test/__tests__/fixturePrivacy.test.ts  (no EXIF/GPS in committed images, §6.1 rule 9)              S0
   test/__tests__/entryPoints.test.ts     (every §5.2.1 core entry point exists and loads in node)    S0
   fixtures/models/{teddy.canonical,every-type,every-type.mesh}.json                                  S0
@@ -3590,7 +3754,8 @@ Save 800 ms after the last `update`, and immediately on `visibilitychange → hi
 navigation to the library; doc and new assets in one transaction; `rev++`. Snapshot every 20 revs or 5 minutes, and
 always before migrations, imports, rebuilds, cuts and deletes; keep the last 30 plus one per day for 30 days.
 Request `navigator.storage.persist()` when the first project is created (on every create; idempotent); show quota
-in Settings. Save failure ⇒ red chip + banner "Not saved — Export a backup" with one-click `.crochet.json`
+in the library's storage panel (v1.5: v1 has no separate Settings screen; the library shows the quota, the folder
+path and the free-space warnings, T8). Save failure ⇒ red chip + banner "Not saved — Export a backup" with one-click `.crochet.json`
 download; retries with backoff. The chip says "Saving…" during the 800 ms debounce (`useAutosave().status` maps the
 store's `'unsaved'` to `'saving'`). "Keep the last 30 plus one per day for 30 days" = the last 30 by rev plus the
 newest snapshot of each local day younger than 30 days, pruned inside the save transaction; a rev that already has a
@@ -3691,7 +3856,12 @@ A static build hosted alone uses IndexedDB + file export only.
   `CPG_PORT = CPG_E2E_PORT ?? (5290 + N in a track worktree, else 5181)` derived from the directory name (an
   exported variable does not survive between agent shell calls), a fresh `fs.mkdtempSync(os.tmpdir() + '/cpg-e2e-')`
   as `CPG_PROJECTS_DIR`, `CPG_TEST = 1` and `reuseExistingServer: false`, so e2e never touches the user's projects or
-  reuses the user's server. Agents follow §6.1 rule 6.
+  reuses the user's server. Agents follow §6.1 rule 6. v1.5 (T8.2): the protected folder also covers any folder
+  inside it or containing it (`~/Documents`, `~`), its iCloud Drive path, other spellings (case, trailing `/`, `~`,
+  NFC, the `/System/Volumes/Data/…` firmlink), symlinks into it and the account's own home (`os.userInfo().homedir`)
+  even when `$HOME` points elsewhere; a checkout with no `.git` counts as "not master"; the decision is a pure
+  string check first, so a refused folder is never touched. The plugin does nothing in vitest's own Vite server
+  (mode `test`).
 - **HEIC conversion** (`POST /__convert`, same plugin, dev/preview only; §2.3.1): accepts ≤ 50 MB whose ISO-BMFF
   `ftyp` brand is a HEIF brand (else 415); on macOS writes it into an `fs.mkdtemp` folder, runs
   `execFile('/usr/bin/sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '92', input, '--out', output],
@@ -3706,13 +3876,28 @@ A static build hosted alone uses IndexedDB + file export only.
   hash and never rewrites an existing asset); `DELETE /__projects/<id>` moves the folder to
   `Backups/deleted/<id>-<YYYYMMDD-HHMMSS>/` (a deleted project never comes back as a restore offer). Every write goes
   to a temp file in the same directory, then `fs.rename` (atomic), so a crash never leaves a truncated doc.
+  v1.5 (T8.2) additions: `GET /__projects/<id>/assets` (the sha list: one request instead of a `HEAD` per asset, and no
+  404 per missing asset), `GET /__backups`, `GET /__backups/<backup>/<id>/doc`, `GET /__backups/assets/<sha>`; the list
+  also carries name, mode, bytes and the folder status (path, free space, level, message, last backup run).
+  `PUT …/doc` is a compare-and-swap (`x-cpg-base-sha256`: the folder doc's hash, `none` = must not exist, absent =
+  unconditional). **Expected outcomes answer 200** with `ok` in the body (a conflict, an existing asset); 4xx/5xx only
+  for broken requests, so normal use logs no console error. Folder-safe ids `^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$`
+  (app ids always pass; another id is not mirrored and is listed as unsupported, never escaped into a path).
 - **Sync:** the app mirrors every save (debounced 5 s) when `HEAD /__projects` answers `x-cpg-mirror: on` (any other
   answer, including a static host's, means off). Per project it keeps
   `{ lastSyncedRev, lastSyncedHash }` (the `meta` store entry `sync:<id>`, §5.5.1; T8.1 created the store, T8.2
   writes it). On start: folder hash = last synced and local rev newer ⇒
   push; local unchanged since the last sync and folder changed ⇒ offer to load the folder version; both changed
   (a two-sided edit, detectable only with this sync base) ⇒ keep both (the folder's copy imported as "<name> (from
-  folder)"); a project in the folder but not in IndexedDB ⇒ offer to restore.
+  folder)"); a project in the folder but not in IndexedDB ⇒ offer to restore. v1.5 (T8.2): pushes and reconciles of
+  all tabs run under the Web Lock `cpg-mirror`; a first sync where the folder already has the same content adopts it
+  (other content: keep both); a local rev older than the sync base is offered the folder version; "changed in the
+  folder" is an offer (**Load folder version** — the browser's version is snapshotted first — or **Keep both**); a
+  folder doc of a newer format is never overwritten or loaded; projects in "Recently deleted" stay mirrored and
+  deleting one for good sends `DELETE`; `remove` leaves a tombstone `gone:<id>` with the last synced hash, and the
+  reconcile moves a folder copy away only if it still has that hash (else offers it); each project's reconcile step
+  is isolated (problems collected into the status, the others still pushed and offered), and a local project
+  missing from the folder is pushed again.
 - **Backups** (sized for this Mac: 34 GiB free, 93% used, and the default folder lies in iCloud Drive's Documents —
   `~/Documents` → `~/Library/Mobile Documents/com~apple~CloudDocs/Documents` — so every byte written is also
   uploaded; a 3D project holds tens of MB of write-once photos, mesh buffers, SDF volumes and import originals, the
@@ -3731,9 +3916,16 @@ A static build hosted alone uses IndexedDB + file export only.
     cap** (`CPG_BACKUP_CAP_GB`, default 2) on the logical size of `Backups/` (docs + shared assets), pruned oldest
     first within those guards; finally assets referenced by no kept backup are deleted from `Backups/assets/`.
   - **Free space:** `fs.statfs` on the folder at start and before each backup: below 5 GB free the console and
-    Settings warn ("Only 3.2 GB free on this disk — backups stop below 2 GB"); below 2 GB the backup is skipped (the
-    mirror keeps working) with a red Settings warning. Settings shows the folder path; `CPG_PROJECTS_DIR` may point
-    outside iCloud.
+    the library warn ("Only 3.2 GB free on this disk — backups stop below 2 GB"); below 2 GB the backup is skipped
+    (the mirror keeps working) with a red warning in the library. The library shows the folder path (v1.5: there is
+    no separate Settings screen in v1); `CPG_PROJECTS_DIR` may point outside iCloud.
+  - **Details (v1.5, T8.2):** for a folder named `projects` (the default) backups go to `<parent>/Backups`; any other
+    folder keeps them inside itself as `<folder>/_backups` (an id can never be `_backups`). No backup while the
+    folder holds no project. A backup is written into `.<name>.partial-*` and renamed into place (complete or
+    absent); `Backups/deleted/` is never pruned and not counted in the cap; shared-asset GC waits while a `.partial-`
+    backup exists and is skipped (logged) while a backup folder has no readable manifest; an asset deleted under a
+    running backup is left out of its manifest; retention also runs when the backup is skipped as unchanged.
+    Start-up runs of one backups folder are chained (a Vite restart re-evaluates the plugin).
 - Plugin tests (temp dirs): refusal of the default folder under each test variable, under
   `CLAUDE_CODE_CHILD_SESSION`, for a root under `/.claude/worktrees/` and for a non-master branch; PUT/GET/list;
   write-once assets and hash check; atomic writes (a killed write leaves the previous doc); DELETE →
@@ -3766,7 +3958,43 @@ project open in some tab defers collection, which only costs disk space. `remove
 snapshots, never assets, and refuses a project another tab is editing (`ProjectLockedError`); so that a library
 delete stays undoable, T8.2 asks to confirm and keeps deleted projects in a "Recently deleted" list for 30 days:
 the document stays in the `projects` store with a `meta` entry `trash:<id>` (`{ deletedAt }`), `list()` leaves it
-out, restore removes the entry, and the purge after 30 days runs `remove` (no type change).
+out, restore removes the entry, and the purge after 30 days runs `remove` (no type change). v1.5 (T8.2): an edit takes
+a project out of "Recently deleted" (`save` deletes `trash:<id>` in its transaction; a tab with the project open gets
+a banner when another tab deletes it); a trashed project's link does not open (the library offers Restore); purge
+runs at start-up only; the start-up chores (purge, GC) run after the journal and before any open, but an open waits
+at most 2 s for them; without `navigator.locks.query` the GC round is skipped. The project folder's own
+`projects/<id>/assets/` is write-once and never collected in v1 (§7.3).
+
+Hand edits (v1.5, T1 decision 22): an edit's identity is its lowercase hex + yarn id, processed in sorted order (the
+paint order never changes the chart). Auto mode: an override within ΔE00 < 2 of an existing center (a free center or
+an override already inserted), or with the yarn id that center is named by, maps to it and makes it protected;
+otherwise its exact hex is inserted (named by its own yarn when the id resolves, else the reference line). Yarn
+modes: its own yarn when the candidates have it, else the nearest solid shade (ΔE00), fixed in p-median. Overridden
+cells take the override's entry whatever the picture says; locked cells join the protected set. Edits made at another
+size are remapped by relative cell position (`I_EDITS_REMAPPED`; the confirm dialog is T2's); edits outside the
+chart or without a valid hex are dropped (`W_EDITS_INVALID`).
+
+#### 5.5.6 Binary asset formats (Step 0 kernel `core/kernel/assetCodecs.ts`, v1.5)
+
+Mesh buffers, SDF volumes and photo-label images are project assets (`putAsset(bytes, mime)`, content-addressed;
+`threeD.meshAssets[<meshRef>]`, `threeD.meshAssets['sdf:' + meshRef]`, `PhotoView.labelsKey`). Every track reads and
+writes them through this one codec — T3 writes all three, T5 and T6 read and write meshes and volumes, T7 writes
+imported meshes, T8 only moves the bytes. Little-endian throughout; each format opens with a 4-byte magic, a u16
+version and a u16 flags/reserved word; encoding is deterministic (equal content ⇒ equal bytes ⇒ one asset), decoding
+is strict — a wrong magic, a newer version, unknown flags or reserved bits, a byte length that does not match the
+header exactly, an index past the vertices or a non-finite number throw `AssetCodecError` (`code` names the rule),
+never a half-read value; decoded arrays own fresh, transferable buffers. A newer version than the app reads tells
+the user to update the app.
+
+| Asset | Mime | Layout |
+|---|---|---|
+| `ColoredMesh` | `application/x-cpg-mesh` | `CPGM`, u16 version 1, u16 flags (bit 0: `partId` present; bit 1: 16-bit indices, written whenever V ≤ 65 536); u32 V; u32 I (a multiple of 3); V·3 f32 positions; I indices (u16 or u32); V u8 labels (255 = unknown); V u8 `partId` when bit 0 is set |
+| `SdfVolume` | `application/x-cpg-sdf` | `CPGS`, u16 version 1, u16 0; u32 nx, ny, nz; u32 0; f64 origin x, y, z; f64 voxel (> 0); nx·ny·nz i16 samples in the §5.2 layout (x fastest; `core/kernel/geom/sdfVolume.ts`) |
+| photo labels | `application/x-cpg-labels` | `CPGL`, u16 version 1, u16 0; u32 w, h; w·h i8 labels row-major, −1 outside the mask (§2.9.6) |
+
+`meshAssetCodec`, `sdfAssetCodec` and `labelsAssetCodec` wrap them as `{ mime, encode(value): Blob, decode(blob) }`
+(T7's `MeshCodec` shape), so `putAsset(codec.encode(v), codec.mime)` stores one and the asset loader's Blob decodes
+back. A 30 k-vertex, 60 k-triangle mesh is ≈ 0.75 MB.
 
 ### 5.6 Dependencies (versions checked against the npm registry on 2026-09-30)
 
@@ -3823,7 +4051,11 @@ pull through the API before shipping. So:
   CC BY 4.0, linked in `data/yarns/ATTRIBUTION.md`, or (b) one fetch through the CC BY API with the user's own key,
   with source URL, date and licence recorded.
 - `scripts/import-yarns.mjs` refuses to write a line whose `YarnLine.source` / `license` provenance record is
-  missing; a T1 test checks every shipped line has one.
+  missing; a T1 test checks every shipped line has one. v1.5 (T1.2): the record lives in each line JSON as
+  `provenance` { `source`, `license`, `licenseEvidence`, `retrieved`, `attribution`, `changes` (CC BY's "indicate if
+  changes were made"), `commit`, input `sha256` } — the JSON is a superset of the frozen `YarnLine`. The script accepts
+  only CC-BY-4.0 and CC0-1.0, pins its inputs by sha256, requires a makebead input's own `license` field to equal
+  the recorded licence, and `--check` proves the shipped JSON is reproducible.
 
 ### 5.7 Screens
 
@@ -3855,6 +4087,9 @@ pull through the API before shipping. So:
 | import of a 10 MB OBJ | < 3 s |
 | autosave of the doc | < 50 ms |
 | PDF of a 200 × 200 chart pattern | < 5 s |
+
+Each budget with a test is checked strictly by `npm run perf` (serial, one worker) and only against a 10× sanity
+bound by `npm test`, which runs while other agents load the machine (§6.1 rule 5, v1.5).
 
 Determinism: no `Math.random()`/`Date` in `src/core`; seeds = `fnv1a64(input bytes ‖ canonical JSON of settings ‖
 CODE_VERSION)` (`CODE_VERSION` lives in `src/core/kernel/hash.ts`; the integration agent bumps it when a merged
@@ -3889,9 +4124,22 @@ never raw floats.
    another track's implementation use `it.runIf(isImplemented(fn))`; integration removes the gate.
 5. **Tests:** colocated `__tests__/`, goldens in `__tests__/golden/` (generated by the implementation and compared
    with this document's lists, §2.10.5); synthetic images are generated in code (`src/test/rgba.ts`), never
-   downloaded. Timing tests retry twice and use generous bounds. Vitest's default timeout is 30 s for every test and
-   hook (`vite.config.ts`, v1.4: on the shared machine a cold or loaded run took heavy tests past the 5 s default);
-   heavy suites still name their own longer timeout. `@playwright/test` cannot be imported inside a
+   downloaded. Vitest's default timeout is 30 s for every test and hook (`vite.config.ts`, v1.4: on the shared machine
+   a cold or loaded run took heavy tests past the 5 s default); heavy suites still name their own longer timeout.
+   **Wall-clock budgets (v1.5):** with eight agents on the machine (load 25–40) timing assertions failed in full
+   parallel runs and passed alone. Every test that asserts a duration now (a) carries the vitest tag `perf` —
+   `it('…', { ...PERF }, …)` or on its `describe`, from `src/test/timing.ts` (S0); the tag, defined in
+   `vite.config.ts`, gives retry 2 and a 180 s timeout, a test's own options win — and (b) asserts
+   `expect(ms).toBeLessThan(budget(N))`, measuring with `bestOf` / `bestOfAsync` where it repeats. `budget(N)` is N
+   under `npm run perf` and a loose sanity bound `max(10·N, N + 250 ms)` under `npm test`, which still catches a
+   blow-up (a quadratic step, a hang) but not a 2× slowdown. **`npm run perf`** (`scripts/perf.mjs`, S0) runs only the
+   `perf`-tagged tests of the files that use `test/timing`, one file at a time in one worker with `CPG_PERF=1`, after
+   printing the load average (and warning when the 1-minute load is above 0.75 × cores); it is where the §5.8 budgets
+   are checked strictly, and every sprint's finish runs it once on a quiet machine (integration at each checkpoint).
+   A track adding a timing assertion uses the helper and the tag; `npm test` alone never fails on load. Non-timing
+   waits are time-bounded too: T8's `waitFor` fails only after its rounds **and** 10 s, Testing Library's
+   `asyncUtilTimeout` is 10 s in happy-dom files, and Playwright runs with a 90 s test and 15 s `expect` timeout
+   (e2e timing bounds use `budget` as well; the strict worker budget is the node test's). `@playwright/test` cannot be imported inside a
    Vitest file (both install global `expect` matchers): a unit test that needs a browser starts a child process.
    `src/core` tests run in the `node` environment,
    which has no `createImageBitmap`/`OffscreenCanvas`: core code takes `RgbaImage`s (§2.3.1) and PNG fixtures are read
@@ -4102,7 +4350,8 @@ Each track lists scope, owned paths (§5.1), interfaces, acceptance, required te
   expected drift; editor tools are unit-tested as pure functions in node and write `ColorRef` overrides through
   `projectStore.update`; a happy-dom test mounts the Chart tab (null canvas context) without errors.
 - **Sprints:** T2.1 renderers, sc_graphgan, validators · T2.2 tapestry flat/round, C2C (corners), border, yardage,
-  materials · T2.3 Source/Settings/Chart editor UI · T2.4 Pattern and Materials views, hdc, mosaic flag, exports.
+  materials · T2.3 Source/Settings/Chart editor UI, and `renderPatternText` (v1.5: moved up from T2.4, because T8.3's
+  PDF prints pattern text through it) · T2.4 Pattern and Materials views, hdc, mosaic flag, exports.
 
 #### T3 — Photos → 3D (reconstruction, ML, photos UI)
 - **Scope:** §2.9.1–2.9.7 including the neck split, part naming through the Step 0 `nameParts`, the attach tree via
@@ -4293,6 +4542,13 @@ Each track lists scope, owned paths (§5.1), interfaces, acceptance, required te
   glb (4-step ladder)/obj+mtl/ply/stl with units, tar, diff, paint carry, derived fixtures · T7.3 Q&A engine,
   templates, seed source and stacking (after S-CD) · T7.4 prompt, fix-up message, send step, waiting state and return
   path, wizard and import UI (then the manual gate).
+- **Order changed in v1.5 (owner's decision, 2026-10-01: the S-CD send-side trial is postponed):** T7's Sprint 3 does
+  the part of T7.4 that does not depend on the trial — the Import tab and import dialog (drop/paste, carrier,
+  dialect and confidence, repair chips with attach chips opening `openAttachTool`, the units confirm, the versions
+  chip and picker, the diff view, Accept with paint carry, then `<YarnSizePanel context="post-import">`), Start →
+  "Import from Claude Design", and the return-path matching (`x-cpg`, ≥ 60% seed ids) as far as it needs no prompt-v1
+  text. T7.3 (Q&A engine, templates, seed) and T7.4's prompt, fix-up message, send step and Q&A wizard stay gated on
+  the trial and follow it.
 
 #### T8 — Persistence, library, export, PDF and print
 - **Scope:** §5.5 (IndexedDB repository with compare-and-swap saves that rebind the tab to its copy, single-writer
@@ -4478,10 +4734,54 @@ block v1.
 - Row/stitch progress tracker with audio; cloud sync or sharing; editing on phones; HEIC decoding in a static build
   (dev/preview convert it with `sips`, §2.3.1) or on non-macOS servers; a desktop (Tauri) wrapper.
 - Patterns written or "improved" by a language model: every stitch count comes from geometry and a validator.
+- Collecting the project folder's write-once `projects/<id>/assets/` (v1.5, T8 request 14): an undone photo stays
+  there. A collector would have to follow JSON assets (mesh revisions) and spare anything a kept backup names only
+  through the folder; deleting from the user's folder is the riskiest operation the app could do, and the growth is
+  bounded by what the user added, so v1 never deletes there.
 
 ---
 
 ## 8. Revision log
+
+### v1.5 — 2026-10-01 (Sprint 2 integration checkpoint; every Sprint 2 request of the T1–T8 notes, decided in `docs/tracks/integration-s2.md`)
+
+- **Types (additive only, `S0-amend`):** `MeshApi.pathB` request `seed?` and `attach?` (part-local; §2.10.7 step 1);
+  `UnitsDecision.reason` `'default'` (no evidence: plain inches, or the mm/cm fallback above 60 in; §3.7.5);
+  `RenderFoundationFn` and `RenderLineExtrasFn` frozen in §5.2.1 (T4's 3D text used T2's unfrozen helpers),
+  `ValidateDoc2DFn` (T8's pre-export check calls T2's `validateDoc2D`) and `OpenAttachToolFn` (T7's attach chips
+  open T6's Attach tool; a new stub at `ui/shape/openAttachTool.ts`); doc
+  comments for `GeomApi.build` (rejects with `ReconError`, message `E_…: …`) and `ReconSettings.targetHeightIn`. The
+  signature guard checks `abbreviationsFor` / `specialStitchesFor` with `SameSignature` again (T2's bridge overloads
+  removed) and the two render helpers. Rejected: a `Line.border` field (the start corner and join stay in Rnd 1's
+  arrow and a `join B` cue).
+- **New S0 code:** `core/kernel/assetCodecs.ts` — the mesh (`CPGM`), SDF volume (`CPGS`) and photo-label (`CPGL`)
+  asset formats, versioned, strict, with Blob codecs (§5.5.6); `core/kernel/heif.ts` (HEIF sniffing shared by the
+  decode worker and the folder plugin); `mirror` and `link` icons; collapsed `Panel` bodies hidden; a `meta` line
+  slot on `ProjectGrid`; `src/test/timing.ts`, the vitest tag `perf` and `npm run perf` (`scripts/perf.mjs`).
+- **Timing tests (§6.1 rule 5, §5.8):** every duration assertion is tagged `perf` and compares with `budget(N)`:
+  strict in `npm run perf` (serial, one worker), a 10× sanity bound in `npm test`; macrotask-counting waits, Testing
+  Library and Playwright timeouts made load-robust.
+- **Sprint 2 behavior folded in:** T1's brush/fill rule, exact K, anti-aliasing blend removal, pooled points, color
+  budget, salience details, merge scope, p-median starts, background yarn, naming, ids, custom CSV, hand-edit
+  identity and remapping, yarn provenance fields (§2.3.2, §2.4, §5.5.5, §5.6); T2's block repeats, folding of turned
+  rounds, tapestry cue words, C2C region cues and phase note, border minimum counts, hints, joins, border color and
+  how whole patterns print, yardage of rings and turning chains, grams/skeins (§2.6.2, §2.7, §2.8); T3's
+  depth-preserving front rounding, exact `R_loc`, reduced T, one-plane builds, `ReconError` failures, badges and thin
+  features (§2.9.3, §2.9.5); T4's oval arc placement and the third R8 rotation override (§2.10.8), `W_RUFFLE` on
+  ovals, `W_JOG`, R8/`W_STACKED` readings, `E_SPIRAL_CHAIN` and `W_SINGLE_ST` (§2.13); T5's Cholesky heat step, t
+  floor, pinned Poisson, sign `Lφ = −∇·X`, vertex cap, flat-bottom seed, "adjacent" = 2 edges, re-mesh warnings
+  (§2.10.7); T6's mirror naming and refusals, linked-edit scope, delete/duplicate/add-part/attach details, lean
+  dialog, pre-fill rules and the corrected lace note (§4.2, §4.5); T7's plain tar / single gzip, streamed capped
+  inflation, own PLY reader, units fallback (§3.7.2, §3.7.5); T8's backups location and details, protocol additions,
+  folder-safe ids, wider protected folder, sync and tombstone rules, trash and start-up details, no separate
+  Settings screen in v1 (§5.5.2, §5.5.4, §5.5.5). `renderPatternText` moves from T2.4 to T2.3 (§6.3).
+- **Issue codes:** T1 `W_YARN_LINE_UNKNOWN`, `W_PALETTE_EMPTY`, `W_CSV_ROW`, `W_OVERRIDE_COLORS`, `W_EDITS_INVALID`,
+  `I_EDITS_REMAPPED`; T3 `E_RECON_{EMPTY,INVALID,SIZE}`, `W_RECON_{DETACHED,GENUS,IOU}`, `I_RECON_THIN`; T5
+  `W_MESH_PIECES`, `W_MESH_OPEN`; `W_JOG` defined (§2.13).
+- **Backlog (§7.3):** collecting the project folder's write-once assets.
+- **Plan (§6.3 T7):** the S-CD send-side trial is postponed (owner's decision); T7's Sprint 3 builds the import UI
+  and return-path matching of T7.4; T7.3 and the prompt/send/Q&A parts wait for the trial.
+- Sprint 3 tasks per track: `docs/tracks/integration-s2.md`.
 
 ### v1.4 — 2026-10-01 (Sprint 1 integration; every request of the Step 0b/0c and T1–T8 notes, decided in `docs/tracks/integration-s1.md`)
 
