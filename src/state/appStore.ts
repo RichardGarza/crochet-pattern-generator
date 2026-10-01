@@ -49,12 +49,20 @@ export function isRouteTab(value: unknown): value is RouteTab {
 
 /**
  * A usable project id: a non-empty string of at most 200 characters without `/` (the id is the first half of
- * every asset key, `<projectId>/<sha256>`) and without whitespace or control characters. `projectStore.open`
- * and the routes accept exactly these.
+ * every asset key, `<projectId>/<sha256>`), without whitespace or control characters, and well-formed UTF-16
+ * (no lone surrogate, which `encodeURIComponent` cannot encode). `projectStore.open` and the routes accept
+ * exactly these, and every one of them round-trips through `formatHash` / `parseHash`.
  */
 export function isProjectId(id: unknown): id is string {
-  // eslint-disable-next-line no-control-regex
-  return typeof id === 'string' && id.length > 0 && id.length <= 200 && !/[/\s\u0000-\u001f\u007f]/.test(id);
+  return (
+    typeof id === 'string' &&
+    id.length > 0 &&
+    id.length <= 200 &&
+    // eslint-disable-next-line no-control-regex
+    !/[/\s\u0000-\u001f\u007f]/.test(id) &&
+    // A lone surrogate: a high one not followed by a low one, or a low one not preceded by a high one.
+    !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(id)
+  );
 }
 
 /**

@@ -9,19 +9,19 @@ and all eight tracks code against the API below.
 
 | File | What it is | Tests |
 |---|---|---|
-| `src/workers/rpc.ts` | `Superseded`, `yieldMacrotask`, `createJobGate`, `latestWins`, latest-wins groups, transfer helpers, `exposeApi` — no DOM, runs in workers and in node | `workers/__tests__/rpc.test.ts` (27) |
+| `src/workers/rpc.ts` | `Superseded`, `yieldMacrotask`, `createJobGate`, `latestWins`, latest-wins groups, transfer helpers, `exposeApi` — no DOM, runs in workers and in node | `workers/__tests__/rpc.test.ts` (28) |
 | `src/workers/client.ts` | `workers`: lazy typed proxies to the six workers, latest-wins job methods, callbacks as comlink proxies, terminate / crash → respawn | `workers/__tests__/client.test.ts` (18) |
-| `src/workers/decode.ts` | `decodeImage`, `decodeBlob`, HEIF brand sniffing, size limits, `/__convert` error mapping | `workers/__tests__/decode.test.ts` (24) |
+| `src/workers/decode.ts` | `decodeImage`, `decodeBlob`, HEIF brand sniffing, size limits, `/__convert` error mapping | `workers/__tests__/decode.test.ts` (26) |
 | `src/state/history.ts` | undo / redo on patches (a structural diff of the two documents), labels, coalesce keys, cap 200 — pure functions | `state/__tests__/history.test.ts` (34), `historyRecipes.test.ts` (6) |
-| `src/state/projectStore.ts` | the open project: `update`, undo / redo, read-only, asset cache, `commitModelRevision`, save hooks | `state/__tests__/projectStore.test.ts` (48) |
-| `src/state/appStore.ts` | route + hash functions, preferences, capabilities, library summaries, toasts | `state/__tests__/appStore.test.ts` (20) |
-| `src/state/derivedStore.ts` | derived results and job states keyed by input hash | `state/__tests__/derivedStore.test.ts` (16) |
-| `src/core/model/revisions.ts` | `carryOver`, `carryOverWith`, `sameShapeWithin` | `core/model/__tests__/revisions.test.ts` (62) |
-| `src/test/fakes.ts` | `createFakeLocks`, `createFakeChannels`, `createFakeWorker` | `test/__tests__/fakes.test.ts` (24) |
+| `src/state/projectStore.ts` | the open project: `update`, undo / redo, read-only, asset cache, `commitModelRevision`, save hooks | `state/__tests__/projectStore.test.ts` (51) |
+| `src/state/appStore.ts` | route + hash functions, preferences, capabilities, library summaries, toasts | `state/__tests__/appStore.test.ts` (21) |
+| `src/state/derivedStore.ts` | derived results and job states keyed by input hash | `state/__tests__/derivedStore.test.ts` (17) |
+| `src/core/model/revisions.ts` | `carryOver`, `carryOverWith`, `sameShapeWithin` | `core/model/__tests__/revisions.test.ts` (63) |
+| `src/test/fakes.ts` | `createFakeLocks`, `createFakeChannels`, `createFakeWorker` | `test/__tests__/fakes.test.ts` (26) |
 | — | the three React hooks and the worker yield under happy-dom | `state/__tests__/hooks.test.tsx` (2) |
 
 All checks pass in the worktree (final state of this branch, two consecutive `npm test` runs): `npm run typecheck`
-and `npm run lint` exit 0; `npm test` passes 571 tests in 31 files, 281 of them in the 11 files of this part.
+and `npm run lint` exit 0; `npm test` passes 582 tests in 31 files, 292 of them in the 11 files of this part.
 Every seeded walk and fuzz of this part has an explicit 60 s timeout (under load from other agents the longest,
 6 × 1 500 history steps, took 5.3 s against vitest's 5 s default).
 
@@ -49,7 +49,7 @@ Import paths are relative to `src/`. "Frozen" = the signature is the `…Fn` typ
 | `transfer` | `<T extends object>(value: T, transferables: Transferable[]) => T` | Marks an argument or a result so the listed buffers are moved, not copied (comlink's `transfer`); the mark survives `latestWins` adding the job id. |
 | `collectTransferables` | `(value: unknown) => ArrayBuffer[]` | Every ArrayBuffer reachable through plain objects, arrays, Maps and Sets, each once. |
 | `transferAll` | `<T extends object>(value: T) => T` | `transfer(value, collectTransferables(value))` — for a worker result: `return transferAll(result)`. |
-| `exposeApi` | `<T extends Cancellable>(methods: (gate: JobGate) => Omit<T, 'supersede'> & { supersede?: Cancellable['supersede'] }, endpoint?: Endpoint) => { api: T; gate: JobGate }` | Exposes a worker API with comlink and wires `supersede` to a fresh gate; an own `supersede` in the factory runs after the gate was raised (ami.worker forwards it to its private mesh.worker). `endpoint` defaults to the worker global. |
+| `exposeApi` | `<T extends Cancellable>(methods: (gate: JobGate) => Omit<T, 'supersede'> & { supersede?: Cancellable['supersede'] }, endpoint?: Endpoint) => { api: T; gate: JobGate }` | Exposes a worker API with comlink and wires `supersede` to a fresh gate; an own `supersede` in the factory runs after the gate was raised (ami.worker forwards it to its private mesh.worker). The factory may return a plain object or a class instance (`(gate) => new GeomWorker(gate)`): every method of its own properties and its prototype chain is exposed, bound to that object. `endpoint` defaults to the worker global. |
 
 A worker file then looks like this (the stubs of 0a keep working unchanged until their track replaces them):
 
@@ -88,8 +88,8 @@ nothing else holds (never a mesh the viewport renders).
 
 | Export | Signature | What it does |
 |---|---|---|
-| `decodeImage` | frozen `DecodeImageFn`: `(input: Blob \| RgbaImage) => Promise<RgbaImage>` | Blob → RGBA8 with the EXIF orientation applied; an `RgbaImage` is returned as the same object (after a check that `data.length === w·h·4`). Workers and browsers only. |
-| `decodeBlob` | `(blob: Blob, env?: DecodeEnv) => Promise<DecodedImage>` | The same, and reports what was decoded. Every failure is an `ImageDecodeError`. |
+| `decodeImage` | frozen `DecodeImageFn`: `(input: Blob \| RgbaImage) => Promise<RgbaImage>` | Blob → RGBA8 with the EXIF orientation applied; an `RgbaImage` is returned as the same object (after a check that `data` is a `Uint8ClampedArray` of `w·h·4` bytes; any other typed array is `invalid-image`). Workers and browsers only. |
+| `decodeBlob` | `(blob: Blob, env?: DecodeEnv) => Promise<DecodedImage>` | The same, and reports what was decoded. Every failure is an `ImageDecodeError`, also one of `readPixels` (a canvas the browser cannot allocate → `unsupported`, with the original as `cause`). |
 | `DecodedImage` | `{ image: RgbaImage; source: Blob; convertedFromHeic: boolean }` | `source` is the input, or the JPEG that `/__convert` made of a HEIC photo: the blob to store as the project's source ("Converted from HEIC" chip when `convertedFromHeic`). |
 | `ImageDecodeError` | `class ImageDecodeError extends Error { readonly code: ImageDecodeErrorCode; constructor(code: ImageDecodeErrorCode, message: string, options?: { cause?: unknown }) }` | `message` is written for the user; `name` is `'ImageDecodeError'`. |
 | `ImageDecodeErrorCode` | `'heic-unavailable' \| 'heic-too-large' \| 'heic-failed' \| 'unsupported' \| 'too-large' \| 'invalid-image' \| 'no-decoder'` | |
@@ -175,10 +175,10 @@ review: a `markSaved` there left `doc.rev` and `baseRev` apart, an `endCoalescin
 | `open` | `(doc: ProjectDoc, o?: { readOnly?: boolean; assets?: Iterable<readonly [string, Blob]>; discardUnsaved?: boolean }) => void` | Opens a project (copied and frozen), empty history. Throws `UnsavedChangesError` when the open project is dirty, unless `discardUnsaved`. |
 | `close` | `(o?: { discardUnsaved?: boolean }) => void` | Same guard. |
 | `setReadOnly` | `(readOnly: boolean) => void` | The lock was handed over or stolen. Unsaved changes stay and can still be saved. |
-| `update` | `(label: string, recipe: Recipe, o?: { coalesceKey?: string }) => boolean` | **The only way to change authored data.** `false` = read-only (nothing changed). Throws: no project, called inside a recipe, async or throwing recipe, a recipe that changes `schema`/`version`/`id`/`createdAt`/`updatedAt`/`rev` or `threeD.revisions`. A recipe that leaves the document deeply equal is no change (no history entry, not dirty). Values a recipe assigns from outside become part of the frozen document: do not mutate them afterwards. |
+| `update` | `(label: string, recipe: Recipe, o?: { coalesceKey?: string }) => boolean` | **The only way to change authored data.** `false` = read-only (nothing changed). Throws: no project, called inside a recipe, async or throwing recipe, a recipe that changes `schema`/`version`/`id`/`createdAt`/`updatedAt`/`rev` or the entries of `threeD.revisions`, or removes a `threeD` that holds revisions (its own message). Creating `threeD` with `revisions: []`, or removing one whose list is empty, is an ordinary edit. A recipe that leaves the document deeply equal is no change (no history entry, not dirty). Values a recipe assigns from outside become part of the frozen document: do not mutate them afterwards. |
 | `undo`, `redo` | `() => boolean` | False when there is nothing to do or the project is read-only. |
 | `endCoalescing` | `() => void` | Pointer-up / blur: the next update starts a new history entry even with the same key. |
-| `putAsset` | `(bytes: Blob \| ArrayBuffer \| ArrayBufferView<ArrayBuffer>, mime: string) => Promise<AssetRef>` | Content-addressed: `{ key: '<projectId>/<sha256>', mime, bytes, sha256 }`; identical bytes are stored once. Rejects with `ReadOnlyError` on a read-only project. |
+| `putAsset` | `(bytes: Blob \| ArrayBuffer \| ArrayBufferView<ArrayBuffer>, mime: string) => Promise<AssetRef>` | Content-addressed: `{ key: '<projectId>/<sha256>', mime, bytes, sha256 }`; identical bytes are stored once, and the ref of a dedupe hit carries the type of the blob already stored (the first one), not this call's `mime`. `mime` is normalized as `Blob` does (lowercase). Rejects with `ReadOnlyError` on a read-only project. |
 | `cacheAsset` | `(key: string, blob: Blob) => void` | Adds an already-stored asset to the cache. |
 | `getAsset` | `(ref: AssetRef \| string) => Promise<Blob>` | Cache, else the asset loader; rejects with `AssetMissingError`. |
 | `setAssetLoader` | `(loader: AssetLoader \| null) => void` | T8 registers its repository lookup. |
@@ -245,7 +245,7 @@ compare-and-swap decides); `setAssetLoader((key, ref) => …)` for assets that a
 | `START_ROUTE` | `{ screen: 'start' }` | |
 | `parseHash` | `(hash: string) => Route` | Total. `#/` → start; `#/p/<id>` → the project without a tab; `#/p/<id>/<tab>`; unknown hashes → start; an unknown last segment of a well-formed project hash → that project without a tab. |
 | `formatHash` | `(route: Route) => string` | `#/`, `#/p/<id>`, `#/p/<id>/<tab>` (id percent-encoded). `parseHash(formatHash(r))` equals `r`. |
-| `sameRoute`, `isRouteTab`, `isProjectId` | `(a: Route, b: Route) => boolean`, type guards | `isProjectId`: non-empty, ≤ 200 chars, no `/`, no whitespace or control characters — what `projectStore.open` and the routes accept. **T8's id generator must produce such ids.** |
+| `sameRoute`, `isRouteTab`, `isProjectId` | `(a: Route, b: Route) => boolean`, type guards | `isProjectId`: non-empty, ≤ 200 chars, no `/`, no whitespace or control characters, well-formed UTF-16 (no lone surrogate) — what `projectStore.open` and the routes accept; every accepted id round-trips through `formatHash` / `parseHash`. **T8's id generator must produce such ids.** |
 | `Prefs`, `FeatureFlags`, `PrefsPatch`, `DEFAULT_PREFS` | `{ units: UnitPref; terms: Terms; hand: Hand; dialect: 'compact' \| 'verbose'; features: { mosaic: boolean } }` | Defaults: `in`, `us`, `right`, `compact`, mosaic off. |
 | `sanitizePrefs` | `(stored: unknown, base?: Prefs) => Prefs` | Whatever was stored → valid preferences. |
 | `Capabilities`, `UNKNOWN_CAPABILITIES` | `{ webgpu: boolean \| null; storagePersisted: boolean \| null; folderMirror: boolean \| null }` | null = not probed yet. |
@@ -278,8 +278,9 @@ Division of work with the shell: `app/router.ts` listens to `hashchange` and cal
 
 Actions: `run(kind, inputHash, compute): Promise<value | undefined>` — the usual shape of a slice action:
 returns the stored value for the same inputs, joins a running job for the same inputs, otherwise computes and
-stores; resolves `undefined` when superseded, failed (the error is in `jobs[kind]`) or overtaken; never
-rejects · `beginJob(name, inputHash): void` · `setJobProgress(name, inputHash, progress: number): void` (clamped
+stores; resolves `undefined` when superseded, failed (the error is in `jobs[kind]`) or overtaken by a run for
+other inputs; when an older job for the same inputs stored its value first (A → B → A), the newest run resolves
+with that value; never rejects · `beginJob(name, inputHash): void` · `setJobProgress(name, inputHash, progress: number): void` (clamped
 to 0..1; ignored for a job that is not the latest) · `finishJob(name, inputHash): boolean` · `failJob(name,
 inputHash, error): boolean` (false, and nothing recorded, for `Superseded` and for a job that is not the latest) ·
 `setResult(kind, inputHash, value): boolean` (false when a job for other inputs of that kind is running) ·
@@ -299,7 +300,7 @@ void derivedStore.getState().run('chart', hash, () => workers.chart2d.run({ imag
 | `CarryOptions` | `{ carryPaintAnyway?: readonly string[] }` | |
 | `CarryReport` | re-export of the frozen type | `crochet`, `paint`, `paintDropped` (part ids, in the order of `next.parts`), `features` (feature ids). |
 | `emptyCarryReport` | `() => CarryReport` | |
-| `sameShapeWithin` | `(prev: Part, next: Part, tolerance?: number) => boolean` | "The same type and every dim within 10%", per part type (T7's diff can use it). |
+| `sameShapeWithin` | `(prev: Part, next: Part, tolerance?: number) => boolean` | "The same type and every dim within 10%", per part type (T7's diff can use it). A lathe with the same number of profile points is compared point by point (each radius, and each height above the first point, within 10% of its own value); with a different number, as a curve. |
 | `PAINT_TOLERANCE`, `MAX_PALETTE`, `MAX_FEATURES` | `0.1`, `16`, `60` | |
 
 ### `test/fakes.ts`
@@ -310,7 +311,8 @@ void derivedStore.getState().run('chart', hash, () => workers.chart2d.run({ imag
 | `FakeLockManager` | `LockManagerLike & { client(clientId?: string): FakeLockClient; query(): { held: FakeLockInfo[]; pending: FakeLockInfo[] }; isHeld(name: string): boolean; flush(): Promise<void> }` | `client()` = another fake tab sharing the same locks. |
 | `FakeLockClient` | `LockManagerLike & { clientId: string; close(): void }` | `close()` = the tab was closed: its locks are released, its queued requests dropped. |
 | `FakeLock`, `FakeLockInfo` | `{ name: string; mode: 'exclusive' }`, `{ name; mode; clientId }` | |
-| `createFakeChannels` | `() => FakeChannelHub` | BroadcastChannel semantics. |
+| `createFakeChannels` | `(options?: FakeChannelOptions) => FakeChannelHub` | BroadcastChannel semantics: a structured clone per receiver, each receiver in a task of its own (a handler that throws does not keep the message from the others), `DataCloneError` / `InvalidStateError` synchronously from `postMessage`, with or without listeners. |
+| `FakeChannelOptions` | `{ onHandlerError?: (error: unknown, channelName: string) => void }` | Where an `onmessage` handler's error goes; by default it is reported as an uncaught error (an unhandled rejection, which fails the vitest run), as the browser reports it. |
 | `FakeChannelHub` | `{ channel(name: string): ChannelLike; flush(): Promise<void>; openCount(name?: string): number }` | `channel` is the factory for `createProjectRepository({ channel })`. |
 | `createFakeWorker` | `(api: object) => FakeWorker` | A comlink worker without a thread (real comlink messages over a MessageChannel). |
 | `FakeWorker` | `Endpoint & { terminate(): void; readonly terminated: boolean; crash(message?: string): void }` | |
@@ -373,7 +375,9 @@ sees the old tab go read-only first. The same scenario scripts gave identical lo
     (`UnsavedChangesError`). Not in the spec; it is the "never lose user data" rule at the last place where a
     navigation could lose an edit that the debounced autosave has not written yet.
 11. **`threeD.revisions` cannot be written through `update`** (it throws): only `commitModelRevision` appends
-    revisions. Replacing or editing `threeD.model` in an `update` stays allowed — Proportions and gizmo edits
+    revisions. Creating `threeD` with an empty list (a 2D project becomes 3D, a skeleton document filled in
+    later) and removing a `threeD` whose list is empty are ordinary edits; removing a `threeD` that holds
+    revisions throws with its own message (§3.7.7: old revisions are kept). Replacing or editing `threeD.model` in an `update` stays allowed — Proportions and gizmo edits
     are "one history step" without a revision (§4.2).
 12. **`SaveStatus` has `'unsaved'`** next to the four states of `useAutosave`: T8 maps it to its chip.
 13. **Extras not named in the spec:** `commitModelRevisionWith` (`also`), `readModelRevision`,
@@ -401,7 +405,7 @@ sees the old tab go read-only first. The same scenario scripts gave identical lo
 | §3.7.7 "Accept … a new model revision" for an import whose model equals the current one | With `also` (T7's import path) a revision is appended anyway, so the `ImportRecord.revision` that `also` writes names an existing revision; its asset is the existing one (same content key, nothing new to store). Without `also`, an unchanged model is no change at all (no entry, no history step). |
 | §4.4 "undoable and also create a persisted model revision" vs §5.3 "a named update" | The `ModelRevision` entries are part of the update, so one undo removes them again and restores the document exactly; the revision ASSETS stay in the asset store (and go out with the next save). The alternative — a revision list that undo never shrinks — would make undo restore a document that differs from the one before the step. |
 | §5.2.1 `carryOver(prev, next)` has no `carryPaintAnyway`, `commitModelRevision` has | `carryOverWith(prev, next, { carryPaintAnyway })` in the same kernel; `carryOver` is that without options. |
-| §3.7.7 "paint only when … every dim is within 10%" | Each numeric dim against its previous value (`|next − prev| ≤ 0.1·|prev|`); a previous dim of 0 must stay 0. `open` (cylinder) and `sharp` (lathe) are not dims; a torus without `arcDeg` is 360°; a `flat` must keep its `shape`, a polygon its point count (points within 10% of the larger of w, h); a `mesh` part is compared by `bboxIn`; a lathe is compared as a curve — height and largest radius within 10%, and the radius at 33 heights within 10% of the largest radius — because a re-imported body rarely keeps its number of profile points. |
+| §3.7.7 "paint only when … every dim is within 10%" | Each numeric dim against its previous value (`|next − prev| ≤ 0.1·|prev|`); a previous dim of 0 must stay 0. `open` (cylinder) and `sharp` (lathe) are not dims; a torus without `arcDeg` is 360°; a `flat` must keep its `shape`, a polygon its point count (points within 10% of the larger of w, h); a `mesh` part is compared by `bboxIn`; a lathe with the same number of profile points is compared point by point — every radius, and every height above the profile's first point (where it starts is position), within 10% of its own value: the literal reading, so a neck that goes from 0.4 to 0.6 in drops the paint however large the body. Only when the number of points changed (a re-imported body rarely keeps them) is there no per-point correspondence, and the profiles are compared as curves — height and largest radius within 10%, and the radius at 33 heights within 10% of the largest radius. |
 | §3.5.1 `paint.data` holds palette INDICES, and an import may reorder or rename the palette | Carried paint is re-indexed by color identity: the same palette id, else the same hex, else the color is appended to the new palette (≤ 16), else the nearest color by ΔE00. A carried feature's `color` (a palette id) is mapped the same way. A field that cannot be decoded (not 64 × 64) is carried only when the palette indices did not move. |
 | §5.5.5 "`crochet` hints … carried over" when the new model has hints too | The previous value wins, key by key (the user's setting), and keys only the new model has are kept; a previous hint left `undefined` (an editor that cleared a field) is no setting and does not wipe the new model's value. The same for paint: the previous paint replaces paint the new model brought, when the shape matches. A caller that wants the new model's own paint (Apply photo colors) commits with `carry: 'none'`. |
 | §5.5.5 "features added in the editor" — nothing marks a feature as editor-made | Every feature of the previous model whose id the new model lacks is carried when its part still exists (to at most 60 features), and reported in `report.features`. See request 6. |
@@ -434,7 +438,7 @@ sees the old tab go read-only first. The same scenario scripts gave identical lo
    (commit with `carry: 'none'` after its own `carryOverWith`), or `Feature` gets an optional additive field
    (`origin?: 'editor'`) that `carryOver` can test.
 7. **Tab ids:** the Step 0c tab registry must use `TAB_IDS` of `state/appStore.ts`; a new tab is added there.
-8. **Project ids (T8):** `isProjectId` — no `/`, no whitespace, ≤ 200 characters; `crypto.randomUUID()` fits.
+8. **Project ids (T8):** `isProjectId` — no `/`, no whitespace, no lone surrogate, ≤ 200 characters; `crypto.randomUUID()` fits.
 9. **Assets by key (T8):** `PhotoView.imageKey` / `maskKey` / `labelsKey` are bare keys, while
    `ProjectRepository.getAsset` takes an `AssetRef`. `projectStore.getAsset(key)` calls the registered loader
    with the key (and the ref when the caller had one), so T8's loader needs a lookup by key.
@@ -570,7 +574,7 @@ assertions in `history.test.ts` and `projectStore.test.ts`, and deleted the file
 | the same model committed again with an `also` that changes nothing | a new revision each time, with the same asset | kept on purpose (`info.rev` must name a revision); documented, test |
 | a commit whose revision asset is already cached | a new (equal) asset Map in the state anyway | fixed: the maps are replaced only when an asset was added |
 | SHA-256 at the padding boundaries, at 1 MiB and on a subarray | equal to node:crypto | added to the SHA test |
-| save hooks in hostile orders: undo during a save, stale tickets after a failure or a reopen, read-only during a save, `rebind` while `putAsset` hashes, `putAsset` across close + reopen, the same bytes under two mime types | consistent; the asset of a `putAsset` that was hashing during a `rebind` gets the copy's key | the sound ones kept as assertions; two mime types share one key and the first blob (content-addressed) |
+| save hooks in hostile orders: undo during a save, stale tickets after a failure or a reopen, read-only during a save, `rebind` while `putAsset` hashes, `putAsset` across close + reopen, the same bytes under two mime types | consistent; the asset of a `putAsset` that was hashing during a `rebind` gets the copy's key | the sound ones kept as assertions; two mime types share one key and the first blob (content-addressed; since the fourth pass the second ref also names the first blob's type) |
 | `rebind` (with a name), then undo of a rename made before it | the copy's name goes back to the original's | documented (request 17) |
 | sparse arrays, extra properties on arrays, Dates, nesting of 3 000 levels, a 60 000-element array rewritten in one recipe | a hole reads as `undefined`; array extras unseen; an equal Date is replaced; 3 000 levels throw RangeError (1 000 work; immer itself stops at 1 500); 60 000 elements: 274 ms, undo 9 ms, exact | not project data, or fine; documented in `history.ts` |
 
@@ -586,3 +590,21 @@ key (`{ ...next, ...prev }`), against its own rule; fixed, with a test.
 It also found the heavy property tests of this part running out of vitest's default 5 s under load (5.3 s);
 they now have explicit 60 s timeouts, and the per-update cost test uses the one-frame bound its comment names
 (16 ms; measured 2.0 ms idle, 6.5 ms with all cores loaded).
+
+**Fourth pass** (two independent verifiers, conformance and adversarial, each finding with a repro test; fixed
+by a separate session that re-ran every repro first). All eleven reproduced (C-C3 as a coverage gap, not a
+defect). The repro files were deleted; each requirement they test now lives in the suite under a proper name.
+
+| Finding | Severity | Outcome |
+|---|---|---|
+| A-A4 `exposeApi` spread the factory's result, so a class-based worker (`(gate) => new GeomWorker(gate)`) exposed only `supersede` | medium | fixed: the own properties and the prototype chain are walked, each method bound to the instance; a class `supersede` is forwarded; test in `rpc.test.ts` |
+| A-A3 `decodeBlob` let a `RangeError` / `SecurityError` of `readPixels` through (both the plain and the converted-HEIC path) | medium | fixed: mapped to `ImageDecodeError('unsupported', …, { cause })`, an `ImageDecodeError` passes as it is; test on both paths |
+| A-A1 fake channels: one throwing handler stopped delivery to every later receiver | medium | fixed: one task per receiver (as BroadcastChannel); the error goes to `onHandlerError` or is reported as uncaught; tests, also for microtask order |
+| A-A6 / C-C1 `update` refused a recipe that creates `threeD` with no revisions (`undefined → []` counted as a revision change), with a misleading message | medium / low | fixed: `revisions ?? []` on both sides; removing a `threeD` that holds revisions keeps throwing, with its own message (deviation 11); tests |
+| C-C2 lathe paint check allowed a profile radius to change by 50% of itself when the point count was kept | low | fixed: same point count → per-point, each value against 10% of its own (ambiguity row updated); the curve comparison stays for a changed point count; test |
+| A-A2 fake channels threw `DataCloneError` only when another channel was open | low | fixed: serialized once before the receivers are looked up; test |
+| A-A5 `decodeImage` accepted any typed array with `w·h·4` elements (Float32Array, Uint16Array); a DataView gave "has undefined" | low | fixed: a `Uint8ClampedArray` (checked by tag, across realms) of `w·h·4` bytes; test |
+| A-A7 `derivedStore.run` A → B → A: the newest run resolved `undefined` although the value for its inputs was stored and nothing newer was asked | low | fixed: a run overtaken only by an older job for the SAME inputs resolves with the stored value; test (success and failure) |
+| A-A8 `putAsset` dedupe returned a ref whose `mime` differed from the stored blob; the mime was not normalized | low | fixed: the ref names the stored blob's type, normalized as `Blob` does; the earlier test that expected the caller's label was changed on purpose |
+| A-A9 `isProjectId` accepted a lone UTF-16 surrogate, which `formatHash` cannot encode (URIError) | low | fixed: well-formed UTF-16 required (a regex: `String.prototype.isWellFormed` is ES2024, the lib is ES2023); round-trip test |
+| C-C3 the client test named "would not be cloneable" checked only the proxied half | low | fixed: the test now also shows the `DataCloneError` of a plain function sent without `Comlink.proxy` |

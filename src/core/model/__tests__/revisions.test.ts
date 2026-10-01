@@ -310,6 +310,22 @@ describe('sameShapeWithin: every part type', () => {
     expect(sameShapeWithin(lathe('body', cylinder), lathe('body', cylinder))).toBe(true);
     expect(sameShapeWithin(lathe('body', cylinder, { paint: STRIPES }), lathe('body', cylinder.map(([r, y]) => [r * 1.05, y])))).toBe(true);
   });
+
+  it('§3.7.7 "every dim within 10%": with the same points, each radius and height is held to 10% of its own value', () => {
+    const vase = (neck: number, top = 4.2): [number, number][] => [
+      [0, 0],
+      [2, 1],
+      [2, 3],
+      [neck, 4],
+      [0, top],
+    ];
+    // the neck grows by 50% of itself: only 5% of the largest radius, but not "within 10%"
+    expect(sameShapeWithin(lathe('body', vase(0.4)), lathe('body', vase(0.6)))).toBe(false);
+    expect(sameShapeWithin(lathe('body', vase(0.4)), lathe('body', vase(0.43)))).toBe(true); // +7.5%
+    expect(sameShapeWithin(lathe('body', vase(0.4)), lathe('body', vase(0.4, 4.7)))).toBe(false); // the top +12%
+    // where the profile starts is position, not a dim
+    expect(sameShapeWithin(lathe('body', vase(0.4)), lathe('body', vase(0.4).map(([r, y]) => [r, y - 2])))).toBe(true);
+  });
 });
 
 describe('sameShapeWithin: dimensions that are missing or not numbers', () => {

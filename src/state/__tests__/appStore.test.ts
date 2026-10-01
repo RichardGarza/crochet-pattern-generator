@@ -137,6 +137,17 @@ describe('hash routes', () => {
     expect(sameRoute({ screen: 'project', projectId: 'a' }, { screen: 'project', projectId: 'a', tab: 'chart' })).toBe(false);
   });
 
+  it('every id it accepts round-trips; a lone surrogate (which encodeURIComponent cannot encode) is not an id', () => {
+    for (const bad of ['toy\uD800', '\uDC00toy', 'a\uDBFFb', '\uDFFF\uD800']) {
+      expect(isProjectId(bad), JSON.stringify(bad)).toBe(false);
+    }
+    for (const id of ['toy\uD83E\uDDF8', 'häkeln-🧶', 'Bunny_(copy)', 'a%2Fb', '?#', 'x'.repeat(200)]) {
+      expect(isProjectId(id), id).toBe(true);
+      const route: Route = { screen: 'project', projectId: id, tab: 'shape' };
+      expect(parseHash(formatHash(route))).toEqual(route);
+    }
+  });
+
   it('setRoute stores the route and ignores one that is the same', () => {
     const store = createAppStore();
     let changes = 0;

@@ -49,7 +49,7 @@ export type ImageDecodeErrorCode =
   | 'unsupported'
   /** Decoded, but larger than MAX_DECODE_PIXELS / MAX_DECODE_SIDE. */
   | 'too-large'
-  /** An `RgbaImage` whose `data` does not match `w × h × 4`. */
+  /** An `RgbaImage` whose `data` is not a Uint8ClampedArray of `w × h × 4` bytes. */
   | 'invalid-image'
   /** No `createImageBitmap` / `OffscreenCanvas`: node, or a main-thread context without them. */
   | 'no-decoder';
@@ -137,11 +137,20 @@ function isRgbaImage(input: Blob | RgbaImage): input is RgbaImage {
   return typeof (input as Blob).arrayBuffer !== 'function' && 'data' in input && 'w' in input && 'h' in input;
 }
 
+/** By tag, not `instanceof`, so an array from another realm (a test environment, an iframe) is recognized. */
+const isUint8Clamped = (data: unknown): data is Uint8ClampedArray =>
+  Object.prototype.toString.call(data) === '[object Uint8ClampedArray]';
+
 function checkRgbaImage(image: RgbaImage): void {
-  const { w, h, data } = image;
-  if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || !ArrayBuffer.isView(data) || data.length !== w * h * 4) {
-    const length = ArrayBuffer.isView(data) ? String((data as Uint8ClampedArray).length) : 'no';
-    throw new ImageDecodeError('invalid-image', `RgbaImage ${w} × ${h} needs ${w * h * 4} bytes of RGBA8 data, but has ${length}.`);
+  const { w, h } = image;
+  const data: unknown = image.data;
+  if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || !isUint8Clamped(data) || data.byteLength !== w * h * 4) {
+    const has = isUint8Clamped(data)
+      ? `${data.byteLength} bytes`
+      : ArrayBuffer.isView(data)
+        ? `a ${Object.prototype.toString.call(data).slice(8, -1)} instead of a Uint8ClampedArray`
+        : 'no typed array';
+    throw new ImageDecodeError('invalid-image', `RgbaImage ${w} × ${h} needs ${w * h * 4} bytes of RGBA8 data (a Uint8ClampedArray), but has ${has}.`);
   }
 }
 
@@ -234,9 +243,16 @@ function rasterize(bitmap: BitmapLike, env: DecodeEnv): RgbaImage {
   try {
     const { width: w, height: h } = bitmap;
     checkDecodeSize(w, h);
-    const data = env.readPixels(bitmap);
-    if (data.length !== w * h * 4) {
-      throw new ImageDecodeError('unsupported', `The browser returned ${data.length} bytes for a ${w} × ${h} image.`);
+    let data: Uint8ClampedArray<ArrayBuffer>;
+    try {
+      data = env.readPixels(bitmap);
+    } catch (cause) {
+      // e.g. a RangeError or SecurityError from OffscreenCanvas / getImageData (a canvas the browser cannot allocate)
+      if (isImageDecodeError(cause)) throw cause;
+      throw new ImageDecodeError('unsupported', `This image could not be read back after decoding (${w} × ${h} px). Try a smaller copy.`, { cause });
+    }
+    if (!isUint8Clamped(data) || data.byteLength !== w * h * 4) {
+      throw new ImageDecodeError('unsupported', `The browser returned ${String((data as { byteLength?: unknown } | null)?.byteLength)} bytes for a ${w} × ${h} image.`);
     }
     return { w, h, data };
   } finally {
@@ -277,7 +293,7 @@ export async function decodeBlob(blob: Blob, env: DecodeEnv = browserDecodeEnv()
 
 /**
  * Blob → RgbaImage (§2.3.1); an `RgbaImage` passes through unchanged (the same object), after a check that its
- * data has `w × h × 4` bytes. Workers and browsers only: in node, pass `RgbaImage`s. Use `decodeBlob` when the
+ * data is a Uint8ClampedArray of `w × h × 4` bytes. Workers and browsers only: in node, pass `RgbaImage`s. Use `decodeBlob` when the
  * caller also needs the converted JPEG of a HEIC photo.
  */
 export const decodeImage: DecodeImageFn = async (input) => {

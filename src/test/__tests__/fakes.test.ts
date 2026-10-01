@@ -408,11 +408,51 @@ describe('createFakeChannels', () => {
     expect(got).toEqual([]);
   });
 
-  it('throws at once for a message that cannot be cloned', () => {
+  it('throws DataCloneError at once for a message that cannot be cloned, also with no other channel open', () => {
+    const hub = createFakeChannels();
+    const lonely = hub.channel('cpg');
+    // BroadcastChannel serializes before it looks for receivers (checked with node 22's)
+    expect(() => lonely.postMessage({ run: () => 1 })).toThrow(expect.objectContaining({ name: 'DataCloneError' }));
+    hub.channel('cpg');
+    expect(() => lonely.postMessage({ fn: () => {} })).toThrow(expect.objectContaining({ name: 'DataCloneError' }));
+  });
+
+  it('a receiver whose handler throws does not keep the message from the others; the error is reported', async () => {
+    const errors: { error: unknown; name: string }[] = [];
+    const hub = createFakeChannels({ onHandlerError: (error, name) => errors.push({ error, name }) });
+    const sender = hub.channel('cpg');
+    const faulty = hub.channel('cpg');
+    const healthy = hub.channel('cpg');
+    const got: unknown[] = [];
+    const bug = new Error('handler bug in one tab');
+    faulty.onmessage = () => {
+      throw bug;
+    };
+    healthy.onmessage = (e) => got.push(e.data);
+    sender.postMessage('release');
+    sender.postMessage('again');
+    await hub.flush();
+    expect(got).toEqual(['release', 'again']);
+    expect(errors).toEqual([
+      { error: bug, name: 'cpg' },
+      { error: bug, name: 'cpg' },
+    ]);
+  });
+
+  it('delivers to each receiver in a task of its own, as BroadcastChannel does: microtasks of one run before the next', async () => {
     const hub = createFakeChannels();
     const a = hub.channel('cpg');
-    hub.channel('cpg');
-    expect(() => a.postMessage({ fn: () => {} })).toThrow();
+    const b = hub.channel('cpg');
+    const c = hub.channel('cpg');
+    const log: string[] = [];
+    b.onmessage = () => {
+      log.push('b');
+      queueMicrotask(() => log.push('b microtask'));
+    };
+    c.onmessage = () => log.push('c');
+    a.postMessage('x');
+    await hub.flush();
+    expect(log).toEqual(['b', 'b microtask', 'c']);
   });
 
   it('a reply from inside a handler is delivered too', async () => {

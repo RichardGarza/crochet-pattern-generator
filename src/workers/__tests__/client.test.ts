@@ -1,6 +1,7 @@
 // workers/client.ts in the node environment: there is no Worker here, so every worker is a fake that speaks
 // real comlink over a MessageChannel (src/test/fakes.ts). The same calls against real module workers run in
 // the Playwright smoke test (e2e/smoke.spec.ts, Step 0c).
+import { wrap } from 'comlink';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { isNotImplementedError, stub } from '../../core/stub';
 import { createFakeWorker, type FakeWorker } from '../../test/fakes';
@@ -377,7 +378,17 @@ describe('errors from a worker', () => {
     client.terminate();
   });
 
-  it('a callback passed without the client would not be cloneable; through the client it is', async () => {
+  it('§5.4 item 3: a callback passed without the client is a DataCloneError; through the client it is proxied', async () => {
+    // without the client: a plain function cannot cross the worker boundary
+    const bare = createFakeWorker({ depth: async (_i: unknown, cb?: (p: number) => void) => cb?.(1) });
+    const remote = wrap<{ depth(i: unknown, cb?: (p: number) => void): Promise<void> }>(bare);
+    const error: unknown = await remote.depth({}, () => {}).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect((error as Error | null)?.name).toBe('DataCloneError');
+    bare.terminate();
+    // through the client: the same kind of call works
     const { client } = fakeClient();
     await expect(client.ml.depth({ w: 1, h: 1, data: new Uint8ClampedArray(4) }, () => {})).resolves.toBeDefined();
     client.terminate();

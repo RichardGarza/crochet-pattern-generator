@@ -162,8 +162,9 @@ export interface ProjectState {
 
   /**
    * Stores bytes as a content-addressed asset: key `<projectId>/<sha256>`. Identical bytes give the same
-   * key and are stored once. The asset is saved with the next save. Rejects with `ReadOnlyError` on a
-   * read-only project.
+   * key and are stored once: the ref's `mime` is then the type of the blob already in the cache (the first
+   * one stored), not this call's `mime`. `mime` is normalized as `Blob` does (lowercase). The asset is saved
+   * with the next save. Rejects with `ReadOnlyError` on a read-only project.
    */
   putAsset(bytes: Blob | ArrayBuffer | ArrayBufferView<ArrayBuffer>, mime: string): Promise<AssetRef>;
   /** Adds an asset that is already stored (loaded from the repository) to the cache. */
@@ -378,7 +379,11 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
           throw new Error(`projectStore.${what} ("${label}"): a recipe must not change "${field}"; persistence owns it (markSaved, rebind)`);
         }
       }
-      if (!o.allowRevisions && diffDocuments(doc.threeD?.revisions, result.doc.threeD?.revisions).patches.length > 0) {
+      // Creating `threeD` with an empty revision list, or removing one that holds none, writes no revision.
+      if (!o.allowRevisions && diffDocuments(doc.threeD?.revisions ?? [], result.doc.threeD?.revisions ?? []).patches.length > 0) {
+        if (doc.threeD && !result.doc.threeD) {
+          throw new Error(`projectStore.${what} ("${label}"): a recipe must not remove doc.threeD while it holds model revisions (§3.7.7: old revisions are kept)`);
+        }
         throw new Error(`projectStore.${what} ("${label}"): the model revisions are written by commitModelRevision only`);
       }
       const partial: Partial<ProjectState> = {
@@ -620,14 +625,18 @@ export function createProjectStore(deps: { now?: () => Date } = {}): ProjectStor
         const s = get();
         if (!s.doc || s.session !== before.session) throw new Error('projectStore.putAsset: the project was closed while the asset was being stored');
         const key = assetKey(s.doc.id, sha256);
-        if (!s.assets.has(key)) {
+        const cached = s.assets.get(key);
+        if (!cached) {
           const assets = new Map(s.assets);
           assets.set(key, blob);
           const unsaved = new Set(s.unsavedAssetKeys);
           unsaved.add(key);
           set({ assets, unsavedAssetKeys: unsaved });
         }
-        return { key, mime, bytes: blob.size, sha256 };
+        // The ref describes the blob stored under its key: on a dedupe hit that is the first blob, whose type
+        // wins over this call's label. Blob types are normalized (lowercase); the raw label only when the
+        // Blob refused it (non-ASCII) and nothing better is known.
+        return { key, mime: cached?.type || blob.type || mime, bytes: blob.size, sha256 };
       },
 
       cacheAsset(key, blob) {

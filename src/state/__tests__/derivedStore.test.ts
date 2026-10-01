@@ -193,6 +193,37 @@ describe('derivedStore.run', () => {
     expect(jobOf(store.getState(), 'chart')).toMatchObject({ status: 'done', inputHash: 'a', error: null });
   });
 
+  it('A → B → A while the first A still runs: the newest run resolves with the value stored for A', async () => {
+    const store = createDerivedStore();
+    const firstA = deferred<ChartResult>();
+    const b = deferred<ChartResult>();
+    const againA = deferred<ChartResult>();
+    const first = store.getState().run('chart', 'A', () => firstA.promise);
+    const middle = store.getState().run('chart', 'B', () => b.promise);
+    const latest = store.getState().run('chart', 'A', () => againA.promise); // the user went back to A
+    firstA.resolve(chart('A'));
+    expect(await first).toEqual(chart('A')); // it is the latest job for A, so it is stored
+    againA.resolve(chart('A again'));
+    b.resolve(chart('B'));
+    expect(await latest).toEqual(chart('A')); // not undefined: nothing newer was asked for
+    expect(await middle).toBeUndefined();
+    expect(store.getState().chart).toEqual({ inputHash: 'A', value: chart('A') });
+    expect(jobOf(store.getState(), 'chart')).toMatchObject({ status: 'done', inputHash: 'A' });
+
+    // the same when the newest A fails after the older A stored its value
+    const store2 = createDerivedStore();
+    const a1 = deferred<ChartResult>();
+    const a2 = deferred<ChartResult>();
+    const older = store2.getState().run('chart', 'A', () => a1.promise);
+    void store2.getState().run('chart', 'B', () => new Promise<ChartResult>(() => {}));
+    const newest = store2.getState().run('chart', 'A', () => a2.promise);
+    a1.resolve(chart('A'));
+    expect(await older).toEqual(chart('A'));
+    a2.reject(new Error('late'));
+    expect(await newest).toEqual(chart('A'));
+    expect(jobOf(store2.getState(), 'chart')).toMatchObject({ status: 'done', inputHash: 'A', error: null });
+  });
+
   it('never rejects: a failure is recorded in the job, and Superseded is not a failure', async () => {
     const store = createDerivedStore();
     await store.getState().run('chart', 'ok', async () => chart('good'));

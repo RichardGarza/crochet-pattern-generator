@@ -320,22 +320,35 @@ export const latestWins: LatestWinsFn = (send, supersede) => createLatestWinsGro
  *
  * The exposed `supersede(jobId)` raises the gate. A worker that owns a nested worker (ami.worker → its private
  * mesh.worker) also returns its own `supersede` from the factory; it runs after the gate was raised and
- * forwards the id. `endpoint` defaults to the worker's global scope; tests pass a MessagePort.
+ * forwards the id. The factory may return a plain object or a class instance: the exposed object holds every
+ * method of its own properties and prototype chain, bound to it. `endpoint` defaults to the worker's global
+ * scope; tests pass a MessagePort.
  */
 export function exposeApi<T extends Cancellable>(
   methods: (gate: JobGate) => Omit<T, 'supersede'> & { supersede?: Cancellable['supersede'] },
   endpoint?: Endpoint,
 ): { api: T; gate: JobGate } {
   const gate = createJobGate();
-  const { supersede: forward, ...rest } = methods(gate);
-  const api = {
-    ...rest,
-    supersede: async (jobId: number): Promise<void> => {
-      gate.supersede(jobId);
-      if (forward) await forward(jobId);
-    },
-  } as unknown as T;
+  const impl = methods(gate) as object;
+  if (typeof impl !== 'object' || impl === null) throw new TypeError('exposeApi: the factory must return an object of methods');
+  const api: Record<string, unknown> = {};
+  // Own properties AND the prototype chain: a factory may return a plain object literal or a class instance
+  // (`(gate) => new GeomWorker(gate)`), whose methods live on the prototype that a spread would drop. Every
+  // method is bound to the object the factory returned, so `this` inside it is that object.
+  for (let o: object | null = impl; o !== null && o !== Object.prototype; o = Object.getPrototypeOf(o) as object | null) {
+    for (const key of Object.getOwnPropertyNames(o)) {
+      if (key === 'constructor' || Object.hasOwn(api, key)) continue;
+      const value: unknown = Reflect.get(impl, key);
+      if (typeof value === 'function') api[key] = (value as (...a: unknown[]) => unknown).bind(impl);
+      else if (o === impl && Object.prototype.propertyIsEnumerable.call(impl, key)) api[key] = value;
+    }
+  }
+  const forward = typeof api.supersede === 'function' ? (api.supersede as Cancellable['supersede']) : undefined;
+  api.supersede = async (jobId: number): Promise<void> => {
+    gate.supersede(jobId);
+    if (forward) await forward(jobId);
+  };
   if (endpoint) expose(api, endpoint);
   else expose(api);
-  return { api, gate };
+  return { api: api as unknown as T, gate };
 }

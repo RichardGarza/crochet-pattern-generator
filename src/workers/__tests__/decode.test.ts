@@ -111,6 +111,15 @@ describe('decodeImage: an RgbaImage passes through', () => {
     }
   });
 
+  it('refuses data of another typed-array kind, even with w × h × 4 elements: RGBA8 is bytes', async () => {
+    for (const data of [new Float32Array([1, 0.5, 0, 1]), new Uint16Array(4), new Uint8Array(4), new DataView(new ArrayBuffer(4))]) {
+      const error = await failure(() => decodeImage({ w: 1, h: 1, data: data as unknown as Uint8ClampedArray<ArrayBuffer> }));
+      expect(error.code).toBe('invalid-image');
+      expect(error.message).toContain('Uint8ClampedArray');
+      expect(error.message).not.toContain('undefined');
+    }
+  });
+
   it('has no decoder in node, and says what to pass instead', async () => {
     expect(() => browserDecodeEnv()).toThrow(ImageDecodeError);
     const error = await failure(() => decodeImage(new Blob([JPEG_HEAD], { type: 'image/jpeg' })));
@@ -351,5 +360,29 @@ describe('decodeBlob with a fake browser', () => {
     env.readPixels = () => new Uint8ClampedArray(7);
     const error = await failure(() => decodeBlob(new Blob([JPEG_HEAD]), env));
     expect(error.code).toBe('unsupported');
+  });
+
+  it('a failure while reading the pixels back is an ImageDecodeError too, on both paths, and closes the bitmap', async () => {
+    const outOfMemory = new RangeError('Out of memory');
+    const plain = fakeEnv();
+    plain.env.readPixels = () => {
+      throw outOfMemory; // e.g. getImageData on a canvas the browser cannot allocate
+    };
+    const error = await failure(() => decodeBlob(new Blob([JPEG_HEAD]), plain.env));
+    expect(error.code).toBe('unsupported');
+    expect(error.cause).toBe(outOfMemory);
+    expect(plain.log.closed).toBe(1);
+
+    const heic = fakeEnv({ undecodable: isHeic, convert: async () => response(200, 'image/jpeg') });
+    heic.env.readPixels = () => {
+      throw outOfMemory;
+    };
+    expect((await failure(() => decodeBlob(heicBlob(), heic.env))).code).toBe('unsupported');
+
+    const own = fakeEnv();
+    own.env.readPixels = () => {
+      throw new ImageDecodeError('no-decoder', 'no 2D context');
+    };
+    expect((await failure(() => decodeBlob(new Blob([JPEG_HEAD]), own.env))).code).toBe('no-decoder');
   });
 });

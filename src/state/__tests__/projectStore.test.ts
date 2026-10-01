@@ -327,12 +327,49 @@ describe('update', () => {
     expect(docOf(store)).toEqual(project());
     expect(store.getState().history.past).toEqual([]);
     expect(store.getState().changeId).toBe(0);
-    expect(() => s.update('drop 3D', (d) => delete d.threeD)).toThrow('commitModelRevision only'); // the revisions would go with it
     // replacing a branch around the revisions without changing them is fine, also with an equal copy of the list
     expect(s.update('ami', (d) => void (d.threeD = { ...d.threeD!, ami: { ...AMI, spiral: false } }))).toBe(true);
     expect(docOf(store).threeD?.ami.spiral).toBe(false);
     expect(s.update('ami again', (d) => void (d.threeD = { ...structuredClone(current(d.threeD!)), ami: AMI }))).toBe(true);
     expect(docOf(store).threeD?.ami.spiral).toBe(true);
+  });
+
+  it('a recipe may give a project its threeD part, or remove one that holds no revision; not one that holds revisions', () => {
+    const { threeD: _none, ...flat } = project({ mode: '2d' });
+    const store = opened(flat);
+    const s = store.getState();
+    expect(
+      s.update('Make it 3D', (d) => {
+        d.mode = '3d';
+        d.threeD = { origin: 'describe', meshAssets: {}, revisions: [], views: [], ami: AMI };
+      }),
+    ).toBe(true);
+    expect(docOf(store).threeD?.revisions).toEqual([]);
+    expect(s.undo()).toBe(true);
+    expect(docOf(store)).toEqual(flat);
+    expect(s.redo()).toBe(true);
+    // creating it WITH a revision is writing a revision
+    const { threeD: _again, ...flat2 } = project({ mode: '2d' });
+    const other = opened(flat2);
+    expect(() =>
+      other.getState().update('3D with a fake revision', (d) => {
+        d.threeD = { origin: 'describe', meshAssets: {}, revisions: [{ rev: 1, at: T0, source: 'edit', label: 'fake', asset: ref('p1/x') }], views: [], ami: AMI };
+      }),
+    ).toThrow('commitModelRevision only');
+    // removing a threeD without revisions is an ordinary, undoable edit
+    expect(s.update('drop 3D', (d) => void delete d.threeD)).toBe(true);
+    expect(docOf(store).threeD).toBeUndefined();
+    expect(s.undo()).toBe(true);
+    expect(docOf(store).threeD?.origin).toBe('describe');
+  });
+
+  it('refuses a recipe that removes a threeD that holds model revisions, with a message that says so', async () => {
+    const store = opened();
+    await store.getState().commitModelRevision(model([sphere('body')]), { label: 'first', source: 'seed', carry: 'by-id' });
+    expect(docOf(store).threeD?.revisions).toHaveLength(1);
+    const before = clone(docOf(store));
+    expect(() => store.getState().update('drop 3D', (d) => void delete d.threeD)).toThrow(/must not remove doc\.threeD while it holds model revisions/);
+    expect(docOf(store)).toEqual(before);
   });
 
   it('a coalesced drag is ONE history entry and one undo', () => {
@@ -699,7 +736,9 @@ describe('putAsset and the asset cache', () => {
     expect(c).toEqual(a);
     expect(d).toEqual(a);
     expect(e.key).toBe(a.key);
-    expect(e.mime).toBe('image/png');
+    // the ref describes the blob stored under the key (the first one), not this call's label
+    expect(e.mime).toBe('application/octet-stream');
+    expect((await store.getState().getAsset(e)).type).toBe(e.mime);
     expect(other.key).not.toBe(a.key);
     expect(store.getState().assets.size).toBe(2);
     expect(store.getState().assets.get(a.key)).toBe(first);
@@ -707,6 +746,15 @@ describe('putAsset and the asset cache', () => {
     const many = await Promise.all(Array.from({ length: 8 }, () => put(new Uint8Array([9, 9, 9]), 'application/octet-stream')));
     expect(new Set(many.map((m) => m.key)).size).toBe(1);
     expect(store.getState().assets.size).toBe(3);
+  });
+
+  it('normalizes the mime as Blob does, and the ref of a dedupe hit names the stored blob’s type', async () => {
+    const store = opened();
+    const png = await store.getState().putAsset(new Uint8Array([1, 2, 3]), 'Image/PNG');
+    expect(png.mime).toBe('image/png');
+    const again = await store.getState().putAsset(new Uint8Array([1, 2, 3]), 'image/jpeg');
+    expect(again).toEqual(png);
+    expect((await store.getState().getAsset(again)).type).toBe('image/png');
   });
 
   it('stores a snapshot: changing the caller’s array afterwards does not change the asset', async () => {

@@ -82,7 +82,8 @@ export interface DerivedState {
    * (a job still running for other inputs is then stale); joins the running job for the same inputs;
    * otherwise begins a job, awaits `compute`, and stores the result. Resolves with the value, or with
    * undefined when the job was superseded, failed (the error is in `jobs[kind]`), or was overtaken by a
-   * newer `run`. Never rejects.
+   * newer `run` for other inputs. When an older job for the same inputs stored its value first (A → B → A,
+   * the first A finished first), the newest run resolves with that stored value. Never rejects.
    */
   run<K extends DerivedKind>(kind: K, inputHash: string, compute: () => Promise<DerivedValues[K]>): Promise<DerivedValues[K] | undefined>;
   /** Forgets one result and its job state. */
@@ -175,15 +176,27 @@ export function createDerivedStore(): DerivedStore {
         get().beginJob(kind, inputHash);
         const startedIn = generation;
         const token = {};
+        /**
+         * For a job that is no longer the latest: when the newest request is still for these inputs and an
+         * older job for them already stored its value (run A → B → A, the first A finished first), that value
+         * answers this run too. Otherwise undefined: superseded, or overtaken by other inputs.
+         */
+        const answeredMeanwhile = (): DerivedValues[K] | undefined => {
+          if (generation !== startedIn) return undefined;
+          const now = get();
+          const latest = now.jobs[kind];
+          const stored = now[kind] as DerivedEntry<DerivedValues[K]> | null;
+          return latest?.status === 'done' && latest.inputHash === inputHash && stored?.inputHash === inputHash ? stored.value : undefined;
+        };
         const promise = (async (): Promise<DerivedValues[K] | undefined> => {
           try {
             const value = await compute();
             // Only the job that was started last may store its result.
-            if (generation !== startedIn || !isLatest(kind, inputHash)) return undefined;
+            if (generation !== startedIn || !isLatest(kind, inputHash)) return answeredMeanwhile();
             get().setResult(kind, inputHash, value);
             return value;
           } catch (error) {
-            if (generation !== startedIn || !isLatest(kind, inputHash)) return undefined;
+            if (generation !== startedIn || !isLatest(kind, inputHash)) return answeredMeanwhile();
             // Superseded by a request that did not come through `run`: there is no result and no failure.
             if (isSuperseded(error)) setJob(kind, IDLE_JOB);
             else get().failJob(kind, inputHash, error);

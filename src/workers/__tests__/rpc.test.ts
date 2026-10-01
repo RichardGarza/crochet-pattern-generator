@@ -644,6 +644,47 @@ describe('exposeApi', () => {
     port2.close();
   });
 
+  it('keeps the methods of a class-based implementation (prototype methods), bound to the instance', async () => {
+    const { port1, port2 } = new MessageChannel();
+    interface EchoApi extends Cancellable {
+      echo(x: number): Promise<number>;
+      calls(): Promise<number>;
+    }
+    const forwarded: number[] = [];
+    class Base {
+      count = 0;
+      async calls(): Promise<number> {
+        return this.count;
+      }
+    }
+    class EchoWorker extends Base {
+      readonly gate: JobGate;
+      constructor(gate: JobGate) {
+        super();
+        this.gate = gate;
+      }
+      async echo(x: number): Promise<number> {
+        await this.gate.check(0);
+        this.count++;
+        return x + 1;
+      }
+      async supersede(jobId: number): Promise<void> {
+        forwarded.push(jobId);
+      }
+    }
+    const { api, gate } = exposeApi<EchoApi>((g) => new EchoWorker(g), port1);
+    expect(typeof api.echo).toBe('function');
+    expect(typeof api.calls).toBe('function'); // from the grandparent prototype
+    const remote = wrap<EchoApi>(port2);
+    await expect(remote.echo(1)).resolves.toBe(2);
+    await expect(remote.calls()).resolves.toBe(1); // `this` is the instance
+    await remote.supersede(7);
+    expect(forwarded).toEqual([7]); // the class's own supersede is forwarded after the gate was raised
+    await expect(gate.check(6)).rejects.toBeInstanceOf(Superseded);
+    port1.close();
+    port2.close();
+  });
+
   it('a Step 0 worker stub is recognizable on the client, and so is an ordinary error', async () => {
     const { port1, port2 } = new MessageChannel();
     exposeApi<Chart2dApi>(

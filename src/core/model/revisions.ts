@@ -66,12 +66,24 @@ function radiusAt(profile: readonly (readonly [number, number])[], y: number): n
 }
 
 /**
- * Two lathe profiles describe the same shape within the tolerance: the height and the largest radius are
- * within 10%, and at 33 heights from bottom to top the radii differ by at most 10% of the largest radius. The
- * number of points may differ (a re-imported body rarely keeps its points).
+ * Two lathe profiles describe the same shape within the tolerance.
+ *
+ * With the same number of points, the points correspond one to one and each coordinate is a dim: every
+ * radius, and every height above the profile's first point, is within 10% of its own previous value (a neck
+ * that goes from 0.4 to 0.6 in does not match, however large the body). Heights are measured from the first
+ * point because where the profile starts is position, not shape.
+ *
+ * With a different number of points (a re-imported body rarely keeps its points) there is no per-point
+ * correspondence, so they are compared as curves: the height and the largest radius are within 10%, and at 33
+ * heights from bottom to top the radii differ by at most 10% of the largest radius.
  */
 function profilesWithin(prev: readonly (readonly [number, number])[], next: readonly (readonly [number, number])[], tolerance: number): boolean {
   if (!isPointList(prev) || !isPointList(next) || prev.length === 0 || next.length === 0) return false;
+  if (prev.length === next.length) {
+    const y0 = prev[0][1];
+    const n0 = next[0][1];
+    return prev.every(([r, y], i) => within(r, next[i][0], tolerance) && within(y - y0, next[i][1] - n0, tolerance));
+  }
   const span = (p: readonly (readonly [number, number])[]) => ({
     y0: p[0][1],
     height: p[p.length - 1][1] - p[0][1],
@@ -100,7 +112,8 @@ function pointsWithin(prev: readonly (readonly [number, number])[] | undefined, 
  * True when `next` still has the shape `prev` was painted on: the same part type, and every dimension within
  * `tolerance` (10%) of the previous value. Position and rotation do not matter (paint lives in the part's own
  * frame). Details per type: a cylinder's `open` and a lathe's `sharp` are not dimensions; a torus without
- * `arcDeg` is a full ring (360°); lathes are compared as curves (`profilesWithin`); a flat part must keep its
+ * `arcDeg` is a full ring (360°); lathes are compared point by point, or as curves when the number of points
+ * changed (`profilesWithin`); a flat part must keep its
  * `shape`, and a polygon its number of points; a mesh part is compared by its bounding box. Dimensions that
  * are missing or not finite numbers never match: the answer is then false, not an exception.
  */

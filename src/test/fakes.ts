@@ -257,6 +257,11 @@ export interface FakeChannelHub {
   openCount(name?: string): number;
 }
 
+export interface FakeChannelOptions {
+  /** Receives the error of an `onmessage` handler that threw (default: reported as an uncaught error). */
+  onHandlerError?: (error: unknown, channelName: string) => void;
+}
+
 interface FakeChannel extends ChannelLike {
   closed: boolean;
 }
@@ -266,9 +271,12 @@ interface FakeChannel extends ChannelLike {
  * with the same name — also to a second channel of the same fake tab, never to the sender — as a
  * structured clone, in a later macrotask, in posting order. The receivers are fixed when the message is
  * posted; one that is closed before delivery does not get it. `postMessage` on a closed channel throws
- * `InvalidStateError`, and a value that cannot be cloned throws `DataCloneError`, both synchronously.
+ * `InvalidStateError`, and a value that cannot be cloned throws `DataCloneError`, both synchronously and
+ * whether or not another channel is open. Each receiver gets the message in a task of its own, so a handler
+ * that throws does not keep it from the others; the error is reported as the browser reports it — as an
+ * uncaught error (an unhandled rejection under vitest, which fails the run) — or to `onHandlerError` when given.
  */
-export function createFakeChannels(): FakeChannelHub {
+export function createFakeChannels(options: FakeChannelOptions = {}): FakeChannelHub {
   const open = new Map<string, Set<FakeChannel>>();
   let undelivered = 0;
 
@@ -284,14 +292,23 @@ export function createFakeChannels(): FakeChannelHub {
       onmessage: null,
       postMessage(message: unknown): void {
         if (self.closed) throw domException('The channel is closed.', 'InvalidStateError');
-        const deliveries = [...group].filter((peer) => peer !== self).map((peer) => ({ peer, data: structuredClone(message) }));
-        undelivered++;
-        defer(() => {
-          undelivered--;
-          for (const { peer, data } of deliveries) {
-            if (!peer.closed) peer.onmessage?.({ data });
-          }
-        });
+        // Serialized once up front, as BroadcastChannel does: an uncloneable value throws even with no listener.
+        const serialized: unknown = structuredClone(message);
+        const peers = [...group].filter((peer) => peer !== self);
+        for (const [i, peer] of peers.entries()) {
+          const data: unknown = i === 0 ? serialized : structuredClone(serialized);
+          undelivered++;
+          defer(() => {
+            undelivered--;
+            if (peer.closed) return;
+            try {
+              peer.onmessage?.({ data });
+            } catch (error) {
+              if (options.onHandlerError) options.onHandlerError(error, name);
+              else throw error;
+            }
+          });
+        }
       },
       close(): void {
         self.closed = true;
