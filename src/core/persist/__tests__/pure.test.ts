@@ -154,7 +154,7 @@ function randomValue(rnd: () => number, depth: number): unknown {
   }
   if (r < 0.6) return Array.from({ length: Math.floor(rnd() * 4) }, () => randomValue(rnd, depth - 1));
   const o: Record<string, unknown> = {};
-  const keys = ['a', 'b', 'c', 'constructor', 'toString', 'twoD', 'sources', '0', 'é'];
+  const keys = ['a', 'b', 'c', 'constructor', 'toString', 'twoD', 'sources', '0', 'é', 'file.jpg', '.', 'a.b', ''];
   for (let i = Math.floor(rnd() * 5); i > 0; i--) o[keys[Math.floor(rnd() * keys.length)]] = randomValue(rnd, depth - 1);
   return o;
 }
@@ -227,6 +227,13 @@ describe('migrations (§5.5.3): pure, and every field is kept', () => {
     expect(() => migrateDoc(makeDoc('p1'), { table: lossy, target: 2 })).toThrow(expect.objectContaining({ code: 'lost-fields' }));
     const deep: MigrationTable = { 1: { up: (d) => ({ ...d, version: 2, gauge: {} }) } };
     expect(() => migrateDoc(makeDoc('p1'), { table: deep, target: 2 })).toThrow(/lost gauge\./);
+  });
+
+  it('keys that contain dots are fields like any other (an identity step passes)', () => {
+    const doc = { ...makeDoc('p1'), extra: { 'file.jpg': 1, 'a.b': { c: 2 }, '': 3 } };
+    const identity: MigrationTable = { 1: { up: (d) => ({ ...d, version: 2 }) } };
+    expect(migrateDoc(doc, { table: identity, target: 2 }).doc).toEqual({ ...doc, version: 2 });
+    expect(missingFields({ 'a.b': 1 }, { a: { b: 1 } })).toEqual(['a.b']);
   });
 
   it('fieldPaths and missingFields', () => {

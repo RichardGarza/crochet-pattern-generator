@@ -12,6 +12,7 @@ async function setup(w: World = world(), o: { wrap?: (repo: PersistRepository) =
   const store = createProjectStore({ now: () => new Date(w.clock.now) });
   const conflicts: ConflictInfo[] = [];
   const errors: unknown[] = [];
+  const missing: string[][] = [];
   let recovered = 0;
   const autosave = createAutosave({
     store,
@@ -21,11 +22,12 @@ async function setup(w: World = world(), o: { wrap?: (repo: PersistRepository) =
     onConflict: (c) => conflicts.push(c),
     onError: (e) => errors.push(e),
     onRecovered: () => recovered++,
+    onMissingAssets: (keys) => missing.push(keys),
   });
   const created = await tab.repo.create(makeDoc('p1'));
   const opened = await repo.open('p1', 'edit');
   store.getState().open(opened.doc, { readOnly: opened.readOnly });
-  return { w, tab, repo, store, autosave, conflicts, errors, recovered: () => recovered, created };
+  return { w, tab, repo, store, autosave, conflicts, errors, missing, recovered: () => recovered, created };
 }
 
 const rename = (store: ProjectStore, name: string) => store.getState().update('Rename project', (d) => void (d.name = name));
@@ -96,6 +98,22 @@ describe('autosave: debounce and flush', () => {
     rename(store, 'again');
     await autosave.flush();
     expect(await repo.getAssetByKey(ref.key)).toBeDefined();
+  });
+
+  it('restoring a lost asset that fails never leaves the tab on a stale rev (no spurious copy); it is reported', async () => {
+    const w = world();
+    const { repo, store, autosave, conflicts, missing } = await setup(w, {
+      wrap: (r) => ({ ...r, putAssetBlob: async () => Promise.reject(new Error('quota')) }),
+    });
+    const ghost = `p1/${'d'.repeat(64)}`;
+    store.getState().update('Thumbnail', (d) => void (d.thumbnail = { key: ghost, mime: 'image/png', bytes: 1, sha256: 'd'.repeat(64) }));
+    await autosave.flush();
+    expect(store.getState()).toMatchObject({ saveStatus: 'saved', baseRev: 2 });
+    expect(missing).toEqual([[ghost]]);
+    rename(store, 'next');
+    await autosave.flush();
+    expect(conflicts).toEqual([]);
+    expect((await repo.open('p1', 'read')).doc).toMatchObject({ name: 'next', rev: 3 });
   });
 
   it('does nothing for a project opened and never changed, and stops after dispose', async () => {

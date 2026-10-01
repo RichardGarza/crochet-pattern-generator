@@ -68,6 +68,26 @@ describe('save and load (fake-indexeddb)', () => {
     expect(w.locks.isHeld(lockName('nope'))).toBe(false);
   });
 
+  it('a failed create or open keeps a lock this tab already held', async () => {
+    const w = world();
+    const { repo } = w.tab();
+    await repo.create(makeDoc('p1'));
+    await expect(repo.create(makeDoc('p1'))).rejects.toThrow(/exists already/);
+    expect(repo.holdsLock('p1')).toBe(true);
+    expect((await w.tab().repo.open('p1', 'edit')).readOnly).toBe(true);
+  });
+
+  it('revs stay far below 2^53: a file at the limit cannot break compare-and-swap', async () => {
+    const { repo } = world().tab();
+    const { buildProjectFile, projectFileBlob, MAX_REV } = await import('../fileFormat');
+    const at = await buildProjectFile({ doc: { ...makeDoc('p1'), rev: MAX_REV }, assets: new Map() });
+    expect((await repo.importFile(projectFileBlob(at))).status).toBe('imported');
+    await expect(repo.save(makeDoc('p1'), new Map(), { baseRev: MAX_REV })).rejects.toThrow(/exhausted/);
+    expect((await repo.open('p1', 'read')).doc.rev).toBe(MAX_REV);
+    const over = await buildProjectFile({ doc: { ...makeDoc('p2'), rev: MAX_REV + 1 }, assets: new Map() });
+    await expect(repo.importFile(projectFileBlob(over))).rejects.toMatchObject({ code: 'invalid' });
+  });
+
   it('create refuses an existing id and an invalid one', async () => {
     const { repo } = world().tab();
     await repo.create(makeDoc('p1'));
@@ -220,6 +240,7 @@ describe('one writer per project (fake locks, §5.5.2)', () => {
       // The holder's pending save lands before it lets go.
       await a.repo.save(renamed(makeDoc('p1'), 'Saved by A on hand-over'), new Map(), { baseRev: 1 });
       flushed = true;
+      return true;
     });
     await b.repo.open('p1', 'edit');
     const r = await b.repo.requestHandOver('p1');
@@ -278,8 +299,8 @@ describe('one writer per project (fake locks, §5.5.2)', () => {
     const bEvents = events(b.repo);
     await a.repo.create(makeDoc('p1'));
     let release!: () => void;
-    a.repo.setFlushHandler(() => new Promise<void>((r) => (release = r)));
-    // A takes its time to flush (longer than 5 s, shorter than its own 4 s flush limit would allow: give it more).
+    a.repo.setFlushHandler(() => new Promise<boolean>((r) => (release = () => r(true))));
+    // A takes longer to flush than B waits (B: 1 s here), but finishes within its own 4 s limit.
     const pending = b.repo.requestHandOver('p1', { timeoutMs: 1000 });
     await waitFor(() => w.timers.pending() === 2); // B's 1 s wait and A's 4 s flush limit
     await w.timers.advance(1000);
@@ -330,16 +351,35 @@ describe('one writer per project (fake locks, §5.5.2)', () => {
     expect(await pending).toEqual({ ok: false, reason: 'busy' });
   });
 
-  it('a holder whose flush hangs still lets go after its 4 s limit', async () => {
+  it('a holder whose flush hangs or fails keeps the project (unsaved work is never handed over); the asker times out', async () => {
+    for (const flush of [() => new Promise<boolean>(() => {}), async () => false, async (): Promise<boolean> => Promise.reject(new Error('disk full'))]) {
+      const w = world();
+      const a = w.tab();
+      const b = w.tab();
+      const aEvents = events(a.repo);
+      await a.repo.create(makeDoc('p1'));
+      a.repo.setFlushHandler(flush);
+      const pending = b.repo.requestHandOver('p1');
+      await waitFor(() => w.timers.pending() >= 1);
+      await w.timers.advance(5000);
+      expect(await pending).toEqual({ ok: false, reason: 'timeout' });
+      expect(a.repo.holdsLock('p1')).toBe(true);
+      expect(aEvents.some((e) => e.type === 'lock-lost')).toBe(false);
+    }
+  });
+
+  it('a holder that already let go (its changes became a copy) answers at once, so the asker need not wait 5 s', async () => {
     const w = world();
     const a = w.tab();
     const b = w.tab();
     await a.repo.create(makeDoc('p1'));
-    a.repo.setFlushHandler(() => new Promise<void>(() => {}));
-    const pending = b.repo.requestHandOver('p1');
-    await waitFor(() => w.timers.pending() === 2);
-    await w.timers.advance(4000);
-    expect(await pending).toMatchObject({ ok: true });
+    a.repo.setFlushHandler(async () => {
+      a.repo.release('p1'); // what a conflict copy does to the original's lock
+      return true;
+    });
+    const r = await b.repo.requestHandOver('p1');
+    expect(r).toMatchObject({ ok: true });
+    expect(w.timers.now()).toBe(0);
   });
 
   it('remove refuses a project another tab is editing', async () => {
@@ -398,6 +438,7 @@ describe('schema upgrades: blocking and blocked (§5.5.2)', () => {
     old.repo.setFlushHandler(async () => {
       await old.repo.save(renamed(makeDoc('p1'), 'flushed before closing'), new Map(), { baseRev: 1 });
       flushed = true;
+      return true;
     });
     const newer = w.tab({ dbVersion: 2 });
     expect((await newer.repo.open('p1', 'read')).doc.name).toBe('flushed before closing');
@@ -620,6 +661,22 @@ describe('.crochet.json export and import (§5.5.3)', () => {
     await expect(target.importFile(new Blob([JSON.stringify({ ...json, project: { ...json.project, version: 7 } })]))).rejects.toMatchObject({ code: 'newer-version' });
     await expect(target.importFile(new Blob([JSON.stringify({ ...json, project: { ...json.project, id: 'a/b' } })]))).rejects.toMatchObject({ code: 'invalid' });
     expect(await target.list()).toEqual([]);
+  });
+
+  it('import keeps the project when a snapshot in the file is damaged or repeated, and leaves those out', async () => {
+    const { repo } = await richProject(world());
+    const json = JSON.parse(await (await repo.exportFile('p1')).text());
+    json.revisions.push({ rev: 99, at: 'yesterday', label: 'bad time', doc: json.project });
+    json.revisions.push({ rev: 98, at: '2026-10-01T00:00:00.000Z', label: 'bad doc', doc: { schema: 'crochet-project' } });
+    json.revisions.push({ ...json.revisions[0], label: 'same rev again' });
+    json.revisions.push('nonsense');
+    const target = world().tab().repo;
+    const { parseProjectFile } = await import('../fileFormat');
+    expect((await parseProjectFile(JSON.stringify(json))).skippedRevisions).toBe(4);
+    expect((await target.importFile(new Blob([JSON.stringify(json)]))).status).toBe('imported');
+    const labels = (await target.listRevisions('p1')).map((r) => r.label);
+    expect(labels).not.toContain('same rev again');
+    expect(labels).not.toContain('bad doc');
   });
 
   it('exportFile of an unknown project throws', async () => {

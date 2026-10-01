@@ -70,6 +70,30 @@ test.describe('T8 persistence in a real browser', () => {
     await expect(page.getByText('Saved across reloads')).toBeVisible();
   });
 
+  test('an edit made just before a reload or a close is not lost (the unload journal)', async ({ page, context }) => {
+    watchErrors(page, errors, 'tab');
+    const id = await newProject(page);
+    await rename(page, 'baseline');
+    await expect(page.getByTestId('save-chip')).toHaveText(/^Saved$/);
+    const dialogs: string[] = [];
+    page.on('dialog', (d) => {
+      dialogs.push(d.type());
+      void d.accept();
+    });
+    await rename(page, 'last edit before reload');
+    await page.reload();
+    await expect(page).toHaveURL(new RegExp(`#/p/${id}/`));
+    await expect(page.getByTestId('project-name')).toHaveValue('last edit before reload');
+
+    await rename(page, 'last edit before closing');
+    await page.close({ runBeforeUnload: true });
+    const again = await context.newPage();
+    watchErrors(again, errors, 'reopened');
+    await again.goto(`/#/p/${id}/source`);
+    await expect(again.getByTestId('project-name')).toHaveValue('last edit before closing');
+    expect(dialogs, 'no prompt: the edit was safe in the journal').toEqual([]);
+  });
+
   test('a second tab opens read-only; "Edit here instead" hands the project over after a flush', async ({ context }, info) => {
     const a = await context.newPage();
     watchErrors(a, errors, 'A');

@@ -8,7 +8,7 @@
 import { hrefFor, navigate as routerNavigate } from '../../app/router';
 import { notify as appNotify } from '../../app/toasts';
 import { createAutosave, type Autosave, type ConflictInfo } from '../../core/persist/autosave';
-import { collectAssetKeys } from '../../core/persist/assets';
+import { collectAssetKeys, expandAssetKeys } from '../../core/persist/assets';
 import { buildProjectFile, projectFileBlob, projectFileName } from '../../core/persist/fileFormat';
 import { createLocalLocks } from '../../core/persist/locks';
 import {
@@ -24,6 +24,7 @@ import { projectStore, type ProjectStore } from '../../state/projectStore';
 import type { ChannelLike, LockManagerLike } from '../../types/entryPoints';
 import type { ProjectDoc } from '../../types/project';
 import { dismissProjectBanner, showProjectBanner, type ProjectBanner } from '../shell/banners';
+import { browserJournalStorage, clearJournal, recoverJournal, writeJournal, type JournalStorage, type Recovery } from './journal';
 import { projectBackend, setProjectBackend, type ProjectBackend } from '../shell/projectSession';
 
 export const BANNER = {
@@ -59,6 +60,8 @@ export interface PersistenceDeps {
   autosave?: { debounceMs?: number; retryDelaysMs?: readonly number[] };
   /** Makes it the app's session (`getPersistence`, `useAutosave().flush`), stopping the one before. */
   install?: boolean;
+  /** Where the unload journal goes (default `localStorage`; null: none). */
+  journal?: JournalStorage | null;
 }
 
 export interface PersistenceSession {
@@ -75,10 +78,20 @@ export interface PersistenceSession {
   refreshLibrary(): Promise<void>;
   /** Flushes, then snapshots the stored project (before rebuilds, cuts and deletes). */
   snapshot(label: string): Promise<void>;
+  /** Resolves when the unload journal of the last page was replayed (projects open only after it). */
+  readonly recovered: Promise<Recovery[]>;
   stop(): void;
 }
 
-let current: PersistenceSession | null = null;
+// The app's session lives on globalThis, so a dev-server hot update that re-runs this module (or
+// useAutosave.ts) finds the running session instead of starting a second one on the same store.
+const SESSION_KEY = '__cpgPersistenceSession';
+const holder = globalThis as { [SESSION_KEY]?: PersistenceSession | null };
+let current: PersistenceSession | null = holder[SESSION_KEY] ?? null;
+const setCurrent = (session: PersistenceSession | null): void => {
+  current = session;
+  holder[SESSION_KEY] = session;
+};
 
 /** The running session, if persistence was started. */
 export const getPersistence = (): PersistenceSession | null => current;
@@ -119,6 +132,8 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
   const openTab = deps.openTab ?? browserOpenTab;
   const setBackend = deps.setBackend ?? setProjectBackend;
   const previousBackend = (deps.getBackend ?? projectBackend)();
+  const journal = deps.journal === undefined ? browserJournalStorage() : deps.journal;
+  const now = deps.now ?? (() => new Date());
   const page = deps.page === undefined ? (typeof window !== 'undefined' && typeof document !== 'undefined' ? { document, window } : null) : deps.page;
 
   let handOver: HandOverState = 'idle';
@@ -150,8 +165,12 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
 
   const onConflict = (info: ConflictInfo): void => {
     const route = app.getState().route;
-    const tab = route.screen === 'project' ? route.tab : undefined;
-    navigate({ screen: 'project', projectId: info.copyId, ...(tab ? { tab } : {}) }, { replace: true });
+    if (route.screen !== 'project' || route.projectId !== info.originalId) {
+      // Found while leaving for another project or the library: stay where the user is going.
+      notify.info(`Another tab saved a newer version of “${info.originalName}”. Your changes are safe in “${info.copyName}”.`, { key: 'persist-conflict' });
+      return;
+    }
+    navigate({ screen: 'project', projectId: info.copyId, ...(route.tab ? { tab: route.tab } : {}) }, { replace: true });
     handOver = 'idle';
     banners.dismiss(BANNER.readOnly);
     banners.show({
@@ -189,6 +208,11 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
       banners.dismiss(BANNER.save);
       notify.success('Saved again — your changes are safe.', { key: 'persist-save' });
     },
+    onMissingAssets: (keys) => {
+      notify.warn(`${keys.length} file${keys.length === 1 ? '' : 's'} of this project ${keys.length === 1 ? 'is' : 'are'} missing from this browser’s storage. Export a backup and check the project.`, {
+        key: 'persist-missing',
+      });
+    },
   });
 
   /** Makes this tab the editor of `doc` (after a hand-over or a take-over). */
@@ -212,9 +236,21 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
 
   // ---- the backend behind the shell's seam
 
+  // Edits the last page could not save before it went away (unload journal): replayed before anything opens.
+  const recovered = recoverJournal(journal, repo, now)
+    .catch(() => [] as Recovery[])
+    .then((list) => {
+      for (const r of list) {
+        if (r.outcome === 'restored') notify.success(`Recovered your last changes to “${r.name}”.`, { key: `persist-recovered-${r.id}` });
+        if (r.outcome === 'copied') notify.info(`Recovered your last changes as “${r.name}” — the project had changed meanwhile.`, { key: `persist-recovered-${r.id}` });
+      }
+      return list;
+    });
+
   const backend: ProjectBackend = {
     kind: 'repository',
     async create(doc) {
+      await recovered;
       const stored = await repo.create(doc);
       // §5.5.2: ask for persistent storage when a project is created (idempotent).
       void repo.requestPersistence().then((persisted) => {
@@ -223,6 +259,7 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
       return stored;
     },
     async open(id) {
+      await recovered;
       try {
         const opened = await repo.open(id, 'edit');
         return { doc: opened.doc, readOnly: opened.readOnly };
@@ -325,8 +362,20 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
     }
   };
   cleanups.push(repo.subscribe(onEvent));
-  repo.setFlushHandler(() => autosave.flush());
+  repo.setFlushHandler(async () => {
+    await autosave.flush();
+    return !dirty();
+  });
   cleanups.push(() => repo.setFlushHandler(null));
+
+  // A successful save makes a journal entry of this project stale.
+  cleanups.push(
+    store.subscribe((s, prev) => {
+      if (s.savedChangeId === prev.savedChangeId || !s.doc || dirty()) return;
+      clearJournal(journal, s.doc.id);
+      if (prev.doc && prev.doc.id !== s.doc.id) clearJournal(journal, prev.doc.id);
+    }),
+  );
 
   // A project that opens read-only (another tab holds it) gets the banner with "Edit here instead". The
   // shell clears banners on every open, before this subscriber runs.
@@ -352,12 +401,22 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
     const onVisibility = (): void => {
       if (page.document.visibilityState === 'hidden') void autosave.flush();
     };
-    const onPageHide = (): void => void autosave.flush();
+    /** Unsaved changes go to the synchronous journal first: the page may be gone before an IndexedDB save lands. */
+    const journalUnsaved = (): boolean => {
+      const s = store.getState();
+      if (!s.doc || !dirty()) return true;
+      return writeJournal(journal, s.doc, s.baseRev, now());
+    };
+    const onPageHide = (): void => {
+      journalUnsaved();
+      void autosave.flush();
+    };
     const onBeforeUnload = (event: BeforeUnloadEvent): void => {
       if (!dirty()) return;
+      const journaled = journalUnsaved();
       void autosave.flush();
-      // Ask only when the changes cannot be saved (a failing save, storage closed); a pending save completes.
-      if (autosave.failures() > 0 || repo.isClosed()) {
+      // Ask when the changes are not safe anywhere yet: no journal, or saving fails.
+      if (!journaled || autosave.failures() > 0 || repo.isClosed()) {
         event.preventDefault();
         event.returnValue = '';
       }
@@ -437,13 +496,17 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
       const doc = s.doc;
       try {
         const assets = new Map<string, Blob>();
+        const load = async (key: string): Promise<Blob | undefined> => {
+          if (!assets.has(key)) {
+            const blob = s.assets.get(key) ?? (await repo.getAssetByKey(key).catch(() => undefined));
+            if (blob) assets.set(key, blob);
+          }
+          return assets.get(key);
+        };
+        // Also the assets named inside JSON assets (the meshes of model revisions).
+        const keys = await expandAssetKeys(collectAssetKeys(doc), load);
         let missing = 0;
-        for (const key of collectAssetKeys(doc)) {
-          let blob = s.assets.get(key);
-          if (!blob) blob = await repo.getAssetByKey(key).catch(() => undefined);
-          if (blob) assets.set(key, blob);
-          else missing++;
-        }
+        for (const key of keys) if (!(await load(key))) missing++;
         const file = await buildProjectFile({ doc, assets });
         download(projectFileBlob(file), projectFileName(doc.name));
         if (missing > 0) notify.warn(`${missing} file${missing === 1 ? '' : 's'} of this project could not be read and ${missing === 1 ? 'is' : 'are'} missing from the backup.`);
@@ -453,7 +516,10 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
       }
     },
 
+    recovered,
+
     async refreshLibrary() {
+      await recovered;
       app.getState().setLibrary(await repo.list());
     },
 
@@ -470,12 +536,12 @@ export function startPersistence(deps: PersistenceDeps): PersistenceSession {
       autosave.dispose();
       repo.close();
       setBackend(previousBackend);
-      if (current === session) current = null;
+      if (current === session) setCurrent(null);
     },
   };
 
   setBackend(backend);
-  if (deps.install) current = session;
+  if (deps.install) setCurrent(session);
   void session.refreshLibrary().catch((error: unknown) => {
     app.getState().setLibrary([]);
     notify.error(`Couldn’t read your saved projects: ${error instanceof Error ? error.message : String(error)}`);

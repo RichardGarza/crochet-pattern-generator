@@ -66,6 +66,9 @@ export function isValidProjectId(id: unknown): id is string {
   );
 }
 
+/** Revs stay far below 2^53, so `rev + 1` is always exact (a crafted file cannot break compare-and-swap). */
+export const MAX_REV = 2 ** 40;
+
 const isoTime = z.string().refine((s) => Number.isFinite(Date.parse(s)), 'not a time');
 
 /** The fields every document needs before it can be stored or listed; the rest is kept as it is. */
@@ -76,11 +79,13 @@ const docSchema = z.looseObject({
   name: z.string(),
   createdAt: isoTime,
   updatedAt: isoTime,
-  rev: z.number().int().min(0),
+  rev: z.number().int().min(0).max(MAX_REV),
   mode: z.enum(['2d', '3d']),
   sources: z.array(z.unknown()),
   imports: z.array(z.unknown()),
 });
+
+const revisionSchema = z.object({ rev: z.number().int().min(0).max(MAX_REV), at: isoTime, label: z.string(), doc: z.unknown() });
 
 const fileSchema = z.object({
   format: z.literal(FILE_FORMAT),
@@ -92,9 +97,8 @@ const fileSchema = z.object({
     z.string().regex(ASSET_KEY, 'not an asset key'),
     z.object({ mime: z.string(), sha256: z.string().regex(SHA256_HEX, 'not a sha256'), base64: z.string() }),
   ),
-  revisions: z
-    .array(z.object({ rev: z.number().int().min(0), at: isoTime, label: z.string(), doc: z.unknown() }))
-    .default([]),
+  // Checked one by one below: a damaged snapshot is left out, not a reason to refuse the backup.
+  revisions: z.array(z.unknown()).default([]),
 });
 
 /** Checks the document fields the repository relies on; throws `ProjectFileError('invalid')`. */
@@ -153,6 +157,8 @@ export interface ParsedProjectFile {
   original: ProjectDoc;
   assets: Map<string, Blob>;
   revisions: ProjectFileRevision[];
+  /** Snapshots left out: damaged, of a newer version, or a second one with the same rev. */
+  skippedRevisions: number;
 }
 
 /**
@@ -197,12 +203,20 @@ export async function parseProjectFile(input: Blob | string): Promise<ParsedProj
 
   const original = checkDoc(file.project);
   const project = migrate(file.project, 'project');
-  const revisions: ProjectFileRevision[] = file.revisions.map((r, i) => ({
-    rev: r.rev,
-    at: r.at,
-    label: r.label,
-    doc: migrate(r.doc, `snapshot ${i + 1}`).doc,
-  }));
+  // A damaged snapshot does not cost the user the whole backup: it is left out (and counted).
+  const revisions: ProjectFileRevision[] = [];
+  const seen = new Set<number>();
+  let skippedRevisions = 0;
+  for (const [i, raw] of file.revisions.entries()) {
+    try {
+      const r = revisionSchema.parse(raw);
+      if (seen.has(r.rev)) throw new Error('a second snapshot with the same rev');
+      revisions.push({ rev: r.rev, at: r.at, label: r.label, doc: migrate(r.doc, `snapshot ${i + 1}`).doc });
+      seen.add(r.rev);
+    } catch {
+      skippedRevisions++;
+    }
+  }
 
   const assets = new Map<string, Blob>();
   for (const [key, a] of Object.entries(file.assets)) {
@@ -218,5 +232,5 @@ export async function parseProjectFile(input: Blob | string): Promise<ParsedProj
     }
     assets.set(key, new Blob([bytes], { type: a.mime }));
   }
-  return { doc: project.doc, migratedFrom: project.migrated ? project.from : null, original, assets, revisions };
+  return { doc: project.doc, migratedFrom: project.migrated ? project.from : null, original, assets, revisions, skippedRevisions };
 }

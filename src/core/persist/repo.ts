@@ -17,8 +17,8 @@
 import { canonicalJson } from '../kernel/hash';
 import type { ChannelLike, CreateProjectRepositoryFn, LockManagerLike, ProjectRepository } from '../../types/entryPoints';
 import type { AssetRef, ProjectDoc, ProjectSummary } from '../../types/project';
-import { assetKeyOf, collectAssetKeys, isJsonAsset, refFor, selectUnreferenced, sha256Hex, shaOfKey, ASSET_GC_MIN_AGE_MS } from './assets';
-import { buildProjectFile, checkDoc, isValidProjectId, parseProjectFile, projectFileBlob, type ProjectFileRevision } from './fileFormat';
+import { assetKeyOf, collectAssetKeys, expandAssetKeys, refFor, selectUnreferenced, sha256Hex, shaOfKey, ASSET_GC_MIN_AGE_MS } from './assets';
+import { MAX_REV, buildProjectFile, checkDoc, isValidProjectId, parseProjectFile, projectFileBlob, type ProjectFileRevision } from './fileFormat';
 import type { IDBPTransaction } from 'idb';
 import { openDatabase, projectRange, type CpgDatabase, type CpgDB, type StoredAsset, type StoredRevision } from './idb';
 import { holdLock, lockName, type HeldLock } from './locks';
@@ -133,8 +133,11 @@ export interface PersistRepository extends ProjectRepository {
   requestHandOver(id: string, o?: { timeoutMs?: number }): Promise<HandOverResult>;
   /** Forgets a pending hand-over request (the user left the project or took over). */
   cancelHandOver(id: string): void;
-  /** What the repository awaits before it lets go of a lock or closes for an upgrade: the pending save. */
-  setFlushHandler(flush: (() => Promise<void>) | null): void;
+  /**
+   * What the repository awaits before it lets go of a lock or closes for an upgrade: the pending save. It
+   * resolves `true` when nothing is left unsaved (a hand-over happens only then).
+   */
+  setFlushHandler(flush: (() => Promise<boolean>) | null): void;
   subscribe(listener: (e: RepositoryEvent) => void): () => void;
   /** Snapshots the stored document under its rev with `label` (before migrations, imports, rebuilds, cuts, deletes). */
   snapshot(id: string, label: string): Promise<number | null>;
@@ -219,6 +222,9 @@ type TxStore = 'projects' | 'assets' | 'revisions';
 /** The content of a document for "identical" (§5.5.3): everything but the persistence counters. */
 const contentOf = (doc: ProjectDoc): string => canonicalJson({ ...doc, rev: 0, updatedAt: '' });
 
+/** True when two documents hold the same content (ignoring `rev` and `updatedAt`). */
+export const sameContent = (a: ProjectDoc, b: ProjectDoc): boolean => contentOf(a) === contentOf(b);
+
 type ChannelMessage =
   | { type: 'release'; id: string; from: string }
   | { type: 'released'; id: string; to: string }
@@ -276,7 +282,7 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
   const held = new Map<string, HeldLock>();
   /** Hand-overs this tab asked for: resolved by the holder's `released` message. */
   const waiting = new Map<string, { resolve: () => void; late: boolean }>();
-  let flushHandler: (() => Promise<void>) | null = null;
+  let flushHandler: (() => Promise<boolean>) | null = null;
   let closed: 'closed' | 'upgrade' | null = null;
   let dbPromise: Promise<CpgDatabase> | null = null;
   let blocked = false;
@@ -304,17 +310,21 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
     }
   };
 
-  /** Waits for the pending save, but never longer than `flushTimeoutMs`. */
-  const flushPending = async (): Promise<void> => {
-    if (!flushHandler) return;
+  /**
+   * Waits for the pending save, but never longer than `flushTimeoutMs`. True when it finished in time and left
+   * nothing unsaved.
+   */
+  const flushPending = async (): Promise<boolean> => {
+    if (!flushHandler) return true;
     let handle: unknown;
-    await Promise.race([
-      flushHandler().catch(() => {}),
-      new Promise<void>((resolve) => {
-        handle = timers.setTimeout(resolve, flushTimeoutMs);
+    const done = await Promise.race([
+      flushHandler().catch(() => false),
+      new Promise<false>((resolve) => {
+        handle = timers.setTimeout(() => resolve(false), flushTimeoutMs);
       }),
     ]);
     timers.clearTimeout(handle);
+    return done;
   };
 
   const closeForUpgrade = async (): Promise<void> => {
@@ -394,8 +404,16 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
     const lock = held.get(id);
     if (!lock?.held()) return;
     emit({ type: 'hand-over-requested', id });
-    await flushPending();
-    if (held.get(id) !== lock) return; // released or stolen meanwhile
+    const saved = await flushPending();
+    if (held.get(id) !== lock) {
+      // Released meanwhile (its unsaved changes went into a copy) or stolen: not ours to give, but the asker
+      // need not wait for its timeout.
+      if (!lock.held()) post({ type: 'released', id, to });
+      return;
+    }
+    // Hand over only what is saved: with a failed or unfinished save the holder keeps the project, the asker
+    // times out and may Take over — which bumps the rev, so the holder's late save becomes a copy.
+    if (!saved) return;
     held.delete(id);
     lock.release();
     emit({ type: 'lock-lost', id, reason: 'handed-over' });
@@ -499,6 +517,7 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
   };
 
   const checkSavable = (doc: ProjectDoc): void => {
+    if (!Number.isSafeInteger(doc.rev) || doc.rev < 0 || doc.rev > MAX_REV) throw new RangeError(`Invalid rev ${String(doc.rev)}`);
     if (typeof doc !== 'object' || doc === null || doc.schema !== 'crochet-project') throw new TypeError('Not a crochet-project document');
     if (!isValidProjectId(doc.id)) throw new TypeError(`Invalid project id ${JSON.stringify(doc.id)}`);
     if (doc.version !== CURRENT_DOC_VERSION) throw new TypeError(`Cannot save a document of version ${String(doc.version)}`);
@@ -510,31 +529,14 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
     post({ type: 'saved', id: doc.id, rev: doc.rev, summary, from: tabId });
   };
 
-  /** Every key the values name, following JSON assets (model revisions) to the keys inside them. */
-  const expandReferences = async (keys: Set<string>, load: (key: string) => Promise<StoredAsset | undefined>): Promise<Set<string>> => {
-    const visited = new Set<string>();
-    let frontier = [...keys];
-    while (frontier.length > 0) {
-      const next: string[] = [];
-      for (const key of frontier) {
-        if (visited.has(key)) continue;
-        visited.add(key);
-        const asset = await load(key);
-        if (!asset || !isJsonAsset(asset.mime || asset.blob.type)) continue;
-        try {
-          const found = collectAssetKeys(JSON.parse(await asset.blob.text()));
-          for (const k of found) if (!keys.has(k)) {
-            keys.add(k);
-            next.push(k);
-          }
-        } catch {
-          // not JSON after all: no references inside
-        }
-      }
-      frontier = next;
-    }
-    return keys;
-  };
+  /** A stored asset's blob (typed), for following JSON assets to the keys inside them. */
+  const loadStored =
+    (d: CpgDatabase) =>
+    async (key: string): Promise<Blob | undefined> => {
+      const asset = await d.get('assets', key);
+      if (!asset) return undefined;
+      return asset.blob.type ? asset.blob : new Blob([asset.blob], { type: asset.mime });
+    };
 
   const repo: PersistRepository = {
     tabId,
@@ -550,6 +552,7 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
 
     async create(doc) {
       checkSavable(doc);
+      const hadLock = repo.holdsLock(doc.id);
       if (!(await acquire(doc.id, { ifAvailable: true }))) throw new ProjectLockedError(doc.id, 'create it');
       const at = now();
       try {
@@ -561,16 +564,16 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
           return next;
         });
         announceSaved(stored);
-        void repo.requestPersistence();
         return stored;
       } catch (error) {
-        release(doc.id);
+        if (!hadLock) release(doc.id);
         throw error;
       }
     },
 
     async open(id, mode) {
       // The lock first, then the document: a hand-over's last save lands before we read.
+      const hadLock = repo.holdsLock(id);
       const editing = mode === 'edit' && (await acquire(id, { ifAvailable: true }));
       try {
         const raw = await readDoc(id);
@@ -590,7 +593,7 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
         announceSaved(doc);
         return { doc, readOnly: false };
       } catch (error) {
-        if (editing) release(id);
+        if (editing && !hadLock) release(id);
         throw error;
       }
     },
@@ -630,6 +633,7 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
           return { ok: false as const, conflict: { storedRev } };
         }
         const rev = Math.max(storedRev, o.baseRev) + 1;
+        if (!Number.isSafeInteger(rev) || rev > MAX_REV) throw new RangeError(`The revision counter of this project is exhausted (${rev}).`);
         const assets = tx.objectStore('assets');
         await putAssets(assets, newAssets, at);
         const next: ProjectDoc = { ...doc, rev };
@@ -712,7 +716,7 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
       }
       const keys = collectAssetKeys(doc);
       for (const r of revisions) collectAssetKeys(r.doc, keys);
-      await expandReferences(keys, (key) => d.get('assets', key));
+      await expandAssetKeys(keys, loadStored(d));
       const assets = new Map<string, Blob>();
       for (const key of [...keys].sort()) {
         const asset = await d.get('assets', key);
@@ -889,7 +893,7 @@ export function createPersistRepository(o: RepositoryOptions = {}): PersistRepos
       const referenced = new Set<string>();
       for (const doc of await d.getAll('projects')) collectAssetKeys(doc, referenced);
       for (const r of await d.getAll('revisions')) collectAssetKeys(r.doc, referenced);
-      await expandReferences(referenced, (key) => d.get('assets', key));
+      await expandAssetKeys(referenced, loadStored(d));
       // 2. One readwrite transaction: references again (a save may have landed meanwhile), then delete.
       const at = now();
       return inTransaction(['projects', 'assets', 'revisions'], async (tx) => {

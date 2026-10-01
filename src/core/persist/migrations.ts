@@ -45,39 +45,41 @@ export class MigrationError extends Error {
 /** True for a document of a version newer than this app (refuse to open or overwrite it). */
 export const isNewerVersion = (version: unknown): boolean => typeof version === 'number' && version > CURRENT_DOC_VERSION;
 
-/** Every leaf path of a JSON-like value (`a.b.0.c`); an empty object or array is a leaf of its own. */
-export function fieldPaths(value: unknown, prefix = '', out: string[] = []): string[] {
+/** Every leaf path of a JSON-like value, as key lists; an empty object or array is a leaf of its own. */
+export function leafPaths(value: unknown, prefix: readonly string[] = [], out: string[][] = []): string[][] {
   if (typeof value === 'object' && value !== null) {
     const entries = Array.isArray(value) ? value.map((v, i) => [String(i), v] as const) : Object.entries(value);
-    if (entries.length === 0) out.push(prefix);
-    for (const [k, v] of entries) fieldPaths(v, prefix === '' ? k : `${prefix}.${k}`, out);
+    if (entries.length === 0) out.push([...prefix]);
+    for (const [k, v] of entries) leafPaths(v, [...prefix, k], out);
   } else {
-    out.push(prefix);
+    out.push([...prefix]);
   }
   return out;
 }
 
-function hasPath(value: unknown, path: string): boolean {
-  if (path === '') return true;
+/** Every leaf path as `a.b.0.c` (for messages; a key may itself contain dots). */
+export const fieldPaths = (value: unknown): string[] => leafPaths(value).map((p) => p.join('.'));
+
+function hasPath(value: unknown, path: readonly string[]): boolean {
   let cur: unknown = value;
-  for (const part of path.split('.')) {
+  for (const part of path) {
     if (typeof cur !== 'object' || cur === null || !Object.hasOwn(cur, part)) return false;
     cur = (cur as Record<string, unknown>)[part];
   }
   return true;
 }
 
-function matches(pattern: string, path: string): boolean {
+/** A `drops` pattern (`a.b`, `*` = any one key) covers its own path and everything under it. */
+function matches(pattern: string, path: readonly string[]): boolean {
   const p = pattern.split('.');
-  const q = path.split('.');
-  if (p.length > q.length) return false;
-  // A pattern covers its own path and everything under it.
-  return p.every((part, i) => part === '*' || part === q[i]);
+  return p.length <= path.length && p.every((part, i) => part === '*' || part === path[i]);
 }
 
 /** The leaf paths of `before` that `after` lacks, except those covered by `drops`. */
 export function missingFields(before: unknown, after: unknown, drops: readonly string[] = []): string[] {
-  return fieldPaths(before).filter((path) => !hasPath(after, path) && !drops.some((d) => matches(d, path)));
+  return leafPaths(before)
+    .filter((path) => !hasPath(after, path) && !drops.some((d) => matches(d, path)))
+    .map((path) => path.join('.'));
 }
 
 export interface MigrationResult {

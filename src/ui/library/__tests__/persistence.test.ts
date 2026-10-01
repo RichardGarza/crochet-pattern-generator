@@ -11,6 +11,7 @@ import type { ProjectBackend } from '../../shell/projectSession';
 import type { ProjectBanner } from '../../shell/banners';
 import { makeDoc, manualTimers, settle, waitFor, world, type World } from '../../../core/persist/__tests__/helpers';
 import { BANNER, startPersistence } from '../persistence';
+import { JOURNAL_PREFIX, type JournalStorage } from '../journal';
 
 interface FakePage {
   document: EventTarget & { visibilityState: DocumentVisibilityState };
@@ -31,9 +32,31 @@ function fakePage(): FakePage {
   };
 }
 
+/** A Map-backed localStorage. */
+function memoryStorage(): JournalStorage & { map: Map<string, string> } {
+  const map = new Map<string, string>();
+  return {
+    map,
+    getItem: (k) => map.get(k) ?? null,
+    setItem: (k, v) => void map.set(k, String(v)),
+    removeItem: (k) => void map.delete(k),
+    key: (i) => [...map.keys()][i] ?? null,
+    get length() {
+      return map.size;
+    },
+  };
+}
+
 function sessionTab(
   w: World,
-  o: { name?: string; wrap?: (r: PersistRepository) => PersistRepository; channel?: 'deaf'; dbVersion?: number; frozenClock?: boolean } = {},
+  o: {
+    name?: string;
+    wrap?: (r: PersistRepository) => PersistRepository;
+    channel?: 'deaf';
+    dbVersion?: number;
+    frozenClock?: boolean;
+    journal?: JournalStorage | null;
+  } = {},
 ) {
   // A frozen tab's timers never run (its own clock, never advanced).
   const timers = o.frozenClock ? manualTimers() : w.timers;
@@ -59,6 +82,7 @@ function sessionTab(
     app,
     timers,
     now: () => new Date(w.clock.now),
+    journal: o.journal ?? null,
     page: page as unknown as NonNullable<Parameters<typeof startPersistence>[0]['page']>,
     banners: { show: (b) => banners.set(b.id, b), dismiss: (id) => banners.delete(id) },
     navigate: (route, nav) => {
@@ -217,7 +241,7 @@ describe('autosave on page events (§5.5.2)', () => {
     expect(w.timers.now()).toBe(0);
   });
 
-  it('beforeunload asks only when the changes cannot be saved', async () => {
+  it('without a journal, beforeunload asks while anything is unsaved (and starts the save); never when all is saved', async () => {
     const w = world();
     let fail = false;
     const a = sessionTab(w, { wrap: (r) => ({ ...r, save: async (...args) => (fail ? Promise.reject(new Error('nope')) : r.save(...args)) }) });
@@ -228,9 +252,13 @@ describe('autosave on page events (§5.5.2)', () => {
       a.page.window.dispatchEvent(e);
       return e.defaultPrevented;
     };
+    expect(unload()).toBe(false);
     a.rename('pending');
-    expect(unload()).toBe(false); // a pending save: flushed, no prompt
+    // The page could be gone before an IndexedDB write lands: ask, and save meanwhile.
+    expect(unload()).toBe(true);
     await waitFor(() => a.store.getState().saveStatus === 'saved');
+    expect(w.timers.now()).toBe(0);
+    expect(unload()).toBe(false);
     fail = true;
     a.rename('failing');
     await a.session.autosave.flush();
@@ -239,6 +267,26 @@ describe('autosave on page events (§5.5.2)', () => {
 });
 
 describe('two tabs: read-only, "Edit here instead", Take over (§5.5.2)', () => {
+  it('a holder whose save fails does not hand over (and never claims it saved)', async () => {
+    const w = world();
+    let fail = false;
+    const a = sessionTab(w, { name: 'A', wrap: (r) => ({ ...r, save: async (...args) => (fail ? Promise.reject(new Error('disk')) : r.save(...args)) }) });
+    const b = sessionTab(w, { name: 'B' });
+    await a.backend().create(makeDoc('p1'));
+    await a.openProject('p1');
+    fail = true;
+    a.rename('unsaved in A');
+    await b.openProject('p1');
+    const asking = b.session.editHereInstead();
+    await waitFor(() => w.timers.pending() >= 2);
+    await w.timers.advance(5000);
+    await asking;
+    expect(b.session.handOverState()).toBe('no-answer');
+    expect(a.store.getState()).toMatchObject({ readOnly: false, doc: { name: 'unsaved in A' } });
+    expect(a.banner(BANNER.readOnly)).toBeUndefined();
+    expect(a.repo.holdsLock('p1')).toBe(true);
+  });
+
   it('the second tab opens read-only with the banner; "Edit here instead" hands over after the first tab flushes', async () => {
     const w = world();
     const a = sessionTab(w, { name: 'A' });
@@ -339,6 +387,27 @@ describe('two tabs: read-only, "Edit here instead", Take over (§5.5.2)', () => 
   });
 });
 
+describe('conflicts found while leaving', () => {
+  it('a conflict found while leaving for another project keeps the user on that project (no redirect to the copy)', async () => {
+    const w = world();
+    const a = sessionTab(w);
+    await a.backend().create(makeDoc('p1'));
+    await a.repo.create(makeDoc('p2'));
+    a.repo.release('p2');
+    await a.openProject('p1');
+    await w.tab().repo.save({ ...makeDoc('p1'), name: 'newer elsewhere' }, new Map(), { baseRev: 1 });
+    a.rename('mine');
+    a.app.getState().setRoute({ screen: 'project', projectId: 'p2' });
+    await a.backend().open('p2');
+    await a.leaveProject();
+    a.store.getState().open((await a.repo.open('p2', 'read')).doc);
+    expect(a.routes).toEqual([]);
+    expect(a.app.getState().route).toEqual({ screen: 'project', projectId: 'p2' });
+    expect(a.toasts.at(-1)?.message).toBe('Another tab saved a newer version of “mine”. Your changes are safe in “mine (copy, 12:00)”.');
+    expect((await a.repo.open('copy-1', 'read')).doc.name).toBe('mine (copy, 12:00)');
+  });
+});
+
 describe('schema upgrades (§5.5.2)', () => {
   it('a blocking upgrade flushes, closes the database and shows the reload banner', async () => {
     const w = world();
@@ -393,6 +462,7 @@ describe('save failures (§5.5.2: red chip, banner, Export a backup, retries)', 
     const parsed = await parseProjectFile(a.downloads[0].blob);
     expect(parsed.doc).toEqual(a.store.getState().doc);
     expect([...parsed.assets.keys()]).toEqual([ref.key]);
+    expect(a.toasts.at(-1)?.message).toBe('Backup downloaded.');
 
     fail = false;
     await w.timers.advance(1000);
@@ -400,6 +470,137 @@ describe('save failures (§5.5.2: red chip, banner, Export a backup, retries)', 
     expect(a.store.getState().saveStatus).toBe('saved');
     expect(a.banner(BANNER.save)).toBeUndefined();
     expect(a.toasts.at(-1)).toEqual({ kind: 'success', message: 'Saved again — your changes are safe.' });
+  });
+});
+
+describe('the unload journal (an edit made just before the page goes away)', () => {
+  /** Tab A edits and its page goes away before the save lands; then a new page starts on the same storage. */
+  async function closedWithUnsavedEdit(o: { meanwhile?: (w: World) => Promise<void> } = {}) {
+    const w = world();
+    const journal = memoryStorage();
+    // The page dies before its save lands: here, the save never completes.
+    let hang = false;
+    const a = sessionTab(w, { name: 'A', journal, wrap: (r) => ({ ...r, save: (...args) => (hang ? new Promise(() => {}) : r.save(...args)) }) });
+    await a.backend().create(makeDoc('p1'));
+    await a.openProject('p1');
+    hang = true;
+    a.rename('edited just before closing');
+    a.page.window.dispatchEvent(new Event('pagehide'));
+    expect(journal.map.has(JOURNAL_PREFIX + 'p1')).toBe(true);
+    // The tab's repository and locks go with the page.
+    a.session.stop();
+    a.tab.locks.close();
+    expect((await w.tab({ name: 'check' }).repo.open('p1', 'read')).doc).toMatchObject({ name: 'Untitled chart', rev: 1 });
+    await o.meanwhile?.(w);
+    return { w, journal };
+  }
+
+  it('the next page writes the journaled edit onto the project and opens it', async () => {
+    const { w, journal } = await closedWithUnsavedEdit();
+    const b = sessionTab(w, { name: 'B', journal });
+    expect(await b.session.recovered).toEqual([{ id: 'p1', name: 'edited just before closing', outcome: 'restored' }]);
+    await b.openProject('p1');
+    expect(b.store.getState()).toMatchObject({ readOnly: false, doc: { name: 'edited just before closing', rev: 2 } });
+    expect(journal.map.size).toBe(0);
+    expect(b.toasts.at(-1)?.message).toBe('Recovered your last changes to “edited just before closing”.');
+  });
+
+  it('a journal whose save had landed after all is simply dropped', async () => {
+    const w = world();
+    const journal = memoryStorage();
+    const a = sessionTab(w, { name: 'A', journal });
+    await a.backend().create(makeDoc('p1'));
+    await a.openProject('p1');
+    a.rename('landed');
+    a.page.window.dispatchEvent(new Event('pagehide'));
+    await waitFor(() => a.store.getState().saveStatus === 'saved');
+    journal.map.set(JOURNAL_PREFIX + 'p1', JSON.stringify({ v: 1, baseRev: 1, at: '2026-10-01T12:00:00Z', doc: a.store.getState().doc }));
+    a.session.stop();
+    const b = sessionTab(w, { name: 'B', journal });
+    expect(await b.session.recovered).toEqual([{ id: 'p1', name: 'landed', outcome: 'already-saved' }]);
+    expect((await b.repo.list()).length).toBe(1);
+    expect(journal.map.size).toBe(0);
+  });
+
+  it('a project that changed meanwhile keeps its version; the journaled edit becomes a copy', async () => {
+    const { w, journal } = await closedWithUnsavedEdit({
+      meanwhile: async (w) => {
+        const other = w.tab({ name: 'other' }).repo;
+        const doc = (await other.open('p1', 'read')).doc;
+        await other.save({ ...doc, name: 'changed elsewhere' }, new Map(), { baseRev: doc.rev });
+      },
+    });
+    const b = sessionTab(w, { name: 'B', journal });
+    expect(await b.session.recovered).toEqual([{ id: 'p1', name: 'edited just before closing (copy, 12:00)', outcome: 'copied', copyId: 'copy-1' }]);
+    expect((await b.repo.open('p1', 'read')).doc.name).toBe('changed elsewhere');
+    expect((await b.repo.open('copy-1', 'read')).doc.name).toBe('edited just before closing (copy, 12:00)');
+    expect(b.toasts.at(-1)?.message).toBe('Recovered your last changes as “edited just before closing (copy, 12:00)” — the project had changed meanwhile.');
+  });
+
+  it('a project another tab is editing is never written from the journal (a copy instead)', async () => {
+    const { w, journal } = await closedWithUnsavedEdit({
+      meanwhile: async (w) => {
+        await w.tab({ name: 'editor' }).repo.open('p1', 'edit');
+      },
+    });
+    const b = sessionTab(w, { name: 'B', journal });
+    expect((await b.session.recovered)[0]).toMatchObject({ outcome: 'copied', copyId: 'copy-1' });
+    expect((await b.repo.open('p1', 'read')).doc.name).toBe('Untitled chart');
+  });
+
+  it('a damaged entry is removed; a successful save clears the entry', async () => {
+    const w = world();
+    const journal = memoryStorage();
+    journal.map.set(JOURNAL_PREFIX + 'x', '{nope');
+    journal.map.set('unrelated', 'kept');
+    const a = sessionTab(w, { journal });
+    expect(await a.session.recovered).toEqual([]);
+    expect([...journal.map.keys()]).toEqual(['unrelated']);
+    await a.backend().create(makeDoc('p1'));
+    await a.openProject('p1');
+    a.rename('x');
+    a.page.window.dispatchEvent(new Event('pagehide'));
+    expect(journal.map.has(JOURNAL_PREFIX + 'p1')).toBe(true);
+    await waitFor(() => a.store.getState().saveStatus === 'saved');
+    expect(journal.map.has(JOURNAL_PREFIX + 'p1')).toBe(false);
+  });
+
+  it('beforeunload does not ask when the edit is safe in the journal; it asks when the journal cannot be written', async () => {
+    const w = world();
+    const a = sessionTab(w, { journal: memoryStorage() });
+    await a.backend().create(makeDoc('p1'));
+    await a.openProject('p1');
+    a.rename('pending');
+    const e = new Event('beforeunload', { cancelable: true });
+    a.page.window.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
+    const full: JournalStorage = { ...memoryStorage(), setItem: () => { throw new DOMException('full', 'QuotaExceededError'); } };
+    const b = sessionTab(w, { journal: full });
+    await b.backend().create(makeDoc('p2'));
+    await b.openProject('p2');
+    b.rename('pending');
+    const e2 = new Event('beforeunload', { cancelable: true });
+    b.page.window.dispatchEvent(e2);
+    expect(e2.defaultPrevented).toBe(true);
+  });
+});
+
+describe('Export a backup (from memory)', () => {
+  it('includes the assets named inside model revisions (their meshes), not only those the document names', async () => {
+    const w = world();
+    const a = sessionTab(w);
+    const mesh = await a.repo.putAsset('p3', new Blob([new Uint8Array([9, 8, 7])], { type: 'application/octet-stream' }), 'application/octet-stream');
+    const revision = await a.repo.putAsset(
+      'p3',
+      new Blob([JSON.stringify({ format: 'crochet-model-revision', version: 1, model: {}, meshAssets: { m1: mesh } })], { type: 'application/json' }),
+      'application/json',
+    );
+    const base = makeDoc('p3', 'photos');
+    await a.backend().create({ ...base, threeD: { ...base.threeD!, revisions: [{ rev: 1, at: '2026-10-01T12:00:00Z', source: 'edit', label: 'r1', asset: revision }] } });
+    await a.openProject('p3');
+    await a.session.exportBackup();
+    const parsed = await parseProjectFile(a.downloads[0].blob);
+    expect([...parsed.assets.keys()].sort()).toEqual([mesh.key, revision.key].sort());
   });
 });
 

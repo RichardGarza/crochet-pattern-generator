@@ -34,6 +34,8 @@ export interface AutosaveOptions {
   onError?: (error: unknown, attempt: number) => void;
   /** A save succeeded after failures. */
   onRecovered?: () => void;
+  /** The saved document names assets that neither the database nor this tab's cache has (or storing them failed). */
+  onMissingAssets?: (keys: string[]) => void;
 }
 
 export interface Autosave {
@@ -80,13 +82,23 @@ export function createAutosave(o: AutosaveOptions): Autosave {
     }, ms);
   };
 
-  /** Re-stores assets the saved document names but the database lacks (from the store's cache). */
+  /**
+   * Re-stores assets the saved document names but the database lacks (from the store's cache). Runs after
+   * `markSaved`, so a failure here never leaves the tab on a stale base rev; what cannot be restored is reported.
+   */
   const restoreMissing = async (keys: readonly string[]): Promise<void> => {
     const cache = store.getState().assets;
+    const lost: string[] = [];
     for (const key of keys) {
       const blob = cache.get(key);
-      if (blob) await repo.putAssetBlob(key, blob);
+      try {
+        if (blob) await repo.putAssetBlob(key, blob);
+        else lost.push(key);
+      } catch {
+        lost.push(key);
+      }
     }
+    if (lost.length > 0) o.onMissingAssets?.(lost);
   };
 
   /** One save of the current changes. False when it failed (a retry is scheduled). */
@@ -96,8 +108,8 @@ export function createAutosave(o: AutosaveOptions): Autosave {
     try {
       const result = await repo.save(ticket.doc, ticket.newAssets, { baseRev: ticket.baseRev });
       if (result.ok) {
-        if ('missingAssets' in result && result.missingAssets) await restoreMissing(result.missingAssets);
         store.getState().markSaved(ticket, { rev: result.rev });
+        if ('missingAssets' in result && result.missingAssets) await restoreMissing(result.missingAssets);
       } else {
         // Never overwrite: the tab's document becomes a new project, and the tab goes on editing that (§5.5.2).
         const name = copyName(ticket.doc.name, now());

@@ -85,6 +85,37 @@ export function collectAssetKeys(value: unknown, into: Set<string> = new Set()):
 export const isJsonAsset = (mime: string): boolean => /^application\/(?:[\w.+-]+\+)?json\b/i.test(mime);
 
 /**
+ * Adds to `keys` every key named inside the JSON assets it reaches (a model revision's `meshAssets`, §5.3),
+ * transitively. `load` returns an asset's blob, or undefined when it is not available.
+ */
+export async function expandAssetKeys(keys: Set<string>, load: (key: string) => Promise<Blob | undefined>): Promise<Set<string>> {
+  const visited = new Set<string>();
+  let frontier = [...keys];
+  while (frontier.length > 0) {
+    const next: string[] = [];
+    for (const key of frontier) {
+      if (visited.has(key)) continue;
+      visited.add(key);
+      const blob = await load(key).catch(() => undefined);
+      if (!blob || !isJsonAsset(blob.type)) continue;
+      let found: Set<string>;
+      try {
+        found = collectAssetKeys(JSON.parse(await blob.text()));
+      } catch {
+        continue; // not JSON after all: no references inside
+      }
+      for (const k of found) {
+        if (keys.has(k)) continue;
+        keys.add(k);
+        next.push(k);
+      }
+    }
+    frontier = next;
+  }
+  return keys;
+}
+
+/**
  * The keys GC may delete: stored, referenced by nothing, and created at least `minAgeMs` before `now`.
  * A malformed `createdAt` counts as new (never deleted).
  */
