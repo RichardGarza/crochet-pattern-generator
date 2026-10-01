@@ -3,7 +3,7 @@ import { mulberry32 } from '../../prng';
 import { marchingCubes } from '../marchingCubes';
 import { edgeStats, signedVolume } from '../meshMeasures';
 import { TAUBIN_LAMBDA, TAUBIN_MU, TAUBIN_PAIRS, taubinSmooth, vertexAdjacency } from '../taubin';
-import { sampleField, sphere, sphereVolume, teddy } from './fields';
+import { firstByteDifference, HEAVY, sampleField, sphere, sphereVolume, teddy } from './fields';
 
 /** RMS distance of the vertices from the sphere of radius r around the origin. */
 function radialRms(p: ArrayLike<number>, r: number): number {
@@ -34,7 +34,7 @@ const TET = {
   indices: [0, 1, 2, 0, 3, 1, 0, 2, 3, 1, 3, 2],
 };
 
-describe('taubinSmooth', () => {
+describe('taubinSmooth', HEAVY, () => {
   it('uses the constants of §2.9.5: 10 pairs, λ = 0.6307, μ = −0.6732 (pass-band 0.1)', () => {
     expect(TAUBIN_PAIRS).toBe(10);
     expect(TAUBIN_LAMBDA).toBe(0.6307);
@@ -66,8 +66,9 @@ describe('taubinSmooth', () => {
       const after = signedVolume(m);
       expect(Math.abs(after / before - 1)).toBeLessThan(0.002);
       expect(Math.abs(after / sphereVolume(0.8) - 1)).toBeLessThan(0.002);
-      // The index buffer is untouched, so the mesh is exactly as watertight as before.
-      expect(m.indices).toEqual(indicesBefore);
+      // The index buffer is untouched, so the mesh is exactly as watertight as before. (A byte comparison:
+      // toEqual on the 241 476 indices at N = 128 costs over 200 ms.)
+      expect(firstByteDifference(m.indices, indicesBefore)).toBe(-1);
       expect(edgeStats(m.indices)).toMatchObject({ boundaryEdges: 0, nonManifoldEdges: 0, misorientedEdges: 0 });
       // The smooth sphere stays a sphere: vertices within 1% of a voxel (RMS).
       expect(radialRms(m.positions, 0.8)).toBeLessThan(0.01 * s.voxel);

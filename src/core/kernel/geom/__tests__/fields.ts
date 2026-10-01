@@ -116,3 +116,27 @@ export function triangleKeys(mesh: MeshLike): string[] {
 export function note(text: string): void {
   if (process.env.GEOM_VERBOSE === '1') console.log(text);
 }
+
+/**
+ * Test options for the heavy tests of this folder: an explicit, generous timeout instead of vitest's default
+ * 5 s, which counts a synchronous test as failed when it finishes late. These tests take 0.1 to 5 s each on a
+ * quiet machine, but other suites run on the same machine at the same time: a cold first run of the whole suite
+ * under that load failed five of them on the default, and with two full suites running at once the slowest one
+ * took 12.9 s. Given to the `describe` of every block whose tests do real work (vitest passes a suite's timeout
+ * on to its tests; a test's own timeout, like the GEOM_FULL runs', wins). A long timeout costs nothing here: it
+ * only matters to a test that is late, and a synchronous loop cannot be interrupted by a timer anyway.
+ */
+export const HEAVY = { timeout: 120_000 } as const;
+
+/**
+ * The index of the first byte at which two typed arrays differ, or −1 when they hold the same bytes. For
+ * "byte-identical" checks on large buffers: `expect(a).toEqual(b)` walks a typed array element by element through
+ * the matcher (measured: 140 ms for 142 560 elements), this loop takes well under a millisecond.
+ */
+export function firstByteDifference(a: ArrayBufferView, b: ArrayBufferView): number {
+  const x = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+  const y = new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+  const n = Math.min(x.length, y.length);
+  for (let i = 0; i < n; i++) if (x[i] !== y[i]) return i;
+  return x.length === y.length ? -1 : n;
+}

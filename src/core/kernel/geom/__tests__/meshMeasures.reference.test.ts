@@ -17,7 +17,7 @@ import {
   signedVolume,
   surfaceArea,
 } from '../meshMeasures';
-import { note } from './fields';
+import { HEAVY, note } from './fields';
 
 // ---- references ------------------------------------------------------------------------------------------------
 
@@ -144,7 +144,7 @@ function randomClosedMesh(seed: number): ReturnType<typeof marchingCubes> {
 
 // ---- edge census, Euler characteristic, components, pinched vertices ---------------------------------------------
 
-describe('index-buffer measures against references', () => {
+describe('index-buffer measures against references', HEAVY, () => {
   it('edgeStats, eulerCharacteristic, countUsedVertices, countComponents on 600 random soups (repeated indices included)', () => {
     for (let seed = 1; seed <= 600; seed++) {
       const indices = soup(seed, true);

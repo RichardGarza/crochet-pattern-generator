@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { edt3d, signedEdt2d, signedEdt3d } from '../edt';
 import { marchingCubes } from '../marchingCubes';
 import { taubinSmooth } from '../taubin';
-import { sampleField, sphere } from './fields';
+import { HEAVY, sampleField, sphere } from './fields';
 
 // Timing tests (§6.1 rule 5: generous bounds, retried twice). The design budget on an Apple M3 Pro is
 // marching cubes 91 ms and Taubin ×10 33 ms at N = 128 (§2.9.8); measured on that machine: 20 ms, 14 ms,
@@ -19,7 +19,7 @@ function best(runs: number, fn: () => void): number {
   return fastest;
 }
 
-describe('geometry kernel timing at N = 128', () => {
+describe('geometry kernel timing at N = 128', HEAVY, () => {
   const s = sampleField(128, sphere(0.8));
   const mesh = marchingCubes(s.field, s.dims, { origin: s.origin, voxel: s.voxel });
   const mask = Uint8Array.from(s.field, (v) => (v >= 0 ? 1 : 0));

@@ -3,13 +3,14 @@
 // Nothing here uses meshMeasures.ts: the edge census, the vertex-fan walk, the winding number and the lattice
 // flood below are written from scratch.
 //
-// The two exhaustive runs over all 3 × 2^18 four-cell patterns take about a minute each and run only with
-// GEOM_FULL=1; without it a seeded sample of the same patterns runs.
+// The two exhaustive runs over all 3 × 2^18 four-cell patterns take under a minute each (measured on an M3 Pro
+// under load: 42 s closed, 9 s open) and run only with GEOM_FULL=1; without it a seeded sample of the same
+// patterns runs.
 import { triTable } from 'three/addons/objects/MarchingCubes.js';
 import { describe, expect, it } from 'vitest';
 import { mulberry32 } from '../../prng';
 import { type IndexedMesh, marchingCubes } from '../marchingCubes';
-import { note } from './fields';
+import { HEAVY, note } from './fields';
 
 const FULL = process.env.GEOM_FULL === '1';
 
@@ -276,7 +277,7 @@ function faceLocalEdge(e: number, axis: number): string {
   return [name(a), name(b)].sort().join('');
 }
 
-describe('the three.js triTable, cell by cell', () => {
+describe('the three.js triTable, cell by cell', HEAVY, () => {
   it('interior sides are used twice in opposite directions; a side in a face is used once', () => {
     for (let cube = 0; cube < 256; cube++) {
       const uses = new Map<string, number>();
@@ -400,7 +401,7 @@ function boundaryOnBox(m: IndexedMesh, c: Census, dims: readonly [number, number
   return true;
 }
 
-describe('every inside/outside pattern', () => {
+describe('every inside/outside pattern', HEAVY, () => {
   it('two cells that share a face (3 × 4096), closed and open border', () => {
     let meshes = 0;
     for (const dims of [
@@ -587,7 +588,7 @@ function latticeComponents(h: Hostile, value: 0 | 1, reach: 1 | 2 | 3): number {
   return components;
 }
 
-describe('random hostile fields (noise, ±1, zeros, NaN, ±Infinity, huge and tiny values, Int16, thin lattices)', () => {
+describe('random hostile fields (noise, ±1, zeros, NaN, ±Infinity, huge and tiny values, Int16, thin lattices)', HEAVY, () => {
   it('closed border: 0 defects, positive volume, finite positions — 700 fields', () => {
     let triangles = 0;
     for (let seed = 1; seed <= 700; seed++) {

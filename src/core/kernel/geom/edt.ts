@@ -490,7 +490,7 @@ function crossingDistancesSquared(sdf: EdtArray, dims: readonly [number, number,
  * ‖p − q‖ + d, and √(‖p − q‖² + d²) is shorter than that by almost d — with a band of ±2 voxels the far field
  * comes out up to 2 voxels too small. Measured against exact distances at N = 96 with a band of ±2 voxels:
  * this function is within −0.01 … +0.14 voxel on smooth solids (sphere, torus, capsule, a hollow sphere; 0.01
- * on average), within 0.1 voxel on planes at any tilt, and up to 0.7 voxel too large next to sharp edges
+ * on average), within 0.11 voxel on planes at any tilt, and up to 0.7 voxel too large next to sharp edges
  * (boxes, a thin plate, a cylinder's rims; 0.03–0.06 on average). The square-root form is up to 1.96 voxels
  * too small (1.4–1.7 on average).
  *

@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { mulberry32, type Rng } from '../../prng';
 import { edt2d, edt3d, edtSquared2d, edtSquared3d, extendSignedDistance3d, signedEdt2d, signedEdt3d } from '../edt';
+import { firstByteDifference, HEAVY } from './fields';
 
 /** Blobs, thin lines, single pixels and holes: a mask with structure at every scale. */
 function blobMask2d(rng: Rng, w: number, h: number): Uint8Array {
@@ -25,7 +26,7 @@ function blobMask2d(rng: Rng, w: number, h: number): Uint8Array {
   return mask;
 }
 
-describe('transforms at application sizes', () => {
+describe('transforms at application sizes', HEAVY, () => {
   it('512² mask: edt2d and both signed conventions equal brute force at 500 random pixels', () => {
     const rng = mulberry32(0xb401);
     const w = 512;
@@ -156,29 +157,30 @@ describe('transforms at application sizes', () => {
     const mask8 = Uint8Array.from({ length: n }, () => (rng() < 0.4 ? 1 : 0));
     const maskF = Float64Array.from(mask8);
     const maskA = Array.from(mask8);
-    const bytes = (a: Float32Array | Float64Array | Int32Array): Uint8Array => new Uint8Array(a.buffer.slice(a.byteOffset, a.byteOffset + a.byteLength));
-    const first = bytes(signedEdt3d(mask8, dims, { spacing: 0.0173 }));
-    for (const m of [mask8, maskF, maskA, mask8]) expect(bytes(signedEdt3d(m, dims, { spacing: 0.0173 }))).toEqual(first);
-    const plain = bytes(edt3d(mask8, dims, { spacing: [1, 2, 3] }));
-    for (const m of [maskF, maskA]) expect(bytes(edt3d(m, dims, { spacing: [1, 2, 3] }))).toEqual(plain);
+    // Byte comparisons (−1 = identical; otherwise the first differing byte), not toEqual: a deep comparison of
+    // 142 560 bytes costs 140 ms, and this test makes nine of them.
+    const first = signedEdt3d(mask8, dims, { spacing: 0.0173 });
+    for (const m of [mask8, maskF, maskA, mask8]) expect(firstByteDifference(signedEdt3d(m, dims, { spacing: 0.0173 }), first)).toBe(-1);
+    const plain = edt3d(mask8, dims, { spacing: [1, 2, 3] });
+    for (const m of [maskF, maskA]) expect(firstByteDifference(edt3d(m, dims, { spacing: [1, 2, 3] }), plain)).toBe(-1);
     // Seeded transform with many exact ties, and the far-field completion.
     const seeds = Float32Array.from({ length: n }, () => (rng() < 0.05 ? Math.floor(rng() * 3) : Infinity));
-    const runSeeded = (): [Uint8Array, Uint8Array] => {
+    const runSeeded = (): [Float32Array, Int32Array] => {
       const v = Float32Array.from(seeds);
       const who = new Int32Array(n);
       edtSquared3d(v, dims, { nearest: who });
-      return [bytes(v), bytes(who)];
+      return [v, who];
     };
     const [v1, w1] = runSeeded();
     const [v2, w2] = runSeeded();
-    expect(v2).toEqual(v1);
-    expect(w2).toEqual(w1);
+    expect(firstByteDifference(v2, v1)).toBe(-1);
+    expect(firstByteDifference(w2, w1)).toBe(-1);
     const band = Float32Array.from({ length: n }, (_, i) => {
       const d = 9.3 - Math.hypot((i % 40) - 19.4, (Math.floor(i / 40) % 33) - 16.2, Math.floor(i / 1320) - 13.1);
       return Math.abs(d) <= 2 ? d : d > 0 ? Infinity : -Infinity;
     });
-    const e1 = bytes(extendSignedDistance3d(Float32Array.from(band), dims));
-    const e2 = bytes(extendSignedDistance3d(Float32Array.from(band), dims));
-    expect(e2).toEqual(e1);
+    const e1 = extendSignedDistance3d(Float32Array.from(band), dims);
+    const e2 = extendSignedDistance3d(Float32Array.from(band), dims);
+    expect(firstByteDifference(e2, e1)).toBe(-1);
   });
 });

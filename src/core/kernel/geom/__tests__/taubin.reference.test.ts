@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { mulberry32 } from '../../prng';
 import { marchingCubes } from '../marchingCubes';
 import { TAUBIN_LAMBDA, TAUBIN_MU, taubinSmooth, vertexAdjacency } from '../taubin';
-import { note } from './fields';
+import { HEAVY, note } from './fields';
 
 function referenceTaubin(positions: ArrayLike<number>, indices: ArrayLike<number>, pairs: number, lambda: number, mu: number): Float64Array {
   const n = positions.length / 3;
@@ -139,7 +139,7 @@ describe('taubinSmooth against a brute-force Jacobi reference', () => {
     expect(Buffer.from(m.indices.buffer).equals(Buffer.from(indicesCopy.buffer))).toBe(true);
   });
 
-  it('vertexAdjacency: a hub with 200 000 neighbors is handled in well under a second', () => {
+  it('vertexAdjacency: a hub with 200 000 neighbors is handled in well under a second', { ...HEAVY, retry: 2 }, () => {
     const rim = 200_000;
     const indices = new Uint32Array(3 * rim);
     for (let k = 0; k < rim; k++) {
@@ -170,7 +170,7 @@ describe('taubinSmooth against a brute-force Jacobi reference', () => {
   });
 });
 
-describe('what Taubin does to volume (measured; the acceptance item is "within 2%" on the sphere)', () => {
+describe('what Taubin does to volume (measured; the acceptance item is "within 2%" on the sphere)', HEAVY, () => {
   it('sphere r = 0.8 in [−1.1, 1.1]³ at N = 64 and 128: well within 2%', () => {
     const report: Record<string, string> = {};
     for (const n of [64, 128]) {

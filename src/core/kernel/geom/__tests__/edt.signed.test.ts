@@ -7,7 +7,7 @@ import { mulberry32 } from '../../prng';
 import { signedEdt1d, signedEdt2d, signedEdt3d } from '../edt';
 import { marchingCubes } from '../marchingCubes';
 import { signedVolume } from '../meshMeasures';
-import { note } from './fields';
+import { HEAVY, note } from './fields';
 
 type Dims = [number, number, number];
 
@@ -35,7 +35,7 @@ function bruteOther(mask: ArrayLike<number>, dims: Dims): Float64Array {
   return out;
 }
 
-describe('signedEdt*: the definition', () => {
+describe('signedEdt*: the definition', HEAVY, () => {
   it('1D/2D/3D, both conventions, every density, 1-wide axes: equals ±spacing·(distance to the other kind − half)', () => {
     const rng = mulberry32(0xb101);
     const sizes = [1, 1, 2, 3, 5, 8, 13, 40];
@@ -123,7 +123,7 @@ function errorStats(sd: Float32Array, truth: (x: number, y: number) => number, w
   return { low, high, nearBias: sum / near, farBias: far > 0 ? farSum / far : 0 };
 }
 
-describe("signedEdt2d: 'boundary' vs 'samples' against the true distance to the outline", () => {
+describe("signedEdt2d: 'boundary' vs 'samples' against the true distance to the outline", HEAVY, () => {
   it('discs of radius 8 … 120 px at random centers: error range and bias next to the outline', () => {
     const rng = mulberry32(0xb103);
     const n = 256;
@@ -279,7 +279,7 @@ function bilinear(f: Float32Array, w: number, h: number, u: number, v: number): 
   return a * (1 - ty) + b * ty;
 }
 
-describe('both conventions in the callers of §2.9.3', () => {
+describe('both conventions in the callers of §2.9.3', HEAVY, () => {
   it('three-view hull of a sphere r = 0.8 (masks 512 px, N = 128): volume ratio against 8(2 − √2)/(4π/3) = 1.1187 (T3: 1.119 ± 0.01)', () => {
     const HALF = 1.1;
     const P = 512;

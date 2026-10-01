@@ -5,7 +5,7 @@ import { getManifold, manifoldFromMesh, manifoldReport } from '../manifold';
 import { marchingCubes } from '../marchingCubes';
 import { signedVolume } from '../meshMeasures';
 import { taubinSmooth } from '../taubin';
-import { sampleField, sphere, sphereVolume, teddy, torus, twoSpheres } from './fields';
+import { HEAVY, sampleField, sphere, sphereVolume, teddy, torus, twoSpheres } from './fields';
 
 const TET = [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1];
 const TET_FACES = [0, 2, 1, 0, 1, 3, 1, 2, 3, 0, 3, 2];
@@ -15,7 +15,7 @@ function mesh(n: number, f: Parameters<typeof sampleField>[1]): ReturnType<typeo
   return marchingCubes(s.field, s.dims, { origin: s.origin, voxel: s.voxel });
 }
 
-describe('getManifold (§5.4)', () => {
+describe('getManifold (§5.4)', HEAVY, () => {
   it('has the frozen signature', () => {
     const frozen: GetManifoldFn = getManifold;
     expect(typeof frozen).toBe('function');
@@ -88,7 +88,7 @@ describe('manifoldFromMesh', () => {
   });
 });
 
-describe('manifoldReport', () => {
+describe('manifoldReport', HEAVY, () => {
   it('accepts the marching-cubes sphere as a manifold of genus 0, before and after Taubin', async () => {
     for (const n of [64, 128]) {
       const m = mesh(n, sphere(0.8));

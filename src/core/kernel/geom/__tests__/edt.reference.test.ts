@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { mulberry32, type Rng } from '../../prng';
 import { edt1d, edt2d, edt3d, edtSquared1d, edtSquared2d, edtSquared3d } from '../edt';
-import { note } from './fields';
+import { HEAVY, note } from './fields';
 
 type Dims = [number, number, number];
 
@@ -101,7 +101,7 @@ function run(values: Float64Array | Float32Array, dims: Dims, sp: Dims | undefin
   edtSquared3d(values, dims, { spacing: sp, nearest });
 }
 
-describe('edtSquared*: integer costs at unit spacing', () => {
+describe('edtSquared*: integer costs at unit spacing', HEAVY, () => {
   it('3D (incl. 1-wide axes): bit-exact values, and `nearest` is the LOWEST index among the minimizers (§5.8 ties → lowest index)', () => {
     const rng = mulberry32(0xb001);
     let samples = 0;
@@ -189,7 +189,7 @@ describe('edtSquared*: integer costs at unit spacing', () => {
   });
 });
 
-describe('edtSquared*: real costs, extreme costs, extreme spacings', () => {
+describe('edtSquared*: real costs, extreme costs, extreme spacings', HEAVY, () => {
   it('real, negative, huge and tiny costs with per-axis spacing 1e-3 … 1e3: values agree to rounding and `nearest` attains them (Float64)', () => {
     const rng = mulberry32(0xb004);
     let worst = 0;
@@ -376,7 +376,7 @@ describe('edtSquared*: spacing whose square leaves the float64 range', () => {
     }
   });
 });
-describe('edt1d/2d/3d of a mask', () => {
+describe('edt1d/2d/3d of a mask', HEAVY, () => {
   it('unit and isotropic spacing: fround(spacing·√integer), for every density and for 1-wide and long thin grids', () => {
     const rng = mulberry32(0xb008);
     let samples = 0;

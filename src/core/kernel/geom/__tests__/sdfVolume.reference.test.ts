@@ -7,7 +7,7 @@ import { mulberry32, type Rng } from '../../prng';
 import { marchingCubesSdf } from '../marchingCubes';
 import { signedVolume } from '../meshMeasures';
 import { decodeSdfVolume, encodeSdfVolume, SDF_UNITS_PER_VOXEL, sampleSdfVolume } from '../sdfVolume';
-import { note } from './fields';
+import { firstByteDifference, HEAVY, note } from './fields';
 
 type Dims = [number, number, number];
 
@@ -198,7 +198,7 @@ describe('sampleSdfVolume', () => {
   });
 });
 
-describe('encodeSdfVolume / decodeSdfVolume', () => {
+describe('encodeSdfVolume / decodeSdfVolume', HEAVY, () => {
   it('keeps the side of every sample under "≥ 0 is inside": tiny values, denormals, −0, random', () => {
     const rng = mulberry32(0xb304);
     for (const voxel of [1, 0.0173, 1e-3, 250]) {
@@ -251,7 +251,8 @@ describe('encodeSdfVolume / decodeSdfVolume', () => {
     for (const voxel of [1, 0.0173, 1 / 3, 1e-3, 7.7, 1e-6, 1e6]) {
       const volume: SdfVolume = { data: all, dims: [65536, 1, 1], origin: [0, 0, 0], voxel };
       const back = encodeSdfVolume(decodeSdfVolume(volume), [65536, 1, 1], [0, 0, 0], voxel);
-      expect(back.data).toEqual(all);
+      // (a byte comparison: toEqual walks the 65 536 entries through the matcher, about 60 ms per voxel size)
+      expect(firstByteDifference(back.data, all)).toBe(-1);
     }
   });
 

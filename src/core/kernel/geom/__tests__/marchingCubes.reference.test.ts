@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import type { SdfVolume, Vec3 } from '../../../../types/geometry';
 import { mulberry32 } from '../../prng';
 import { type IndexedMesh, marchingCubes, marchingCubesSdf } from '../marchingCubes';
-import { note } from './fields';
+import { HEAVY, note } from './fields';
 
 type Dims = [number, number, number];
 type FieldArray = Float32Array | Float64Array | Int16Array | number[];
@@ -144,7 +144,7 @@ function hostile(seed: number, maxDim: number): { field: FieldArray; dims: Dims;
   return { field, dims, iso, origin, voxel };
 }
 
-describe('marchingCubes against an independent reference mesher', () => {
+describe('marchingCubes against an independent reference mesher', HEAVY, () => {
   it('gives exactly the reference triangles and one vertex per crossed lattice edge (closed and open, 600 hostile fields)', () => {
     let triangles = 0;
     for (let seed = 1; seed <= 600; seed++) {
@@ -416,7 +416,7 @@ describe('float32 positions: the lattice must leave room for the 0.01-voxel clam
 
 // ---- memory --------------------------------------------------------------------------------------------------
 
-describe('"two z-slices are held at a time"', () => {
+describe('"two z-slices are held at a time"', HEAVY, () => {
   it('while meshing a 4 × 4 × 100 000 lattice the kernel holds no buffer that grows with the depth', () => {
     // The field is a Proxy, so it costs no memory itself and can look at the process half way through the run.
     // A mesher that kept one edge-vertex map for the whole lattice would hold 3 × 4 × 1.6 million bytes = 19 MB.

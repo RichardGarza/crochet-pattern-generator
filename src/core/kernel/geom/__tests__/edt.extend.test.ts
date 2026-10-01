@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { mulberry32 } from '../../prng';
 import { edtSquared3d, extendSignedDistance3d } from '../edt';
 import { marchingCubes } from '../marchingCubes';
-import { note } from './fields';
+import { HEAVY, note } from './fields';
 
 type Dims = [number, number, number];
 type Sdf = (x: number, y: number, z: number) => number;
@@ -186,8 +186,8 @@ function shapesAt(n: number): Shape[] {
   ];
 }
 
-describe('extendSignedDistance3d on analytic shapes', () => {
-  it('N = 96, band ±2, eight shapes: sign kept, known samples untouched, error ranges', { timeout: 60000 }, () => {
+describe('extendSignedDistance3d on analytic shapes', HEAVY, () => {
+  it('N = 96, band ±2, eight shapes: sign kept, known samples untouched, error ranges', () => {
     const n = 96;
     const dims: Dims = [n, n, n];
     const rows: string[] = [];
@@ -213,7 +213,7 @@ describe('extendSignedDistance3d on analytic shapes', () => {
     note(`extendSignedDistance3d, N = 96, band ±2 (errors of |value| in voxels):\n  ${rows.join('\n  ')}`);
   });
 
-  it('band widths 1 and 3 at N = 48', { timeout: 60000 }, () => {
+  it('band widths 1 and 3 at N = 48', () => {
     const n = 48;
     const dims: Dims = [n, n, n];
     const rows: string[] = [];
@@ -231,7 +231,7 @@ describe('extendSignedDistance3d on analytic shapes', () => {
     note(`extendSignedDistance3d, N = 48, band widths:\n  ${rows.join('\n  ')}`);
   });
 
-  it('tilted planes whose nearest surface point lies inside the grid: within a tenth of a voxel at every tilt', { timeout: 60000 }, () => {
+  it('tilted planes whose nearest surface point lies inside the grid: within a tenth of a voxel at every tilt', () => {
     // (A single known sample per unknown one was up to 0.89 voxel too large at a tilt of 0.01: the squared
     // transform prefers a deeper band sample a few columns to the side.)
     const rng = mulberry32(0xb201);
@@ -268,7 +268,7 @@ describe('extendSignedDistance3d on analytic shapes', () => {
     note(`extendSignedDistance3d on half-spaces, N = 64, band ±2 (voxels):\n  ${rows.join('\n  ')}`);
   });
 
-  it('level sets of the completed field beyond the band (what a sculpt stroke or a level offset of more than the band width meshes)', { timeout: 60000 }, () => {
+  it('level sets of the completed field beyond the band (what a sculpt stroke or a level offset of more than the band width meshes)', () => {
     // (With a single known sample per unknown one the review measured, for the sphere at ±6 voxels: vertices up
     // to 0.46 voxel off the true level set, 0.09–0.10 rms.)
     const n = 64;
@@ -312,7 +312,7 @@ describe('extendSignedDistance3d on analytic shapes', () => {
     note(`distance of marching-cubes vertices from the true level set (voxels):\n  ${rows.join('\n  ')}`);
   });
 
-  it('anisotropic spacing and non-cubic grids', { timeout: 60000 }, () => {
+  it('anisotropic spacing and non-cubic grids', () => {
     const rows: string[] = [];
     const cases: { dims: Dims; spacing: Dims }[] = [
       { dims: [96, 40, 23], spacing: [1, 1, 1] },

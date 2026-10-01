@@ -16,7 +16,7 @@ import {
   signedVolume,
 } from '../meshMeasures';
 import { encodeSdfVolume } from '../sdfVolume';
-import { HALF, sampleField, sphere, sphereVolume, teddy, torus, torusVolume, triangleKeys, twoSpheres } from './fields';
+import { HALF, HEAVY, sampleField, sphere, sphereVolume, teddy, torus, torusVolume, triangleKeys, twoSpheres } from './fields';
 
 // ---- helpers ---------------------------------------------------------------------------------------------
 
@@ -141,7 +141,7 @@ describe('three.js marching-cubes tables', () => {
 
 // ---- acceptance: sphere, ellipsoid union, torus, two spheres ---------------------------------------------
 
-describe('marchingCubes on analytic solids', () => {
+describe('marchingCubes on analytic solids', HEAVY, () => {
   it.each([64, 128])('sphere r = 0.8 at N = %i: watertight, χ = 2, outward, no zero-area triangle, volume', (n) => {
     const m = mesh(sampleField(n, sphere(0.8)));
     expectClosedSurface(m);
@@ -526,7 +526,7 @@ describe('marchingCubes at the border of the lattice', () => {
 
 // ---- hostile input ---------------------------------------------------------------------------------------
 
-describe('marchingCubes on arbitrary fields', () => {
+describe('marchingCubes on arbitrary fields', HEAVY, () => {
   it('is a closed, oriented 2-manifold for every random field (closed border)', () => {
     let triangles = 0;
     for (let seed = 1; seed <= 300; seed++) {
@@ -708,7 +708,7 @@ describe('marchingCubes on arbitrary fields', () => {
 
 // ---- SdfVolume -------------------------------------------------------------------------------------------
 
-describe('marchingCubesSdf', () => {
+describe('marchingCubesSdf', HEAVY, () => {
   it('meshes a stored Int16 volume in inches, with the topology of the float field it was encoded from', () => {
     const s = sampleField(48, teddy);
     // Pretend the scene is in inches with a 0.1 in voxel and some origin.

@@ -2,13 +2,14 @@
 // the WASM heap. From the independent review of Step 0b; the piece count, volumes and genus it compares with
 // are computed here, not by meshMeasures.ts.
 //
-// The run over all 3 × 2^18 four-cell patterns through manifold-3d needs GEOM_FULL=1 (about two minutes).
+// The run over all 3 × 2^18 four-cell patterns through manifold-3d needs GEOM_FULL=1 (under a minute: 49 s
+// measured on an M3 Pro under load).
 import Module from 'manifold-3d';
 import { describe, expect, it } from 'vitest';
 import { mulberry32 } from '../../prng';
 import { getManifold, manifoldReport } from '../manifold';
 import { type IndexedMesh, marchingCubes } from '../marchingCubes';
-import { note } from './fields';
+import { HEAVY, note } from './fields';
 
 const FULL = process.env.GEOM_FULL === '1';
 
@@ -85,7 +86,7 @@ const TET_FACES = [0, 2, 1, 0, 1, 3, 1, 2, 3, 0, 3, 2];
 
 // ---- manifold-3d accepts what marching cubes makes ---------------------------------------------------------------
 
-describe('manifold-3d on marching-cubes meshes', () => {
+describe('manifold-3d on marching-cubes meshes', HEAVY, () => {
   it('accepts every two-cell pattern (3 × 4096) with the right number of parts and volume', async () => {
     for (const dims of [
       [3, 2, 2],
@@ -239,7 +240,7 @@ describe('manifoldReport semantics', () => {
 
 // ---- WASM memory ---------------------------------------------------------------------------------------------------
 
-describe('manifoldReport and the WASM heap', () => {
+describe('manifoldReport and the WASM heap', HEAVY, () => {
   /** Runs `fn` and returns how often the WASM memory had to grow, and its size after the last growth. */
   async function growthDuring(fn: () => Promise<void>): Promise<{ grows: number; bytes: number }> {
     const original = WebAssembly.Memory.prototype.grow;

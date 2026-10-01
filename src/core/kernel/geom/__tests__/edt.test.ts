@@ -14,6 +14,7 @@ import {
 } from '../edt';
 import { marchingCubes } from '../marchingCubes';
 import { countComponents, edgeStats, eulerCharacteristic, signedVolume } from '../meshMeasures';
+import { HEAVY } from './fields';
 
 // ---- brute force -----------------------------------------------------------------------------------------
 
@@ -486,7 +487,7 @@ describe('signedEdt1d/2d/3d', () => {
 
 // ---- narrow band → whole grid ----------------------------------------------------------------------------
 
-describe('extendSignedDistance3d', () => {
+describe('extendSignedDistance3d', HEAVY, () => {
   it('gives every unknown sample the smaller of: the distance to the nearest crossing, and ‖p − q‖ + |sdf[q]| for the known sample that wins the squared transform', () => {
     const rng = mulberry32(51);
     let checked = 0;

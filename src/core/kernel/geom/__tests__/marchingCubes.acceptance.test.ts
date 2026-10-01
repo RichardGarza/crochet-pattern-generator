@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { manifoldReport } from '../manifold';
 import { type IndexedMesh, marchingCubes } from '../marchingCubes';
 import { taubinSmooth } from '../taubin';
-import { note, TEDDY_PARTS } from './fields';
+import { HEAVY, note, TEDDY_PARTS } from './fields';
 
 const HALF = 1.1;
 
@@ -171,7 +171,7 @@ function facts(m: IndexedMesh): Facts {
 const CLEAN = { boundary: 0, nonManifold: 0, misoriented: 0, zeroArea: 0, unused: 0 };
 const sphereVolume = (r: number): number => (4 / 3) * Math.PI * r ** 3;
 
-describe('the acceptance list, with independent checks', () => {
+describe('the acceptance list, with independent checks', HEAVY, () => {
   it.each([64, 128])('sphere r = 0.8 at N = %i', async (n) => {
     const m = sample(n, sphereAt(0.8));
     const f = facts(m);

@@ -18,13 +18,14 @@ kind of machine as the design budgets (research 04 §11).
 | `manifold.ts` | `getManifold` (the §5.4 loader), `manifoldFromMesh` (a mesh → a manifold-3d solid or its error status), `manifoldReport` (status / parts / genus / volume) |
 | `meshMeasures.ts` | signed volume, area, edge census, Euler characteristic, components, pinched vertices, degenerate triangles, bounds |
 | `sdfVolume.ts` | the layout and placement of `SdfVolume`, `encodeSdfVolume`, `decodeSdfVolume`, `sampleSdfVolume` |
-| `__tests__/` | 21 test files: 8 written with the kernels, 13 kept from the independent review (see "Review"); `fields.ts` holds the analytic test solids (sphere, nine-ellipsoid teddy, torus, two spheres) |
+| `__tests__/` | 22 test files: 8 written with the kernels, 13 kept from the independent review (see "Review"), and `fields.test.ts` (the test helpers); `fields.ts` holds the analytic test solids (sphere, nine-ellipsoid teddy, torus, two spheres), the `HEAVY` test options and the `firstByteDifference` helper |
 
 `meshMeasures.ts` and `sdfVolume.ts` are not named in §5.1 (see "Deviations").
 
 Two switches for the test suite: `GEOM_VERBOSE=1 npm test -- src/core/kernel/geom` prints the measurements the
 reference tests take; `GEOM_FULL=1` also runs the three exhaustive enumerations (all 3 × 2¹⁸ four-cell patterns,
-closed, open, and through manifold-3d; a few minutes), which are skipped otherwise.
+closed, open, and through manifold-3d; 42 s, 9 s and 49 s), which are skipped otherwise. Timeouts, skipped tests
+and timing tests: see "The test suite".
 
 ## Conventions every caller relies on
 
@@ -231,6 +232,12 @@ A `ColoredMesh` is the result plus labels: `{ ...mesh, labels: new Uint8Array(me
 
 ## Acceptance, with measured numbers
 
+Session 3 (see "Sessions") measured every row again with its own harness (a temporary test file, not committed)
+and with the tests' `GEOM_VERBOSE=1` output: every count, ratio and defect number in this table came out
+identical. Session 3 also measured N = 128 for the two spheres: χ = 4, 2 pieces, watertight, volume 0.99835 ×
+analytic. The timing rows give both sessions: session 1 on a quiet machine, session 3 with other agents' test
+suites running (load average 6.6–7.8 on 12 cores).
+
 | Item | Result |
 |---|---|
 | MC, sphere r = 0.8 in [−1.1, 1.1]³, N = 64 | pass — 9 936 vertices, 19 868 triangles; 0 boundary, 0 non-manifold, 0 misoriented edges; χ = 2; 0 zero-area triangles (smallest 8.66e-5 voxel²); volume 0.99891 × analytic |
@@ -240,56 +247,109 @@ A `ColoredMesh` is the result plus labels: `{ ...mesh, labels: new Uint8Array(me
 | MC, two separate spheres, N = 64 | pass — χ = 4, 2 pieces, watertight, volume 0.99328 × analytic |
 | MC at the grid border | pass — documented above; a sphere r = 1.3 cut by all six faces: closed mode watertight, χ = 2, volume 0.99988 × the analytic clipped sphere; open mode χ = −4 with every boundary vertex on the box |
 | Taubin, 10 pairs | pass — sphere volume +0.023% (N = 128), +0.087% (N = 64); teddy +0.085%; index buffer untouched. Noise of ±0.3 voxel on the N = 128 sphere: RMS radial error 0.1735 → 0.0581 voxel, RMS umbrella length 0.484 → 0.047 voxel (3 pairs: 0.0781 and 0.104). Twenty plain Laplacian steps lose 3.0% of the N = 64 sphere |
-| EDT vs brute force | pass — 1D/2D/3D, seeded random grids: integer costs bit-exact in Float64 and Float32; real costs and per-axis spacing within 1e-12; `nearest` always names a winning seed; masks bit-exact; both signed forms bit-exact against their definitions; the narrow-band extension equals its definition; empty / full masks as documented |
+| EDT vs brute force | pass — 1D/2D/3D, seeded random grids: integer costs bit-exact in Float64 and Float32; real costs and per-axis spacing within 1e-12; `nearest` always names a winning seed; masks bit-exact; both signed forms bit-exact against their definitions; the narrow-band extension equals its definition; empty / full masks as documented. Session 3's own harness, 300 seeded grids (1D 1–40, 2D up to 12², 3D up to 7³): masks 0 mismatches, signed (both conventions) 0 of 600, seeded integer costs 0, seeded real costs with per-axis spacing 2.7e-15 relative, per-axis-spacing masks 5.9e-8 (the float32 result); empty mask +Infinity, full mask 0, signed all-inside +Infinity / empty −Infinity, no seed +Infinity |
 | `getManifold` in node | pass — unit cube: `NoError`, genus 0, 1 part; second call returns the same promise and module |
 | MC sphere → manifold-3d | pass — `NoError`, 1 part, genus 0 at N = 64 and 128, before and after Taubin; torus genus 1; two spheres 2 parts |
-| Timing, MC, N = 128 | 22 ms (sphere, 40 k vertices), 17 ms (teddy, 27 k vertices); budget 91 ms. N = 192: 68 ms / 55 ms; N = 256 (teddy): 140 ms. Worst case, noise at N = 128 (6.8 M triangles): 247 ms |
-| Timing, Taubin × 10 | 14 ms (sphere), 9.7 ms (teddy); budget 33 ms for 21 k vertices. 3 pairs: 6 ms / 4 ms |
-| Timing, 3D EDT, N = 128 | 51 ms unsigned, 110 ms signed (sphere mask). 2D signed, 512²: 7.0 ms (research: 21 ms). `extendSignedDistance3d`, N = 96: 90 ms |
-| Determinism | pass — byte-identical positions and indices on repeated runs and across three processes; node and a Chromium worker give the same counts and volume |
+| Timing, MC, N = 128 | Session 1: 22 ms (sphere, 40 k vertices), 17 ms (teddy, 27 k vertices); budget 91 ms. N = 192: 68 ms / 55 ms; N = 256 (teddy): 140 ms. Worst case, noise at N = 128 (6.8 M triangles): 247 ms. Session 3 (best / median of 15): sphere 24.8 / 25.2 ms, teddy 18.8 / 18.9 ms |
+| Timing, Taubin × 10 | Session 1: 14 ms (sphere), 9.7 ms (teddy); budget 33 ms for 21 k vertices. 3 pairs: 6 ms / 4 ms. Session 3 (best / median of 15): sphere 19.0 / 19.2 ms, teddy 13.0 / 13.2 ms; 3 pairs 8.2 ms (sphere) |
+| Timing, 3D EDT, N = 128 | Session 1: 51 ms unsigned, 110 ms signed (sphere mask). 2D signed, 512²: 7.0 ms (research: 21 ms). `extendSignedDistance3d`, N = 96: 90 ms. Session 3 (best / median of 7): 54.2 / 54.9 ms unsigned, 114.6 / 115.7 ms signed; `manifoldReport` of the N = 128 sphere (80 k triangles): 57 ms |
+| Determinism | pass — byte-identical positions and indices on repeated runs and across three processes; node and a Chromium worker give the same counts and volume (session 1). Session 3: the FNV-1a 64 hashes of positions, indices and the Taubin result (sphere, teddy, torus at N = 128) and of `edt3d` / `signedEdt3d` (N = 128 sphere mask) were the same twice in one process and in two separate processes |
 
 The timing tests assert 300 ms (MC), 150 ms (Taubin), 500 ms / 1 s (3D EDT, unsigned / signed) and 150 ms (2D),
 best of a few runs, retried twice.
 
 ## Verification beyond the unit tests
 
+Sessions 1 and 2 ran most of these with scratch scripts that were not committed. What the suite holds was re-run
+in session 3 (marked **[s3]**, with session 3's numbers where they differ); the rest is carried over unchanged
+and was not re-run (marked **[s1–2]**).
+
 - **Marching cubes is manifold for every input.** A mesh edge lies in one cell or on the face between two cells,
   and a vertex is surrounded by the four cells around its lattice edge. All 3 × 2¹⁸ = 786 432 inside/outside
   patterns of the four cells around a lattice edge (three orientations) were meshed with the closed border: 0
   boundary edges, 0 non-manifold edges, 0 misoriented edges, 0 pinched vertices, 0 zero-area triangles, volume
   always positive, no unused vertex. With the open border: the same, except for the boundary edges on the box.
-  A third run gave every sample a hostile magnitude (exact 0, ±1e-12, ±1e-6, ±1, ±1e12, ±Infinity): still 0
-  defects, no NaN, and the smallest triangle of all 786 432 meshes is the corner cut of the clamp, √3/2 · 0.01²
-  voxel². (About 20 s per run; the unit suite runs the two-cell version, 3 × 4096 patterns, and a seeded sample
-  of the four-cell one; `GEOM_FULL=1` runs them all.) A further 2.2 million random 3³ … 6×5×4 lattices: 0 defects.
+  **[s3]** These two runs are the `GEOM_FULL` tests of `marchingCubes.topology.test.ts`: passed again, 42 s and
+  9 s; smallest triangle of the closed run 8.6602e-5 voxel² = √3/2 · 0.01² (the corner cut of the clamp). The
+  default suite runs the two-cell version, all 3 × 4096 patterns, and a seeded sample of the four-cell one.
+  **[s1–2]** A third run gave every sample a hostile magnitude (exact 0, ±1e-12, ±1e-6, ±1, ±1e12, ±Infinity):
+  still 0 defects, no NaN, and the smallest triangle of all 786 432 meshes is the corner cut of the clamp,
+  √3/2 · 0.01² voxel². A further 2.2 million random 3³ … 6×5×4 lattices: 0 defects. (The suite's 700 random
+  hostile fields of `marchingCubes.topology.test.ts` cover the same rules on a smaller scale.)
 - **manifold-3d accepts all of it.** Every one of those four-cell patterns, with ±1 values and with the hostile
   magnitudes (1 572 858 meshes), and 5 959 random meshes up to 10³ (3.8 M triangles) went through
   `new Manifold(mesh)`: none rejected; `decompose()` always agreed with `countComponents` and its volume with
-  `signedVolume`.
-- **Against a textbook implementation.** A per-cell, unindexed marching cubes written in the test file from the
+  `signedVolume`. **[s3]** The ±1 run is the `GEOM_FULL` test of `manifold.meshes.test.ts` (786 429 non-empty
+  meshes, parts and volume checked against an independent count): passed again, 49 s. **[s1–2]** the hostile
+  magnitudes and the 5 959 random meshes.
+- **[s3] Against a textbook implementation.** A per-cell, unindexed marching cubes written in the test file from the
   three.js tables gives exactly the same triangles (as position triples) on smooth and random fields; so does the
   review's own reference mesher (vertices in a Map keyed by lattice edge) on 600 hostile fields.
-- **The mesh separates inside from outside.** The winding number of the mesh is 1 at every inside lattice point
-  and 0 at every outside one, on random hostile fields; no triangle passes through another on 800 random fields.
-- **The kernels together, on T3's first acceptance item.** Three 512² disc masks → `signedEdt2d` in world units
+- **[s3] The mesh separates inside from outside.** The winding number of the mesh is 1 at every inside lattice
+  point and 0 at every outside one, on random hostile fields; no triangle passes through another on 800 random
+  fields (the suite holds 300 of them).
+- **[s3] The kernels together, on T3's first acceptance item.** Three 512² disc masks → `signedEdt2d` in world units
   → an N×N table per view → `min` over N³ → marching cubes: the hull of the r = 0.8 sphere has 1.1186 × the sphere's
   volume at N = 128 (theory 1.1188; the exact distance field of the disc gives 1.1185 on the same lattice; T3 must
   reach 1.119 ± 0.01), watertight, χ = 2. With `measureTo: 'boundary'` it is 1.1184.
-- **A rehearsal of T5's merge.** Two spheres stored as cropped `SdfVolume`s with different origins and voxel
+- **[s1–2] A rehearsal of T5's merge.** Two spheres stored as cropped `SdfVolume`s with different origins and voxel
   sizes (0.0625 and 0.05 in), sampled with `sampleSdfVolume` onto one 65 × 96 × 65 grid (40 ms), `max`, marching
   cubes, Taubin: one watertight piece, χ = 2, volume 0.99938 × the analytic union (G24 asks for 2%).
-- **Larger brute-force runs of the transforms** than the unit suite holds: 120 3D grids up to 18³ and 40 2D
+- **[s1–2] Larger brute-force runs of the transforms** than the unit suite holds: 120 3D grids up to 18³ and 40 2D
   masks up to 96 × 80 (225 000 samples), and every binary mask of the 4×4, 5×3, 16×1, 1×16, 3×3×2 and 2×2×4
   grids (557 056 masks): mask, signed (both conventions) and seeded transforms and `nearest` all agree with
   brute force; per-axis spacing to 6e-8 relative (the float32 result).
-- **No WASM leak in `manifoldReport`.** 30 000 accepted and 30 000 rejected meshes do not grow the WASM memory (a
-  unit test hooks `WebAssembly.Memory.prototype.grow`).
-- **In a real worker.** A temporary page (not committed) ran `getManifold`, marching cubes, Taubin and
+- **[s3] No WASM leak in `manifoldReport`.** 30 000 accepted and 30 000 rejected meshes do not grow the WASM memory
+  (a unit test hooks `WebAssembly.Memory.prototype.grow`).
+- **[s1–2] In a real worker.** A temporary page (not committed) ran `getManifold`, marching cubes, Taubin and
   `manifoldReport` inside a module worker in headless Chromium, under `npm run dev` and from a production build
   served by `vite preview`, on port 5268 with a temp projects folder: unit cube `NoError` / genus 0 / 1 part, the
   N = 128 sphere `NoError` / genus 0, one navigation, no console errors. In the worker: MC 18 ms, Taubin 14 ms,
   3D EDT 50 ms. The worker bundle was 67 kB plus the 541 kB wasm: only the tables of three.js are bundled. (Run
   with the first version of `manifold.ts`; the loader's `locateFile` path has not changed since.)
+
+## The test suite
+
+`npm test -- src/core/kernel/geom`: 22 files, 247 tests, of which 244 run and 3 are skipped on purpose; about
+6–7 s wall on this machine (36 s of test time spread over the workers).
+
+- **Timeouts.** Vitest's default is 5 s per test, and it fails a synchronous test that finishes after its timeout
+  (the timer cannot fire while the test runs, so the runner compares the elapsed time when it returns). Many
+  tests here do 0.1–5 s of work (brute-force references, exhaustive pattern runs, N = 96 … 128 volumes) while
+  other agents' suites load the same machine: a cold first run of the whole suite failed five of them on the
+  default (the `edt.largeGrids` determinism test, the real/extreme costs of `edt.reference`, the four-cell samples
+  of `manifold.meshes` and `marchingCubes.topology`, the nine ellipsoids of `marchingCubes.acceptance`), each of
+  which passes alone. Session 3 gave every `describe` block with a test over about 100 ms on a quiet run (27
+  blocks, plus the loader block of `manifold.test.ts`, whose first test instantiates the WASM module: 28 blocks
+  in 17 files) and the hub timing test of `taubin.reference.test.ts` the options `HEAVY` from `fields.ts`:
+  `{ timeout: 120_000 }`. Vitest passes a suite's options on to its tests and nested suites, and a test's own
+  timeout wins (the `GEOM_FULL` runs keep their 10 and 30 minutes); `fields.test.ts` checks all three. A long
+  timeout costs nothing: it only matters to a test that is late. With two full suites running at once (load
+  average 14) both passed; the slowest test took 12.9 s (`edt.extend`, N = 96), three geom tests took more than
+  5 s (the old default), nine more than 3 s and seventeen more than 2 s.
+- **Less matcher work.** `expect(a).toEqual(b)` walks a typed array element by element through the matcher:
+  140 ms for 142 560 elements (a byte loop: 0.1 ms). Three heavy tests compared large buffers that way; they now
+  use `firstByteDifference(a, b)` from `fields.ts` (−1 = the same bytes, else the first byte that differs; the
+  same check, tested in `fields.test.ts`): the `edt.largeGrids` determinism test went from 2.0–2.7 s to 0.16 s,
+  decode → encode of every Int16 value (`sdfVolume.reference`) from 0.9 s to 0.01 s, the Taubin sphere test from
+  1.0 s to 0.34 s. Nothing else about the tests changed.
+- **Timing tests** follow §6.1 rule 5 (generous bounds, retried twice): `perf.test.ts` (best of 2–3 runs; MC
+  < 300 ms, Taubin < 150 ms, 3D EDT < 500 ms and signed < 1 s, 2D signed 512² < 150 ms) and the 200 000-neighbor
+  hub of `taubin.reference.test.ts` (< 1 s; measured 20–62 ms; its `retry: 2` was added in session 3).
+- **The three skipped tests are skipped on purpose**, by `it.runIf(process.env.GEOM_FULL === '1')`: the
+  exhaustive runs over all 3 × 2¹⁸ inside/outside patterns of the four cells around a lattice edge — closed
+  border and open border (`marchingCubes.topology.test.ts`) and through manifold-3d (`manifold.meshes.test.ts`).
+  They take 42 s, 9 s and 49 s (session 3, under load), too long for a suite that every agent runs after every
+  change; the default suite covers the same rules with all 3 × 4096 two-cell patterns (a mesh edge lies in one
+  cell or on the face between two) and seeded samples of the four-cell patterns (3 × 4000 per border, 3 × 3000
+  through manifold-3d, another 3 × 3000 in `marchingCubes.test.ts`).
+  `GEOM_FULL=1 npm test -- src/core/kernel/geom` runs them; in session 3 all three passed: 786 432 closed meshes
+  with 0 defects, 786 432 open meshes with 0 non-manifold defects and every boundary edge on the box, 786 429
+  non-empty meshes accepted by manifold-3d with the right number of parts and volume.
+- **The reviewers' files.** No `zz-review*` file is left: session 2 kept all 13 under proper names. Session 3 read
+  each of them again — every one tests a documented rule of the kernels against an independent reference or an
+  analytic value (the leak test of `manifold.meshes` checks manifold-3d itself, the reason `manifoldFromMesh`
+  exists) — and kept them all.
 
 ## Review
 
@@ -354,10 +414,11 @@ Information it produced for later tracks:
    brute-force SDF). `extendSignedDistance3d` takes the smaller of two upper bounds — the distance to the nearest
    sub-voxel crossing between two known samples, and `‖p − q‖ + |d(q)|` for the known sample q that wins the
    seeded transform, of either side. Measured at N = 96, band ±2: −0.01 … +0.14 voxel on smooth solids (0.01 on
-   average), within 0.1 voxel on planes at any tilt, up to 0.58 voxel next to sharp edges (boxes, a thin plate;
-   0.04–0.06 on average; 0.68 on one rotated box). Marching cubes at ±6 voxels on the completed field of a sphere
-   is within 0.06 voxel of the true level set (0.02 rms). The plain seeded transform is exported for whoever
-   wants it.
+   average), within 0.11 voxel on planes at any tilt (0.103 at the steepest, N = 64), up to 0.58 voxel next to
+   sharp edges (boxes, a thin plate; 0.04–0.06 on average; 0.68 on one rotated box in a session-2 scratch run).
+   Marching cubes at ±6 voxels on the completed field of a sphere is within 0.06 voxel of the true level set
+   (0.02 rms). (Session 3's `GEOM_VERBOSE=1` run of `edt.extend.test.ts` printed these numbers again.) The plain
+   seeded transform is exported for whoever wants it.
 5. **`manifoldFromMesh` and `manifoldReport`** are not in the spec. Both T3 (§2.9.5 step 5) and T5 (`merge`
    returns `genus`) need the same lines around `new Manifold(mesh)` — and those lines leak when written the
    obvious way (see "Review").
@@ -403,7 +464,13 @@ Information it produced for later tracks:
 8. **`src/types/__checks__/entryPoints.check.ts`** (0c): add
    `Check<SameSignature<typeof import('../../core/kernel/geom/manifold').getManifold, E.GetManifoldFn>>`.
 9. **§2.9.8 budget line / §5.8:** the measured kernel times above can replace the research estimates if wanted
-   (MC 22 ms, Taubin 14 ms at N = 128 on 40 k vertices).
+   (MC 22 ms, Taubin 14 ms at N = 128 on 40 k vertices on a quiet machine; 25 ms and 19 ms under load).
+10. **§6.1 rule 5 / the vitest block of `vite.config.ts` (0c):** vitest fails a synchronous test that finishes
+    after its timeout, and the default is 5 s; on this shared machine a cold full run took five of this kernel's
+    tests past it, and with two full suites running at once three of its tests took longer than 5 s.
+    This kernel gives its heavy blocks an explicit 120 s (`HEAVY`, "The test suite"); every track with heavy
+    tests needs the same. A project-wide `testTimeout` (e.g. 30 s) in the vitest config would make the default
+    safe for all tracks, if integration wants that; nothing here depends on it.
 
 ## Not done, not verified
 
@@ -411,5 +478,26 @@ Information it produced for later tracks:
   needed for the 10 Hz of §2.9.8 — a whole N = 96 volume re-meshes (marching cubes + 3 Taubin pairs) in 9 ms
   (teddy, 15 k vertices) to 13 ms (sphere, 22 k vertices).
 - Safari / JavaScriptCore timings: not measured (Node 22 and headless Chromium only).
-- The browser check was not repeated after the review fixes (see "Verification").
-- The three exhaustive enumerations are not part of the default suite (`GEOM_FULL=1`).
+- The browser (worker) check ran in session 1 only, before the review fixes; it was not repeated (see
+  "Verification").
+- The scratch verifications of sessions 1–2 marked [s1–2] in "Verification" were not re-run in session 3 (their
+  scripts were not committed): the hostile-magnitude enumeration, the 2.2 million random lattices, the random
+  meshes through manifold-3d, the larger brute-force runs of the transforms, the T5 merge rehearsal.
+- The three exhaustive enumerations stay out of the default suite on purpose (`GEOM_FULL=1`, "The test suite");
+  session 3 ran them and they passed.
+
+## Sessions
+
+1. `7a2daa1` — the kernels, their tests and these notes.
+2. `c1722c2` — the fixes from two independent reviews (see "Review"), the new far field of
+   `extendSignedDistance3d`, the reviewers' tests kept under proper names.
+3. Session 3 (the commit after `c1722c2`; the earlier work was interrupted twice by usage limits before its
+   final report) —
+   the test suite made reliable under load ("The test suite": explicit timeouts, three cheaper byte comparisons,
+   `fields.test.ts`, `retry: 2` on the hub timing test); the acceptance list measured again with an independent
+   harness; the `GEOM_FULL` runs; these notes completed. No kernel changed behavior; one doc comment of
+   `extendSignedDistance3d` was corrected (planes: within 0.11 voxel, not 0.1).
+
+The two commits of sessions 1 and 2 end with the trailer `Co-Authored-By: Claude Fable 5.1
+<noreply@anthropic.com>` instead of the `Claude Opus 5.5` line that the Step 0b rules ask for. They were left
+as they are: rewriting them would change the hashes that other agents refer to.

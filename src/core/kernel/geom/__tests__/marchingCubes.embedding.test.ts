@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { mulberry32 } from '../../prng';
 import { type IndexedMesh, marchingCubes } from '../marchingCubes';
-import { note } from './fields';
+import { HEAVY, note } from './fields';
 
 type P3 = [number, number, number];
 
@@ -125,8 +125,8 @@ describe('the crossing tests themselves', () => {
   });
 });
 
-describe('is the surface embedded?', () => {
-  it('no triangle passes through another, and no two edges cross, on 300 random fields (noise, ±1, integers with zeros, wide range)', { timeout: 30000 }, () => {
+describe('is the surface embedded?', HEAVY, () => {
+  it('no triangle passes through another, and no two edges cross, on 300 random fields (noise, ±1, integers with zeros, wide range)', () => {
     let fields = 0;
     let crossed = 0;
     let first = '';
