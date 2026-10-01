@@ -51,20 +51,21 @@ export function mixDistance(c: Color3, a: Color3, b: Color3): number {
 
 /** True when `c` is a mix of two of `centers` (see mixDistance; `skip` = a center to leave out, e.g. c's own). */
 export function isMixOf(c: Color3, centers: readonly Color3[], skip = -1): boolean {
-  return bestPair(c, centers, (k) => k !== skip) !== undefined;
+  return mixPairs(c, centers, (k) => k !== skip).length > 0;
 }
 
-function bestPair(c: Color3, lin: readonly Color3[], usable: (k: number) => boolean): { a: number; b: number; de: number } | undefined {
-  let best: { a: number; b: number; de: number } | undefined;
+/** Every pair (a < b) of usable centers that `c` is a mix of, closest mix first (ties → lower indices). */
+function mixPairs(c: Color3, lin: readonly Color3[], usable: (k: number) => boolean): { a: number; b: number; de: number }[] {
+  const out: { a: number; b: number; de: number }[] = [];
   for (let a = 0; a < lin.length; a++) {
     if (!usable(a)) continue;
     for (let b = a + 1; b < lin.length; b++) {
       if (!usable(b)) continue;
       const de = mixDistance(c, lin[a], lin[b]);
-      if (de < BLEND_MAX_DE && (best === undefined || de < best.de)) best = { a, b, de };
+      if (de < BLEND_MAX_DE) out.push({ a, b, de });
     }
   }
-  return best;
+  return out.sort((p, q) => p.de - q.de || p.a - q.a || p.b - q.b);
 }
 
 /** Share of the given pixels that have both labels a and b within the window. */
@@ -109,10 +110,12 @@ export function removeBlendCenters(labels: Uint8Array, w: number, h: number, lin
     let pick: { c: number; a: number; b: number; share: number } | undefined;
     for (let c = 0; c < k; c++) {
       if (!alive[c] || isProtected(c)) continue;
-      const pair = bestPair(lin[c], lin, (q) => q !== c && alive[q]);
-      if (pair === undefined) continue;
-      const share = edgeShare(labels, w, h, pixels[c], pair.a, pair.b);
-      if (share >= BLEND_MIN_EDGE_SHARE && (pick === undefined || share > pick.share)) pick = { c, a: pair.a, b: pair.b, share };
+      // Every pair that explains the color is tried (an end may itself be a blend still alive); the pair whose
+      // colors surround the center's pixels best counts.
+      for (const pair of mixPairs(lin[c], lin, (q) => q !== c && alive[q])) {
+        const share = edgeShare(labels, w, h, pixels[c], pair.a, pair.b);
+        if (share >= BLEND_MIN_EDGE_SHARE && (pick === undefined || share > pick.share)) pick = { c, a: pair.a, b: pair.b, share };
+      }
     }
     if (pick === undefined) break;
     const { c, a, b } = pick;

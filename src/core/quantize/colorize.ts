@@ -402,14 +402,31 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
 
   // ---- salience guard (§2.4.3)
   const salient = new Uint8Array(n);
+  const salientTargets: { cells: number[]; center?: Center; candidate?: number }[] = [];
   if (centers.length > 0 && cap >= 2) {
     const centerLab = centers.map((c) => featureToLab(...c.f));
+    // A detail is measured against the solid colors: a cell given a textured yarn counts as given the nearest
+    // solid one (heathers are never assigned to protected labels, §2.4.4).
+    const solids = centers.map((c, k) => (c.yarn?.textured ? -1 : k)).filter((k) => k >= 0);
+    const solidOf = (k: number, i: number): number => {
+      if (!centers[k].yarn?.textured || solids.length === 0) return k;
+      let best = solids[0];
+      let bd = Infinity;
+      for (const s2 of solids) {
+        const d = ciede2000(cellLab.subarray(i * 3, i * 3 + 3), centerLab[s2]);
+        if (d < bd) {
+          bd = d;
+          best = s2;
+        }
+      }
+      return best;
+    };
     const assignedLab = new Float64Array(n * 3);
     const eligible = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
       if (a.cell[i] < 0 || overrideCell[i] >= 0) continue;
       eligible[i] = 1;
-      assignedLab.set(centerLab[a.cell[i]], i * 3);
+      assignedLab.set(centerLab[solidOf(a.cell[i], i)], i * 3);
     }
     const centerLin = centers.map((c) => linFromFeature(c.f));
     const mixed = (i: number): boolean => isMixOf([colors.lin[i * 3], colors.lin[i * 3 + 1], colors.lin[i * 3 + 2]], centerLin);
@@ -422,8 +439,9 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
       if (take.length > 0) {
         if (mode === 'auto') {
           for (const g of take) {
-            const f = linToFeature(g.lin);
-            centers.push({ f, protected: true, role: 'color', salient: true });
+            const center: Center = { f: linToFeature(g.lin), protected: true, role: 'color', salient: true };
+            centers.push(center);
+            salientTargets.push({ cells: g.cells, center });
           }
           reassign();
           centers = enforceCap(centers, a.pop);
@@ -432,8 +450,12 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
           const salientYarns: number[] = [];
           for (const g of take) {
             const m = nearestYarnToLab(g.lab, cand!, notTextured);
-            if (m !== null && !fixed.includes(m.index) && !salientYarns.includes(m.index)) salientYarns.push(m.index);
+            if (m === null) continue;
+            salientTargets.push({ cells: g.cells, candidate: m.index });
+            if (!fixed.includes(m.index) && !salientYarns.includes(m.index)) salientYarns.push(m.index);
           }
+          // A solid already chosen becomes protected; missing ones are forced into a new p-median.
+          centers = centers.map((c) => (salientYarns.includes(c.candidate!) ? { ...c, protected: true, salient: true } : c));
           const fresh = salientYarns.filter((j) => !centers.some((c) => c.candidate === j));
           if (fresh.length > 0) {
             const allFixed = [...fixed, ...fresh];
@@ -451,6 +473,18 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
     centers = enforceCap(centers, a.pop);
   }
   reassign();
+
+  // ---- salient details keep their protected color (whatever a nearer textured or blended center says)
+  for (const g of salientTargets) {
+    const k = g.center !== undefined ? centers.indexOf(g.center) : centers.findIndex((c) => c.candidate === g.candidate);
+    if (k < 0) continue;
+    for (const i of g.cells) {
+      if (a.cell[i] < 0 || a.cell[i] === k) continue;
+      a.pop[a.cell[i]]--;
+      a.cell[i] = k;
+      a.pop[k]++;
+    }
+  }
 
   // ---- hand edits win their cells
   const overrideCenter = overrideRefs.map((ref) => {
