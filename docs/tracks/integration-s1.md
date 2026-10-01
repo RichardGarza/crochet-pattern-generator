@@ -10,7 +10,8 @@ Decisions: **Accept** (applied as asked), **Accept*** (accepted with changes; th
 "Where" names the spec section, the type file or the S0 file changed, or "—" when nothing had to change.
 
 Commits: `4ed3d19` S0-amend (types + spec type blocks + signature guard), `d471c86` S0-amend (S0 code fixes with
-tests), `7e5656c` Design v1.4 (spec prose), then this file.
+tests), `7e5656c` Design v1.4 (spec prose), `1857829` this file, `5944b6f` S0-amend (the client type keeps optional
+API methods; `1857829` alone fails `tsc -b` on `client.test.ts`), then the review fixes (below).
 
 ## Decisions
 
@@ -53,7 +54,7 @@ tests), `7e5656c` Design v1.4 (spec prose), then this file.
 | 10 | `k = max(2, …)` vs `max(1, …)` | Accept* | Both kept, reason written: the reference ball needs k ≥ 2, a 6-st nose bobble needs k = 1 | §2.2.6 |
 | 11 | Calibration for hdc and C2C | Accept | Unravel the swatch's own stitch; `lscFromUnravel` converts | §2.8 |
 | 12 | `0.2267` → `0.2268` | Accept | Rounding typo | §2.2.4 |
-| 13 | `resolveGauge`, `grid` in the signature guard | Reject | No `…Fn` types exist; freezing would move gauge option types into `src/types` for no caller benefit (S0 ownership already protects the kernel) | — |
+| 13 | `resolveGauge`, `grid` in the signature guard | Accept* | `resolveGauge` frozen (its types already live in `src/types`; T2, T4, T6 call it); `grid` not (its request/`Mult` types would have to move into `src/types`) | `types/entryPoints.ts` `ResolveGaugeFn`, §5.2.1, `__checks__/entryPoints.check.ts` |
 | 14 | G11 61.9 yd reading | Accept* | Kept 61.9 yd, reworded as one color of a multi-color chart (59.2 yd as a one-color piece) | §2.8, §2.13 G11 |
 
 ### `s0b-geom.md`
@@ -75,7 +76,7 @@ tests), `7e5656c` Design v1.4 (spec prose), then this file.
 
 | # | Request (short) | Decision | Reason | Where |
 |---|---|---|---|---|
-| 1 | Model entry points in the signature guard and runtime test | Accept | Annotated with the frozen `…Fn` types | `__checks__/entryPoints.check.ts`, `test/__tests__/entryPoints.test.ts` |
+| 1 | Model entry points in the signature guard and runtime test | Accept | Annotated with the frozen `…Fn` types; integration also added `SameProps` checks for `ShapeTab`, `Viewport3D`, `YarnSizePanel` and `PatternTab` (frozen props in `types/ui.ts`) | `__checks__/entryPoints.check.ts`, `test/__tests__/entryPoints.test.ts` |
 | 2 | Order `inferAttach → nameParts → inferMirrorPairs` | Accept | `inferMirrorPairs` pairs ids | §2.9.7, §3.7.5, §3.7.6; tasks T3, T7 |
 | 3 | Name of a normalized dialect model | Accept | `'Imported model'`; `roundModel` + `stringifyModel` | §3.7.3 |
 | 4 | "Record the measured height" = `finishedSize.height` | Accept | | §3.7.6 |
@@ -153,7 +154,7 @@ tests), `7e5656c` Design v1.4 (spec prose), then this file.
 |---|---|---|---|---|
 | 1 | T1's issue codes | Accept | | §2.13 track table |
 | 2 | `CropRect` convention | Accept | | `types/chart.ts` comment, §5.2, §2.3.1 |
-| 3 | Brushed background mask | Accept* | Stored as a PNG asset on the analysis grid of the uncropped source (`twoD.backgroundEdits: AssetRef`, red 0/1/2) — not pixel lists (a stroke on a 12 MP photo); sent to the worker as `ChartRequest.backgroundEdits` | `types/project.ts`, `types/chart.ts`, §5.2, §2.3.2; tasks T1, T2 |
+| 3 | Brushed background mask | Accept* | Stored as a PNG asset on the brush grid `limitedSize(W, H)` of the uncropped source (`twoD.backgroundEdits: AssetRef`, red 0/1/2) — not pixel lists (a stroke on a 12 MP photo); sent to the worker as `ChartRequest.backgroundEdits` with `key` = the asset's sha256; nearest-neighbour mapping through the inverse crop; a size mismatch is ignored with `W_BG_EDITS_STALE` | `types/project.ts`, `types/chart.ts`, §5.2, §2.3.2, §2.13; tasks T1, T2 |
 | 4 | §2.3.4 decisions, relative thin claim, default width | Accept | The absolute 15% loses 1-px lines | §2.3.4 |
 | 5 | Noise-free gradients are "flat" | Accept* | Intended (a synthetic gradient is a vector graphic); written down | §2.3.4 |
 
@@ -222,7 +223,7 @@ tests), `7e5656c` Design v1.4 (spec prose), then this file.
 
 | # | Request (short) | Decision | Reason | Where |
 |---|---|---|---|---|
-| 1 | `Repair.code` `type-aliased`, `mirror-removed`, `part-added` | Accept | | `types/importer.ts`, §3.7.1, §3.7.6; task T7 |
+| 1 | `Repair.code` `type-aliased`, `mirror-removed`, `part-added` | Accept | The fourth case (an unknown region kind removed) stays `unknown-key`, as T7 does | `types/importer.ts`, §3.7.1, §3.7.6; task T7 |
 | 2 | Importer codes in §2.13 | Accept* | Listed; the prefix must be the severity, so T7 renames three info `W_` codes and the warn/info uses of `E_IMPORT_PARSE` | §2.13; task T7 |
 | 3 | `dialect` on failures | Accept* | A `'none'` member (making the field optional would break readers) | `types/importer.ts`, §3.7.1; task T7 |
 | 4 | §3.7.3 readings | Accept | | §3.7.3 |
@@ -235,28 +236,28 @@ tests), `7e5656c` Design v1.4 (spec prose), then this file.
 |---|---|---|---|---|
 | 1 | Smoke e2e expects "Saved" | Accept | Done in `a978da6` | `e2e/smoke.spec.ts` |
 | 2 | `ProjectName` keeps stale text while focused | Accept | A conflict copy was renamed back on blur | `ui/shell/ProjectName.tsx`, `__tests__/projectName.test.tsx` |
-| 3 | Leave before open; toast on failure | Accept | Never take the next lock while the current project cannot be left | `ui/shell/projectSession.ts`, `Workspace.tsx` (tests in `projectSession.test.ts`, `app.test.tsx`) |
+| 3 | Leave before open; toast on failure | Accept | Never take the next lock while the current project cannot be left. Consequence: a stale link to a missing project now closes the open one (its changes kept by the backend) before showing "This project isn't here" | `ui/shell/projectSession.ts`, `Workspace.tsx` (tests in `projectSession.test.ts`, `app.test.tsx`) |
 | 4 | §5.5.2 take over, hand-over, reopening | Accept | | §5.5.2 |
 | 5 | `sync:<id>` meta entries | Accept | | §5.5.4; task T8 |
 | 6 | Read-only tabs do not follow saves | Accept* | Kept for v1, documented | §5.5.2 |
-| 7 | GC vs long-lived tabs | Accept* | No grace list: GC skips collection while any project lock is held | §5.5.5; task T8 |
+| 7 | GC vs long-lived tabs | Accept* | No grace list: GC runs at start-up before this tab opens a project and skips the round while another tab holds a `project:` lock (deferral only costs disk) | §5.5.5; task T8 |
 | 8 | Orphan / forged release requests | Accept* | Acceptable for one user's tabs; documented | §5.5.2 |
-| 9 | Delete removes snapshots | Accept* | Confirm + "Recently deleted" (30 days) in T8.2 | §5.5.5; task T8 |
+| 9 | Delete removes snapshots | Accept* | Confirm + "Recently deleted" (30 days) in T8.2, stored as a `meta` entry `trash:<id>` (no type change) | §5.5.5; task T8 |
 
 ### Counts
 
 | | Accept | Accept* | Reject | Owner's call |
 |---|---|---|---|---|
-| Step 0b/0c and T1–T8 (136 requests) | 107 | 22 | 7 | — |
+| Step 0b/0c and T1–T8 (136 requests) | 107 | 23 | 6 | — |
 | `s0.md` (18, decided in v1.3, re-confirmed) | 14 | 3 | 0 | 1 |
 
-Rejected: gauge 6 and 13, model 13, pattern 9 and 10, state 11 and 12, and the alternatives named in the reasons
+Rejected: gauge 6, model 13, pattern 9 and 10, state 11 and 12, and the alternatives named in the reasons
 (state 2's channel argument, state 5's color-identity labels, state 6's `Feature` field, t5 2's `position` field).
 
 ## Issue codes invented in Sprint 1 (now in §2.13)
 
 `E_GAUGE_INPUT`, `W_GAUGE_{RANGE,ASPECT,ROWS,HOOK,CARRIED,LSC}`, `W_GRID_{NO_ROOM,CAPPED,LARGE,PROPORTIONS,ASPECT}`
-(S0 gauge); `W_BG_{NOT_FOUND,SUBJECT_SMALL,SUBJECT_LARGE}`, `I_BG_TRANSPARENT`, `W_PIXEL_{SIZE,MULTIPLE,UNAVAILABLE}`,
+(S0 gauge); `W_BG_{NOT_FOUND,SUBJECT_SMALL,SUBJECT_LARGE}`, `I_BG_TRANSPARENT` (and `W_BG_EDITS_STALE`, new for T1 Sprint 2), `W_PIXEL_{SIZE,MULTIPLE,UNAVAILABLE}`,
 `I_PIXEL_ASPECT`, `I_SIZE_DEFAULT` (T1); `E_MASK_EMPTY`, `W_MASK_{BORDER,COVERAGE}`, `E_VIEWS`,
 `W_VIEW_{EMPTY,SCALE,DUPLICATE,IOU}` (T3); `E_IMPORT_{NO_MODEL,PARSE,INVALID,UNSAFE,TOO_LARGE,ARCHIVE,UNSUPPORTED,
 PROJECT_FILE}`, `W_IMPORT_{TYPE,DEFAULTED,CANDIDATE,PARSE}`, `W_ARCHIVE_ENTRY`, `I_{MIN_FEATURE,FORMAT_DRIFT,
@@ -271,11 +272,16 @@ timeout is 30 s.
 ### T1
 1. Cache the prepared image (`prepareWork`) by `ChartRequest.sourceId` when it is set (`prepareKey(sourceId, req)`),
    falling back to the content fingerprint; the chart2d worker caches the decoded `RgbaImage` by it too.
-2. Apply `ChartRequest.backgroundEdits` in `resolveBackground` (§2.3.2): values 0/1/2 on the analysis grid of the
-   **uncropped** source (long side ≤ 2048), mapped through crop, rotation and flip; brushed pixels win over the flood
-   fill and are applied before the subject guard; only with `background: 'remove'`. Tests: a brushed hole stays,
-   a brushed subject pixel next to the border stays subject, the cache key changes with the edits.
+2. Apply `ChartRequest.backgroundEdits` in `resolveBackground` (§2.3.2): values 0/1/2 on the brush grid
+   `limitedSize(W, H)` of the **uncropped** decoded source; each working pixel reads the brush cell under its center
+   through the inverse flip, rotation and crop (nearest neighbour); a brush of another size is ignored with
+   `W_BG_EDITS_STALE` (warn); brushed pixels win over the flood fill and are applied before the subject guard; only
+   with `background: 'remove'`. Cache identity = `backgroundEdits.key` (hash `data` when absent). Tests: a brushed
+   hole stays, a brushed subject pixel next to the border stays subject, a rotated crop maps the brush correctly, the
+   cache key changes with the edits, a stale brush warns.
 3. Keep the §2.13 codes exactly as listed (`I_` for info).
+4. Counts with `roundHalfUp` (§0.1): `core/image2d/sample.ts` (`m = Math.round(want.cols / nx)`, the pixel
+   multiple) and any other count.
 
 ### T2
 1. `abbreviationsFor(lines, terms, decMethod?)` and `specialStitchesFor(lines, terms, decMethod?)`: list only the
@@ -287,10 +293,13 @@ timeout is 30 s.
    Ch 2").
 4. Verbose rows print the reading arrow after the side tag, like compact (`Row 11 (RS) ←: …`); regenerate and
    re-check `golden/flatGraph.txt` by hand against §2.7.2.
-5. Source tab: the background brush stores `twoD.backgroundEdits` (an `encodePng` PNG, red 0/1/2, analysis grid of
-   the uncropped source) through `putAsset`, and `Chart2dApi.run` gets the decoded bytes as
-   `ChartRequest.backgroundEdits`; pass `sourceId` = the source's `asset.sha256`.
-6. 2D gauge settings: clear or swap the measurement when the technique changes (each family reads its own field).
+5. Source tab: the background brush stores `twoD.backgroundEdits` (an `encodePng` PNG, red 0/1/2, on the brush grid
+   `limitedSize(W, H)` of the uncropped source — import it from T1's `core/image2d/linear.ts`, do not re-derive it)
+   through `putAsset`, and `Chart2dApi.run` gets the decoded red channel as `ChartRequest.backgroundEdits` with
+   `key` = the asset's sha256; pass `sourceId` = the source's `asset.sha256`.
+6. 2D gauge settings: clear or swap the measurement when the technique changes (each family reads its own field),
+   and clear `hookMm` and the measurements when the yarn weight changes (§2.2.5).
+6a. Counts with `roundHalfUp` (§0.1): `core/pattern/notes.ts` (the drift `shift` in stitches) and any other count.
 7. 2D yardage: band from `yardageBand({ technique, source: gauge.source, calibrated: gauge.lscCalibrated })`;
    Materials lists bobbins from `bobbinsPerColor`, tails from `strandsPerColor`; G11 test reads 61.9 yd as one color
    of a multi-color chart.
@@ -333,7 +342,8 @@ timeout is 30 s.
    `recenterMesh`; ⇧⌘Z on a sculpt step calls `redoSculpt`; off-center or rotated mesh parts send `mirrorPlane`.
 4. Palette edits (merge, delete, reorder) re-index mesh vertex labels of mesh parts.
 5. Yarn & size panel (T6.2/T6.4): changing CYC clears `hookMm` and the measurements; a model `weightCYC: 0` is offered
-   as CYC 1; the test-ball field explains "stuffed firmly".
+   as CYC 1 with a visible note ("Lace weight is sized as CYC 1 for toys; the toy may come out larger than the label
+   suggests"); the test-ball field explains "stuffed firmly".
 6. Duplicate / Add part / Mirror never create a repeated id.
 
 ### T7
@@ -347,7 +357,7 @@ timeout is 30 s.
 5. Accept an import: `carryOverWith(prev, next)` yourself, drop carried features whose ids were in the seed sent
    (`qa.seed.features`), then `commitModelRevision(…, { carry: 'none' })`; re-index mesh vertex labels when mesh parts
    are kept and the palette changed.
-6. Pre-fill from `model.yarn`: `weightCYC: 0` → CYC 1.
+6. Pre-fill from `model.yarn`: `weightCYC: 0` → CYC 1, with the note of T6 task 5 (not silent).
 7. Wizard: when `qa.awaiting` is set, open at the import step with "Copy prompt again" offered at once (s0c request 4).
 8. Geometry-only path: `inferAttach` → `nameParts` → `inferMirrorPairs`.
 
@@ -355,8 +365,10 @@ timeout is 30 s.
 1. T8.2 StartScreen keeps `StartLayout` (the five cards create projects through the shell) and passes `ProjectGrid`
    with `renderActions`/`thumbnailUrl` and the restore button.
 2. Library delete: confirm, then a "Recently deleted" list kept 30 days (restore / delete forever), since
-   `remove(id)` takes the snapshots with it.
-3. Asset GC: skip collection while any project lock is held (`navigator.locks.query()`; the in-tab lock manager
+   `remove(id)` takes the snapshots with it: keep the document in `projects` with a `meta` entry `trash:<id>`
+   (`{ deletedAt }`), leave it out of `list()`, purge with `remove` after 30 days (§5.5.5).
+3. Asset GC: run at start-up after the journal replay and before this tab opens a project; skip the round when
+   another tab holds a `project:` lock (`navigator.locks.query()` filtered to that prefix; the in-tab lock manager
    answers for itself).
 4. Folder-mirror plugin: off macOS, `POST /__convert` answers 200 + `x-cpg-convert: off` + JSON
    `{ "converted": false, "reason": "no-converter" }` (as the stub now does), other methods 405; write `sync:<id>`
@@ -365,6 +377,18 @@ timeout is 30 s.
 6. The shell now leaves the current project before opening the next: the backend's "release the other held ids"
    path in `leave` should no longer trigger; keep it as a guard, and add a test that opening B while A cannot be left
    takes no lock on B.
+
+## Review fixes
+
+An independent reviewer checked completeness (every request has a row), spec/type/code agreement and that every
+`src/types` change is additive; all three held. Fixed from its findings: the brush grid and its mapping are now
+defined (`limitedSize`, nearest neighbour, `W_BG_EDITS_STALE`, `backgroundEdits.key`); `resolveGauge` frozen
+(gauge 13 now Accept*); `PendingSignature` pins the old parameter list (it accepted a dropped or widened
+parameter); roundHalfUp tasks for T1/T2; weight change in T2's gauge task; trash storage and the GC schedule decided;
+the §2.3.3 code block uses `round`; stale comments in `encode.ts` and `round.ts`; §5.3 says WebGPU stays `null`
+until probed; `ProjectName` shows the trimmed name after a commit; shortcut rows keyed by index; the CYC 0 → 1
+mapping shows a note. Kept: the smoke spec's adapter-warning check (it covers only `smoke.spec.ts`, which never opens
+the depth option).
 
 ## Not done here
 

@@ -35,18 +35,22 @@ type SameProps<Actual, Props> = IsAny<Actual> extends true ? false : Identical<P
 type Check<T extends true> = T;
 
 /**
- * Only while a frozen signature gained an optional parameter that its implementation does not take yet: the
- * implementation must still be callable everywhere the frozen type is (fewer trailing parameters, same result).
- * Every use names the sprint that turns it back into `SameSignature`.
+ * Only while a frozen signature gained trailing optional parameters that its implementation does not take yet:
+ * the implementation must have EXACTLY the old parameter list `Old` (the frozen list without the new trailing
+ * parameters) and the frozen result. Every use names the sprint that turns it back into `SameSignature`.
  */
-type PendingSignature<Actual, Frozen extends Fn> =
+type PendingSignature<Actual, Frozen extends Fn, Old extends unknown[]> =
   IsAny<Actual> extends true
     ? false
     : Actual extends Fn
-      ? [Actual] extends [Frozen]
-        ? Identical<ReturnType<Actual>, ReturnType<Frozen>>
+      ? Identical<Parameters<Actual>, Old> extends true
+        ? [Actual] extends [Frozen]
+          ? Identical<ReturnType<Actual>, ReturnType<Frozen>>
+          : false
         : false
       : false;
+/** The frozen parameter list without its last `N` parameters (here: one). */
+type DropLast<P extends unknown[]> = P extends [...infer Head, unknown?] ? Head : never;
 
 // ---- Step 0 kernels. encodePng returns Uint8Array<ArrayBuffer>, a subtype of the frozen Uint8Array that can
 //      also be handed to Blob and crypto.subtle; so its result is checked for assignability, not identity.
@@ -72,6 +76,7 @@ export type ModelEntryPoints = [
   Check<SameSignature<typeof import('../../core/model/proportions').applyProportions, E.ApplyProportionsFn>>,
   Check<SameSignature<typeof import('../../core/model/scale').scaleModel, E.ScaleModelFn>>,
 ];
+export type GaugeEntryPoints = [Check<SameSignature<typeof import('../../core/gauge/resolve').resolveGauge, E.ResolveGaugeFn>>];
 export type StateEntryPoints = [
   Check<SameSignature<typeof import('../../state/projectStore').commitModelRevision, E.CommitModelRevisionFn>>,
   Check<SameSignature<typeof import('../../workers/decode').decodeImage, E.DecodeImageFn>>,
@@ -97,8 +102,8 @@ export type T2EntryPoints = [
   Check<SameSignature<typeof import('../../core/pattern/notes').notesFor, E.NotesForFn>>,
   // Design v1.4 added the optional `decMethod` parameter; T2.2 adds it to the implementations, then integration
   // turns these two back into SameSignature checks (tasks in docs/tracks/integration-s1.md).
-  Check<PendingSignature<typeof import('../../core/pattern/terminology').abbreviationsFor, E.AbbreviationsForFn>>,
-  Check<PendingSignature<typeof import('../../core/pattern/terminology').specialStitchesFor, E.SpecialStitchesForFn>>,
+  Check<PendingSignature<typeof import('../../core/pattern/terminology').abbreviationsFor, E.AbbreviationsForFn, DropLast<Parameters<E.AbbreviationsForFn>>>>,
+  Check<PendingSignature<typeof import('../../core/pattern/terminology').specialStitchesFor, E.SpecialStitchesForFn, DropLast<Parameters<E.SpecialStitchesForFn>>>>,
   Check<SameProps<typeof import('../../ui/pattern/PatternView').PatternView, U.PatternViewProps>>,
   Check<SameProps<typeof import('../../ui/pattern/MaterialsView').MaterialsView, U.MaterialsViewProps>>,
 ];
@@ -165,12 +170,17 @@ export type GuardSelfTests = [
   // @ts-expect-error a component with one prop missing
   Check<SameProps<(props: Omit<U.PatternViewProps, 'highlight'>) => null, U.PatternViewProps>>,
   Check<SameProps<(props: U.PatternViewProps) => null, U.PatternViewProps>>,
-  Check<PendingSignature<(req: Req) => Res, Run>>,
+  Check<PendingSignature<(req: Req) => Res, Run, [req: Req]>>,
+  Check<Identical<DropLast<Parameters<Run>>, [req: Req]>>,
   // @ts-expect-error a pending signature still needs the frozen result
-  Check<PendingSignature<(req: Req) => Res | undefined, Run>>,
+  Check<PendingSignature<(req: Req) => Res | undefined, Run, [req: Req]>>,
   // @ts-expect-error and cannot take a parameter the frozen type does not pass
-  Check<PendingSignature<(req: Req, gate: Gate, more: number) => Res, Run>>,
+  Check<PendingSignature<(req: Req, gate: Gate, more: number) => Res, Run, [req: Req]>>,
+  // @ts-expect-error nor drop a parameter of the old list
+  Check<PendingSignature<() => Res, Run, [req: Req]>>,
+  // @ts-expect-error nor widen one
+  Check<PendingSignature<(req: unknown) => Res, Run, [req: Req]>>,
   // @ts-expect-error nor be typed `any`
-  Check<PendingSignature<any, Run>>,
+  Check<PendingSignature<any, Run, [req: Req]>>,
   Check<SameProps<ComponentType<U.MaterialsViewProps>, U.MaterialsViewProps>>,
 ];

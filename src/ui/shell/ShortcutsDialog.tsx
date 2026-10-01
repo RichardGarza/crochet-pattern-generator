@@ -15,14 +15,15 @@ const ROWS: ShortcutRow[] = [
 function Rows({ rows }: { rows: readonly ShortcutRow[] }) {
   return (
     <dl className="shell-shortcuts">
-      {rows.map((row) => (
-        <div key={row.what} className="shell-shortcuts__row">
+      {rows.map((row, r) => (
+        // Rows registered by tabs may repeat a text or a key: index keys.
+        <div key={r} className="shell-shortcuts__row">
           <dt>
             {row.keys.map((combo, i) => (
-              <span key={combo.join('+')} className="shell-shortcuts__combo">
+              <span key={i} className="shell-shortcuts__combo">
                 {i > 0 ? <span className="shell-shortcuts__or">or</span> : null}
-                {combo.map((k) => (
-                  <Kbd key={k}>{k}</Kbd>
+                {combo.map((k, j) => (
+                  <Kbd key={j}>{k}</Kbd>
                 ))}
               </span>
             ))}

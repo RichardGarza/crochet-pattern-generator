@@ -11,7 +11,7 @@
 import type { ManifoldToplevel } from 'manifold-3d';
 import type { AmiRequest, AmiResult } from './ami';
 import type { ChartGrid, ChartRequest, ChartResult, ChartSettings } from './chart';
-import type { ResolvedGauge, TechniqueId } from './gauge';
+import type { GaugeSpec, ResolvedGauge, TechniqueId } from './gauge';
 import type { ColoredMesh, RgbaImage, ViewLabel } from './geometry';
 import type { ImportContext, ImportInput, ImportResult, Repair } from './importer';
 import type { CrochetModelV1, Dims, Hex, Part, PartType, Vec3 } from './model';
@@ -89,6 +89,11 @@ export type ScaleModelFn = (
   factor: number,
   meshes?: Record<string, ColoredMesh>,
 ) => { model: CrochetModelV1; meshes?: Record<string, ColoredMesh> };
+
+// ---- core/gauge/resolve.ts (S0, implemented; used by T2, T4, T6)
+
+/** §2.2.5; throws RangeError on input `checkGauge` reports as `E_GAUGE_INPUT`. */
+export type ResolveGaugeFn = (g: GaugeSpec) => ResolvedGauge;
 
 // ---- core/kernel/png.ts, core/kernel/geom/manifold.ts (S0, implemented)
 

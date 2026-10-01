@@ -59,8 +59,8 @@ export interface EncodeOptions {
    * `Line.segments`: the op index where each segment starts. Segments are encoded separately and joined, so no
    * repeat and no run crosses a boundary (oval ends vs sides, research 07 §6.9): `sc, inc, sc | 7 sc` stays
    * `sc, inc, sc, 7 sc`. The one exception is the short-circuit of §2.6.1: a line that is one op throughout is
-   * one run, whatever its segments. Each segment is searched on its own, so the 120-token limit applies to a
-   * segment. The order of the cuts does not matter; a repeated cut counts once; a cut at 0, at the end, outside
+   * one run, whatever its segments. Each segment is searched on its own, so the token limit (EXACT_MAX_TOKENS) applies to
+   * a segment. The order of the cuts does not matter; a repeated cut counts once; a cut at 0, at the end, outside
    * the line or not a whole number is ignored, and so is an entry that is not `{ at: number }`.
    */
   segments?: readonly { readonly at: number }[];

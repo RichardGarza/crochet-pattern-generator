@@ -114,9 +114,10 @@ export interface ChartRequest {
   sourceId?: string;
   /**
    * Brushed background (§2.3.2), decoded from `twoD.backgroundEdits`: one byte per pixel of the analysis grid of
-   * the uncropped source (long side ≤ 2048, §2.3.1); 0 = automatic, 1 = background, 2 = subject.
+   * the uncropped source (`limitedSize(W, H)` of T1's `core/image2d/linear.ts`, §2.3.2); 0 = automatic, 1 = background, 2 = subject. `key` = the brush
+   * asset's sha256, the cache identity (absent: the worker hashes `data`).
    */
-  backgroundEdits?: { w: number; h: number; data: Uint8Array<ArrayBuffer> };
+  backgroundEdits?: { w: number; h: number; data: Uint8Array<ArrayBuffer>; key?: string };
 }
 
 export interface ChartResult {

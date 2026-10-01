@@ -445,9 +445,13 @@ tiny nose bobble is made).
   mostly flat picture P90 is 0); a barrier pixel within tolerance is filled but does not spread. No plain
   background found ⇒ `W_BG_NOT_FOUND` and the reported color is white. "Remove" on a transparent picture uses the
   transparency (`I_BG_TRANSPARENT`). Show the mask; the user confirms or brushes: the brush is stored as
-  `twoD.backgroundEdits` (a PNG on the analysis grid of the uncropped source, red channel 0 automatic ·
-  1 background · 2 subject) and reaches the worker as `ChartRequest.backgroundEdits`; brushed pixels win over the
-  flood fill, before the subject guard.
+  `twoD.backgroundEdits` (a PNG, red channel 0 automatic · 1 background · 2 subject) and reaches the worker as
+  `ChartRequest.backgroundEdits` (with `key` = the PNG asset's sha256 as its cache identity). **Brush grid:** the
+  uncropped decoded source of W × H pixels scaled by `limitedSize(W, H)` (T1, `core/image2d/linear.ts`: the long side
+  min(long, 2048), the other `max(1, round(side · 2048 / long))`), so the brush survives crop changes; the worker maps
+  each working pixel to the brush cell under its center through the inverse flip, rotation and crop (nearest
+  neighbour). A stored brush whose size is not that grid (the source was replaced) is ignored with
+  `W_BG_EDITS_STALE`. Brushed pixels win over the flood fill, before the subject guard; only with "remove".
 - Background is a label outside the K budget, always rendered as one chosen yarn (default: the nearest palette
   yarn to the border color; for transparent images the reference line's white). v1 has no "no stitch" cells: every
   row and round is worked across the full chart width, because the flat writers (§2.7) have no edge shaping and
@@ -463,7 +467,7 @@ export function grid(c: Cell, req: { wIn?: number; hIn?: number; imgW: number; i
                                      colsMult?: Mult; rowsMult?: Mult }) {
   const a = req.imgH / req.imgW;                                  // subject aspect AFTER crop
   const nB = req.border && req.border.widthIn > 0
-    ? Math.max(1, Math.round(req.border.widthIn / req.border.roundH)) : 0;   // border rounds (§2.7.10)
+    ? Math.max(1, round(req.border.widthIn / req.border.roundH)) : 0;   // border rounds (§2.7.10); round = roundHalfUp (§0.1)
   const B = nB * (req.border?.roundH ?? 0);                       // ACTUAL border width per side
   let Wg = req.wIn !== undefined ? req.wIn - 2 * B : undefined;
   let Hg = req.hIn !== undefined ? req.hIn - 2 * B : undefined;
@@ -473,8 +477,8 @@ export function grid(c: Cell, req: { wIn?: number; hIn?: number; imgW: number; i
   return { cols, rows, borderRounds: nB, actualW: cols * c.w + 2 * B, actualH: rows * c.h + 2 * B,
            aspectErr: ((rows * c.h) / (cols * c.w)) / a - 1 };
 }
-const snap = (x: number, k?: Mult) => !k ? Math.max(1, Math.round(x))
-  : Math.max(0, Math.round((x - k.plus) / k.m)) * k.m + k.plus;   // e.g. mosaic {m:12, plus:3}
+const snap = (x: number, k?: Mult) => !k ? Math.max(1, round(x))
+  : Math.max(0, round((x - k.plus) / k.m)) * k.m + k.plus;   // e.g. mosaic {m:12, plus:3}
 ```
 
 As implemented (`core/gauge/grid.ts`, `gridIssues`): `round` is `roundHalfUp` (§0.1); `snap` never returns 0
@@ -1939,7 +1943,7 @@ error means nothing could be made):
 | `E_GAUGE_INPUT` | error | a gauge spec `resolveGauge` rejects (§2.2.5) | S0 gauge |
 | `W_GAUGE_RANGE`, `W_GAUGE_ASPECT`, `W_GAUGE_ROWS`, `W_GAUGE_HOOK`, `W_GAUGE_CARRIED`, `W_GAUGE_LSC` | warn | swatch, hook, carried strands and calibration sanity (§2.2.5) | S0 gauge |
 | `W_GRID_NO_ROOM`, `W_GRID_CAPPED`, `W_GRID_LARGE`, `W_GRID_PROPORTIONS`, `W_GRID_ASPECT` | warn | grid sizing limits (§2.3.3) | S0 gauge, T1 |
-| `W_BG_NOT_FOUND`, `W_BG_SUBJECT_SMALL`, `W_BG_SUBJECT_LARGE` | warn | background removal (§2.3.2) | T1 |
+| `W_BG_NOT_FOUND`, `W_BG_SUBJECT_SMALL`, `W_BG_SUBJECT_LARGE`, `W_BG_EDITS_STALE` | warn | background removal (§2.3.2; the last: a stored brush that no longer fits the source) | T1 |
 | `I_BG_TRANSPARENT` | info | "remove background" used the picture's transparency | T1 |
 | `W_PIXEL_SIZE`, `W_PIXEL_MULTIPLE`, `W_PIXEL_UNAVAILABLE` | warn | pixel-art sizing and override (§2.3.4) | T1 |
 | `I_PIXEL_ASPECT`, `I_SIZE_DEFAULT` | info | non-square stitches change the proportions; no size given (60 sts wide) | T1 |
@@ -3157,8 +3161,8 @@ export interface RepeatInfo { lattice?: { px: number; py: number; match: number;
 export interface ChartRequest { jobId: number; image: Blob | RgbaImage;   // Blob decoded by workers/decode.ts (§2.3.1)
   crop?: CropRect; settings: ChartSettings; gauge: ResolvedGauge; edits?: ChartEdits; lines: YarnLine[]; stash: Yarn[];
   sourceId?: string;                                    // SourceImage.asset.sha256: the worker caches the decoded image by it
-  backgroundEdits?: { w: number; h: number; data: Uint8Array<ArrayBuffer> } }   // brushed background (§2.3.2): analysis grid
-                                                        // of the uncropped source, 0 automatic · 1 background · 2 subject
+  backgroundEdits?: { w: number; h: number; data: Uint8Array<ArrayBuffer>; key?: string } }   // brushed background (§2.3.2):
+                                                        // 0 automatic · 1 background · 2 subject; key = brush asset sha256
 export interface ChartResult { jobId: number; grid: ChartGrid; kind: ImageKind; source: { w: number; h: number };
   size: { cols: number; rows: number; borderRounds: number; actualW: Inches; actualH: Inches; aspectErr: number };
   metrics: ChartMetrics; repeats: RepeatInfo; issues: Issue[]; hash: string }
@@ -3356,6 +3360,8 @@ export function applyProportions(m: CrochetModelV1, o: { headBody?: number; limb
   meshes?: Record<string, ColoredMesh>): { model: CrochetModelV1; meshes?: Record<string, ColoredMesh> };  // §4.2
 export function scaleModel(m: CrochetModelV1, factor: number, meshes?: Record<string, ColoredMesh>):
   { model: CrochetModelV1; meshes?: Record<string, ColoredMesh> };                      // about the ground center
+// core/gauge/resolve.ts (S0, implemented; used by T2, T4, T6)
+export function resolveGauge(g: GaugeSpec): ResolvedGauge;   // §2.2.5; RangeError on E_GAUGE_INPUT input
 // core/kernel/png.ts, core/kernel/geom/manifold.ts (S0, implemented)
 export function encodePng(img: RgbaImage): Uint8Array<ArrayBuffer>;        // RGBA8, filter 0, fflate zlib (1-px export, tests)
 export function decodePng(bytes: Uint8Array): RgbaImage;      // 8-bit gray/RGB/palette/gray-alpha/RGBA, non-interlaced
@@ -3441,7 +3447,7 @@ export function buildPdf(doc: PatternDoc, o: { paper: 'letter' | 'a4'; placement
 
 | Store (S0) | Holds | Persisted |
 |---|---|---|
-| `appStore` | route `{ screen: 'start' \| 'project', projectId?, tab? }` (hash routes `#/`, `#/p/<id>/<tab>`), prefs (units, terms, hand, dialect), capabilities (WebGPU, storage persisted, folder mirror), library summaries, toasts | prefs → `settings` store |
+| `appStore` | route `{ screen: 'start' \| 'project', projectId?, tab? }` (hash routes `#/`, `#/p/<id>/<tab>`), prefs (units, terms, hand, dialect), capabilities (WebGPU — `null` until a feature calls `ensureWebGpuProbed()`, never probed at start-up; storage persisted, folder mirror), library summaries, toasts | prefs → `settings` store |
 | `projectStore` | `doc: ProjectDoc \| null`, save status, history (patches + inverse patches in immer's format, labels, coalesce keys, ≤ 200), asset cache `Map<key, Blob>` | doc + assets (autosave §5.5) |
 | `derivedStore` | latest `ChartResult`, 2D `PatternDoc`, `ReconResult` preview, `AmiResult`, job states; keyed by input hash | never |
 
@@ -3741,9 +3747,13 @@ JSON assets (a model revision's `meshAssets`); the delete transaction re-reads t
 that round if a document names a key the first pass did not see. Revision assets left behind by an undo are
 unreferenced and may go after the 7 days. A long-lived tab that redoes past such a deletion re-stores the asset from
 its cache on the next save (`save` reports it missing; a warning toast when it cannot); T8.2 closes the remaining
-gap by not collecting while any project lock is held. `remove(id)` deletes the document and its snapshots, never
-assets, and refuses a project another tab is editing (`ProjectLockedError`); so that a library delete stays
-undoable, T8.2 asks to confirm and keeps deleted projects in a "Recently deleted" list for 30 days.
+gap: GC runs at start-up, after the unload journal is replayed and before this tab opens a project, and skips the
+round when another tab holds any `project:` lock (a lock query filtered to that prefix); a user who always keeps a
+project open in some tab defers collection, which only costs disk space. `remove(id)` deletes the document and its
+snapshots, never assets, and refuses a project another tab is editing (`ProjectLockedError`); so that a library
+delete stays undoable, T8.2 asks to confirm and keeps deleted projects in a "Recently deleted" list for 30 days:
+the document stays in the `projects` store with a `meta` entry `trash:<id>` (`{ deletedAt }`), `list()` leaves it
+out, restore removes the entry, and the purge after 30 days runs `remove` (no type change).
 
 ### 5.6 Dependencies (versions checked against the npm registry on 2026-09-30)
 
@@ -4468,8 +4478,10 @@ block v1.
   optional `redoSculpt`; `RenderLineFn` `docKind`; `NotesForFn` `rounds`, `stitch`; `decMethod` on
   `abbreviationsFor`/`specialStitchesFor` (pending in the signature guard until T2.2); `Repair.code` `type-aliased`,
   `mirror-removed`, `part-added`; `ImportResult.dialect` `'none'`; doc comments for `CropRect`, `PhotoView.align`,
-  `SdfVolume`, `Op`. The signature guard covers the Step 0b kernels and the Shape/Pattern tab components. Rejected:
-  an `IssueCode` union and frozen signatures for the gauge and pattern kernels (S0 ownership protects them), a
+  `SdfVolume`, `Op`; `ResolveGaugeFn` in §5.2.1. The signature guard covers the Step 0b kernels, `resolveGauge` and
+  the Shape/Pattern tab components (`PendingSignature` pins the old parameter list while a track catches up).
+  Rejected: an `IssueCode` union and frozen signatures for `grid` and the pattern kernels (their option types would
+  move into `src/types`; S0 ownership protects them), a
   `Feature.origin` field (the import filters by its seed instead), a fifth autosave status, a channel argument on
   `supersede`, a `Repair` code for removed attach links.
 - **Step 0 behavior now specified** (deviations the spec absorbs): `roundHalfUp` for every count and the 1e-6

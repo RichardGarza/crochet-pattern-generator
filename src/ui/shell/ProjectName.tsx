@@ -35,7 +35,8 @@ export function ProjectName() {
     const changed = projectStore.getState().update('Rename project', (d) => {
       d.name = next;
     });
-    if (!changed) setText(name);
+    // Show exactly what was stored (trimmed), so a later outside rename is recognised as "untouched".
+    setText(changed ? next : name);
   };
 
   return (
