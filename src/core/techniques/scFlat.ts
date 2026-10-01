@@ -77,7 +77,7 @@ export function sameOp(a: Op, b: Op): boolean {
   return true;
 }
 
-function sameOps(a: readonly Op[], b: readonly Op[]): boolean {
+export function sameOps(a: readonly Op[], b: readonly Op[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (!sameOp(a[i], b[i])) return false;
   return true;
@@ -90,7 +90,7 @@ export function directionIndependent(ops: readonly Op[]): boolean {
 }
 
 /** Everything but the ops and the numbers that must match for two rows to fold (§2.6.2: no color, loop or note differs). */
-function foldKey(line: Line): string {
+export function foldKey(line: Line): string {
   const cues: readonly Cue[] = line.cues ?? [];
   return JSON.stringify([line.kind, line.start ?? null, line.colorHeader ?? null, line.join ?? null, line.segments ?? null, line.notes ?? [], cues.map((cue) => [cue.kind, cue.text]), line.stated, line.prevCount]);
 }
@@ -126,8 +126,19 @@ export function foldRows(rows: readonly Line[]): Line[] {
  * strand cues, then folded. The chart must be valid (validators report it otherwise; see validate2d.ts).
  */
 export function writeFlatRows(grid: ChartGrid, o: FlatWriterOptions): FlatWriterResult {
-  const stitch: FlatStitch = o.stitch ?? 'sc';
   const plan = o.plan ?? planStrands(grid, { hand: o.hand });
+  const code = (label: number): string => labelCode(grid, label);
+  const rows = flatRowLines(grid, { hand: o.hand, stitch: o.stitch, cues: o.cues === false ? undefined : (k) => (plan.rows[k - 1] === undefined ? [] : rowCueTexts(plan.rows[k - 1], code)) });
+  const lines = o.fold === false ? rows.slice() : foldRows(rows);
+  return { lines, rows, plan };
+}
+
+/**
+ * The unfolded rows of a flat chart (one `Line` per chart row, §2.7.3): side, arrow, foundation or turning
+ * chain, the ops in working order and, when `cues` is given, the color cues it returns for row k.
+ */
+export function flatRowLines(grid: ChartGrid, o: { hand: Hand; stitch?: FlatStitch; cues?: (k: number) => string[] }): Line[] {
+  const stitch: FlatStitch = o.stitch ?? 'sc';
   const W = grid.cols;
   const rows: Line[] = [];
   for (let k = 1; k <= grid.rows; k++) {
@@ -142,15 +153,11 @@ export function writeFlatRows(grid: ChartGrid, o: FlatWriterOptions): FlatWriter
       prevCount: k === 1 ? null : W,
       stated: W,
     };
-    const planRow = plan.rows[k - 1];
-    if (planRow !== undefined && o.cues !== false) {
-      const texts = rowCueTexts(planRow, (label) => labelCode(grid, label));
-      if (texts.length > 0) line.cues = texts.map((text) => ({ kind: 'color', text }));
-    }
+    const texts = o.cues === undefined ? [] : o.cues(k);
+    if (texts.length > 0) line.cues = texts.map((text) => ({ kind: 'color', text }));
     rows.push(line);
   }
-  const lines = o.fold === false ? rows.slice() : foldRows(rows);
-  return { lines, rows, plan };
+  return rows;
 }
 
 /** `sc_graphgan` (§2.7.3): the rows of a flat sc graph worked with bobbins and short carries. */

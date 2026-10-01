@@ -27,6 +27,7 @@ import type { Hand, Line, Op, PatternDoc, RenderLineFn, Terms } from '../../type
 import { chainOvalSide, compactFoundation, compactLabel, isJoinedHead, lineItems, renderCompactLine, sharedLoop } from './compact';
 import { type Item, displayOps } from './ops';
 import { compactNames, toTerms } from './terminology';
+import { type BorderTextContext, borderHeader, renderBorderLine } from '../techniques/border';
 
 export type DocKind = PatternDoc['kind'];
 export type Dialect = 'compact' | 'verbose';
@@ -41,6 +42,11 @@ export interface RenderOptions {
   decMethod?: DecMethod;
   /** Default: `inferDocKind(line)`. */
   docKind?: DocKind;
+  /**
+   * Border lines (§2.7.10): what only the pattern knows — the technique (C2C tile edges) and the panel's size
+   * (the spacing hints). Without it a border prints with row words and no hints.
+   */
+  border?: Omit<BorderTextContext, 'terms' | 'hand'>;
 }
 
 /**
@@ -468,6 +474,10 @@ export function renderVerboseLine(line: Line, o: Omit<RenderOptions, 'dialect' |
 
 /** `renderLine` with an explicit pattern kind (T2's own writers pass it). */
 export function renderLineWith(line: Line, o: RenderOptions): string {
+  if (line.kind === 'border' && (line.start?.k === 'edge' || line.start?.k === 'join')) {
+    // The border sentences of §2.7.10 (the same in both dialects); its start corner and join are in the line.
+    return renderBorderLine(line, { ...o.border, terms: o.terms, hand: o.hand });
+  }
   const docKind = docKindOf(line, o);
   if (o.dialect === 'verbose') return renderVerboseLine(line, { terms: o.terms, decMethod: o.decMethod, docKind });
   if (o.terms !== 'uk') return renderCompactLine(line, { docKind });
@@ -485,10 +495,12 @@ export function renderLineWith(line: Line, o: RenderOptions): string {
 export const renderLine: RenderLineFn = (line, o) => renderLineWith(line, o);
 
 /**
- * The sentence printed before a line worked into chains (`Foundation: With A, ch 6.`, `Ch 10.`), in the given
- * terms; null when the line has no such start. The same in both dialects.
+ * The sentence printed before a line worked into chains (`Foundation: With A, ch 6.`, `Ch 10.`) or before a
+ * border's Rnd 1 (`Border (with B):`), in the given terms; null when the line has no such start. The same in
+ * both dialects.
  */
 export function renderFoundation(line: Line, o: { terms: Terms; docKind?: DocKind }): string | null {
+  if (line.kind === 'border' && line.start?.k === 'edge') return borderHeader(line, o.terms);
   return compactFoundation(line, { docKind: docKindOf(line, o), names: compactNames(o.terms) });
 }
 

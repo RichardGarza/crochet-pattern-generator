@@ -196,10 +196,17 @@ function usedAbbreviations(lines: readonly Line[], decMethod: DecMethodOption): 
   const add = (key: string): void => {
     used.add(key);
   };
+  const hasC2C = lines.some((line) => typeof line === 'object' && line !== null && line.kind === 'c2c');
   for (const line of lines) {
     if (typeof line !== 'object' || line === null) continue;
+    if (line.kind === 'border') {
+      // The border sentences (§2.7.10): sc (corners are "3 sc", not inc3), ch, sl st, RS, st(s), rnd(s); "sp" around C2C tiles.
+      for (const key of ['sc', 'ch', 'sl st', 'st(s)', 'rnd(s)', 'RS']) add(key);
+      if (hasC2C) add('sp');
+      continue;
+    }
     if (line.kind !== 'c2c') add('st(s)');
-    if (line.kind === 'rnd' || line.kind === 'border') add('rnd(s)');
+    if (line.kind === 'rnd') add('rnd(s)');
     if (line.kind === 'rnd' && line.side === undefined && line.arrow === undefined) {
       // An amigurumi round: its Notes block (§2.10.11) defines inc, dec (invdec or sc2tog) and BLO/FLO rounds.
       for (const key of ['inc', 'dec', ...decWords, 'BLO', 'FLO']) add(key);
