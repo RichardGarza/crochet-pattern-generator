@@ -63,26 +63,21 @@ function isStitch(st: unknown): st is 'sc' | 'hdc' | 'dc' | 'slst' {
 export function isOp(value: unknown): value is Op {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const op = value as Record<string, unknown>;
+  // Written without a helper closure: validateLine calls this once per stitch (a million on a large chart).
   let defined = 0;
   for (const key in op) if (op[key] !== undefined) defined++;
   const loop = op.loop;
-  const loopOk = loop === undefined || loop === 'both' || loop === 'BLO' || loop === 'FLO';
   const color = op.color;
-  const optional = (field: unknown): number => (field === undefined ? 0 : 1);
+  const into = op.into;
+  const loopOk = loop === undefined || loop === 'both' || loop === 'BLO' || loop === 'FLO';
+  const colorOk = color === undefined || typeof color === 'string';
+  const optional = (loop === undefined ? 0 : 1) + (color === undefined ? 0 : 1);
   switch (op.k) {
     case 'st':
-      return (
-        isStitch(op.st) &&
-        loopOk &&
-        (color === undefined || typeof color === 'string') &&
-        (op.into === undefined || op.into === 'flo2below') &&
-        defined === 2 + optional(loop) + optional(color) + optional(op.into)
-      );
+      return isStitch(op.st) && loopOk && colorOk && (into === undefined || into === 'flo2below') && defined === 2 + optional + (into === undefined ? 0 : 1);
     case 'inc':
     case 'dec':
-      return (
-        (op.n === 2 || op.n === 3) && loopOk && (color === undefined || typeof color === 'string') && defined === 2 + optional(loop) + optional(color)
-      );
+      return (op.n === 2 || op.n === 3) && loopOk && colorOk && defined === 2 + optional;
     case 'tile':
       return typeof color === 'string' && defined === 2;
     default:
