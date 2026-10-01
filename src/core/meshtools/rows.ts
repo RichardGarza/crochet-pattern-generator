@@ -3,7 +3,8 @@
 // loop rotated to start where the seam crosses it. T5.3's Path B driver adds the counts (step 4), the samples
 // (`sampleLoop` with the clamped counts and the spiral-lean offset), DTW and the transducer.
 import type { IndexedMesh } from '../kernel/geom/marchingCubes';
-import type { MeshLike } from '../kernel/geom/meshMeasures';
+import { signedVolume, type MeshLike } from '../kernel/geom/meshMeasures';
+import { MeshToolError } from './volume';
 import type { Vec3 } from '../../types/geometry';
 import { chooseSeed, HeatSolver, remeshForPathB, surfaceMesh, type HeatOptions, type HeatResult, type RemeshForPathBResult, type SeedChoice, type SeedOptions, type SurfaceMesh } from './heat';
 import { isolineLoops, rowLevels, startLoopAt, type IsolineLoop } from './isolines';
@@ -20,7 +21,12 @@ export interface GeodesicRowsOptions extends SeedOptions, HeatOptions {
   hS: number;
   /** Re-mesh edge (inches), normally `pathBTargetEdge(w, h)`. */
   targetEdge: number;
-  /** false: use the mesh as given (it must be a clean closed manifold); default true (§2.10.7 step 1). */
+  /** Re-mesh vertex cap (default MAX_REMESH_VERTICES). */
+  maxVertices?: number;
+  /**
+   * false: use the mesh as given (a clean closed manifold, consistently wound — `bad-mesh` otherwise; an inside-out
+   * mesh is flipped); default true (§2.10.7 step 1).
+   */
   remesh?: boolean;
 }
 
@@ -79,8 +85,14 @@ export function geodesicRows(input: MeshLike, o: GeodesicRowsOptions): GeodesicR
   let remesh: RemeshForPathBResult | undefined;
   if (o.remesh === false) {
     mesh = { positions: Float32Array.from(input.positions), indices: Uint32Array.from(input.indices) };
+    // Isolines run in the working direction only on a consistently oriented, outward mesh.
+    if (surfaceMesh(mesh).misorientedEdges > 0) throw new MeshToolError('bad-mesh', 'the mesh winding is inconsistent (re-mesh it)');
+    if (signedVolume(mesh) < 0) {
+      const f = mesh.indices;
+      for (let t = 0; t < f.length; t += 3) [f[t + 1], f[t + 2]] = [f[t + 2], f[t + 1]];
+    }
   } else {
-    remesh = remeshForPathB(input, o.targetEdge);
+    remesh = remeshForPathB(input, o.targetEdge, { maxVertices: o.maxVertices });
     mesh = remesh.mesh;
   }
   const sm = surfaceMesh(mesh);

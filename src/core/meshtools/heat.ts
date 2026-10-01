@@ -6,16 +6,19 @@
 // (barycentric) mass:
 //   1. (M + tL)u = δ_sources                    sparse Cholesky (see sparse.ts for why not CG here)
 //   2. X = −∇u/|∇u| per face
-//   3. (L + εM)φ = −∇·X                          Jacobi-PCG, relative tol 1e-8, ≤ 2000 iterations (spec)
+//   3. Lφ = −∇·X                                 sparse Cholesky of L pinned at a source (default; factored once,
+//                                                so a t doubling costs one heat factorization), or Jacobi-PCG
+//                                                (rel. tol 1e-8, ≤ 2000 iterations, ε·M) as §2.10.7 words it
 //   4. shift so that min over the sources of φ = 0
-// t = (mean edge)², doubled (≤ 6 times) while two critical points of φ lie within two edges of each other.
+// t = (mean edge)², raised to (D/600)² on very long parts (the kernel would underflow), doubled (≤ 6 times) while two
+// critical points of φ lie within two edges of each other.
 //
 // Pure, synchronous, deterministic (no Math.random / Date; ties → lowest index).
 import { remeshVolume } from './remesh';
 import { MeshToolError } from './volume';
 import { VOXELIZE_MARGIN, voxelizeMesh } from './voxelize';
 import { nestedDissection, pcgJacobi, SparseCholesky, type PcgResult, type SymmetricPattern } from './sparse';
-import { signedVolume, type MeshLike } from '../kernel/geom/meshMeasures';
+import { signedVolume, surfaceArea, type MeshLike } from '../kernel/geom/meshMeasures';
 import type { IndexedMesh } from '../kernel/geom/marchingCubes';
 import type { Vec3 } from '../../types/geometry';
 
@@ -30,6 +33,13 @@ export const POISSON_MAX_ITER = 2000;
 export const ADJACENT_CRITICAL_HOPS = 2;
 /** Re-mesh lattice cap (samples on the longest side); a finer target edge is coarsened to fit, with a note. */
 export const MAX_REMESH_N = 256;
+/**
+ * Vertex cap of the Path B re-mesh (§5.8: Path B < 2 s per part): a finer target edge is coarsened to fit, with
+ * `coarsened: true`. 30 k vertices = a 6 in ball at worsted gauge.
+ */
+export const MAX_REMESH_VERTICES = 30_000;
+/** Vertices ≈ area / (0.866·e²) for a closed mesh of near-equilateral triangles with mean edge e. */
+const VERTICES_PER_AREA_E2 = Math.sqrt(3) / 2;
 /** A re-mesh enclosing less than this many voxels³ is refused (`bad-mesh`). */
 export const MIN_INSIDE_VOXELS = 8;
 
@@ -54,6 +64,8 @@ export interface SurfaceMesh {
   faceEdges: Int32Array;
   /** Number of boundary edges (0 for a closed surface). */
   boundaryEdges: number;
+  /** Interior edges whose two faces traverse them in the same direction (0 = consistently oriented). */
+  misorientedEdges: number;
 }
 
 function checkMeshLike(mesh: MeshLike): void {
@@ -157,8 +169,22 @@ export function surfaceMesh(mesh: MeshLike): SurfaceMesh {
     }
   }
   let boundaryEdges = 0;
-  for (let e = 0; e < ne; e++) if (edgeFaces[2 * e + 1] === -1) boundaryEdges++;
-  return { positions, indices, nv, nf, pattern, edgeAt, edges, edgeFaces, faceEdges, boundaryEdges };
+  let misorientedEdges = 0;
+  for (let e = 0; e < ne; e++) {
+    const f0 = edgeFaces[2 * e];
+    const f1 = edgeFaces[2 * e + 1];
+    if (f1 === -1) {
+      boundaryEdges++;
+      continue;
+    }
+    // does each face run first → second?
+    const forward = (f: number): boolean => {
+      for (let k = 0; k < 3; k++) if (faceEdges[3 * f + k] === e) return indices[3 * f + k] === edges[2 * e];
+      return false;
+    };
+    if (forward(f0) === forward(f1)) misorientedEdges++;
+  }
+  return { positions, indices, nv, nf, pattern, edgeAt, edges, edgeFaces, faceEdges, boundaryEdges, misorientedEdges };
 }
 
 /** CSR position of (i, j); −1 when absent. Rows are short (≈ 7), so a linear scan. */
@@ -252,6 +278,17 @@ export function cleanMesh(mesh: MeshLike): { mesh: IndexedMesh; oldIndex: Int32A
   return { mesh: { positions, indices }, oldIndex, components: area.size };
 }
 
+/** Faces with area < this × (longest edge)² are left out of the operators (their cotangents are rounding noise). */
+export const DEGENERATE_AREA = 1e-10;
+
+/** The face's area, or 0 when it is degenerate (area < DEGENERATE_AREA·(longest edge)²). */
+function operatorArea(P: ArrayLike<number>, a: number, b: number, c: number): number {
+  const area = triArea(P, a, b, c);
+  const d2 = (i: number, j: number): number => (P[3 * i] - P[3 * j]) ** 2 + (P[3 * i + 1] - P[3 * j + 1]) ** 2 + (P[3 * i + 2] - P[3 * j + 2]) ** 2;
+  const longest = Math.max(d2(a, b), d2(b, c), d2(c, a));
+  return area >= DEGENERATE_AREA * longest && area > 0 ? area : 0;
+}
+
 function triArea(P: ArrayLike<number>, a: number, b: number, c: number): number {
   const ux = P[3 * b] - P[3 * a];
   const uy = P[3 * b + 1] - P[3 * a + 1];
@@ -287,7 +324,7 @@ export interface RemeshForPathBResult {
   /** The edge asked for and the mean edge obtained. */
   targetEdge: number;
   meanEdge: number;
-  /** True when the lattice cap coarsened the target edge. */
+  /** True when the lattice cap or the vertex cap coarsened the target edge. */
   coarsened: boolean;
   /** Components of the remeshed surface before keeping the largest. */
   components: number;
@@ -300,8 +337,10 @@ export interface RemeshForPathBResult {
  * mean edge ≈ `targetEdge` (= min(w, h)/3 by the spec), then keep the largest component. Watertight, oriented,
  * manifold by construction (Step 0 MC guarantee). `MeshToolError('bad-mesh')` when nothing is inside.
  */
-export function remeshForPathB(mesh: MeshLike, targetEdge: number): RemeshForPathBResult {
+export function remeshForPathB(mesh: MeshLike, targetEdge: number, o: { maxVertices?: number } = {}): RemeshForPathBResult {
   if (!(targetEdge > 0) || !Number.isFinite(targetEdge)) throw new RangeError(`target edge must be > 0, got ${targetEdge}`);
+  const maxVertices = o.maxVertices ?? MAX_REMESH_VERTICES;
+  if (!(maxVertices >= 100) || !Number.isFinite(maxVertices)) throw new RangeError(`maxVertices must be >= 100, got ${maxVertices}`);
   checkMeshLike(mesh);
   const lo = [Infinity, Infinity, Infinity];
   const hi = [-Infinity, -Infinity, -Infinity];
@@ -315,35 +354,52 @@ export function remeshForPathB(mesh: MeshLike, targetEdge: number): RemeshForPat
   }
   const side = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
   if (!(side > 0)) throw new MeshToolError('bad-mesh', 'the mesh has no extent');
-  const wantVoxel = targetEdge / MC_EDGE_PER_VOXEL;
-  // voxelGridFor spaces the samples side/(N − 1 − 2·margin) apart (N counts the margin samples too).
-  let N = Math.max(8 + 2 * VOXELIZE_MARGIN, Math.ceil(side / wantVoxel - 1e-9) + 1 + 2 * VOXELIZE_MARGIN);
-  const coarsened = N > MAX_REMESH_N;
-  if (coarsened) N = MAX_REMESH_N;
-  const vol = voxelizeMesh(mesh, N);
-  const raw = remeshVolume(vol, { pairs: 10 });
-  const noInside = 'the part has no inside (open, flat or too thin for the re-mesh)';
-  if (raw.indices.length === 0) throw new MeshToolError('bad-mesh', noInside);
-  const cleaned = cleanMesh(raw);
-  // A zero-volume input (a flat sheet) leaves only slivers around lattice samples that lie on it.
-  if (signedVolume(cleaned.mesh) < MIN_INSIDE_VOXELS * vol.voxel ** 3) throw new MeshToolError('bad-mesh', noInside);
-  const sm = surfaceMesh(cleaned.mesh);
-  return {
-    mesh: cleaned.mesh,
-    voxel: vol.voxel,
-    N,
-    targetEdge,
-    meanEdge: meanEdgeLength(sm),
-    coarsened,
-    components: cleaned.components,
-    oddColumns: vol.stats.oddColumns,
-  };
+  // A closed mesh of mean edge e has ≈ A/(0.866·e²) vertices: coarsen the edge so the count stays ≤ maxVertices
+  // (the §5.8 budget; the input's area bounds the re-mesh's, noise only makes it coarser).
+  let edge = Math.max(targetEdge, Math.sqrt(surfaceArea(mesh) / (VERTICES_PER_AREA_E2 * maxVertices)));
+  let coarsened = edge > targetEdge;
+  for (let attempt = 0; ; attempt++) {
+    const wantVoxel = edge / MC_EDGE_PER_VOXEL;
+    // voxelGridFor spaces the samples side/(N − 1 − 2·margin) apart (N counts the margin samples too).
+    let N = Math.max(8 + 2 * VOXELIZE_MARGIN, Math.ceil(side / wantVoxel - 1e-9) + 1 + 2 * VOXELIZE_MARGIN);
+    if (N > MAX_REMESH_N) {
+      N = MAX_REMESH_N;
+      coarsened = true;
+    }
+    const vol = voxelizeMesh(mesh, N);
+    const raw = remeshVolume(vol, { pairs: 10 });
+    const noInside = 'the part has no inside (open, flat or too thin for the re-mesh)';
+    if (raw.indices.length === 0) throw new MeshToolError('bad-mesh', noInside);
+    const cleaned = cleanMesh(raw);
+    // A zero-volume input (a flat sheet) leaves only slivers around lattice samples that lie on it.
+    if (signedVolume(cleaned.mesh) < MIN_INSIDE_VOXELS * vol.voxel ** 3) throw new MeshToolError('bad-mesh', noInside);
+    const nv = cleaned.mesh.positions.length / 3;
+    if (nv > 1.25 * maxVertices && attempt === 0 && N > 8 + 2 * VOXELIZE_MARGIN) {
+      edge *= Math.sqrt(nv / maxVertices);
+      coarsened = true;
+      continue;
+    }
+    const sm = surfaceMesh(cleaned.mesh);
+    return {
+      mesh: cleaned.mesh,
+      voxel: vol.voxel,
+      N,
+      targetEdge,
+      meanEdge: meanEdgeLength(sm),
+      coarsened,
+      components: cleaned.components,
+      oddColumns: vol.stats.oddColumns,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Operators
 
-/** Cotan Laplacian L (PSD, CSR values on `sm.pattern`) and lumped barycentric mass (area/3 per incident face). */
+/**
+ * Cotan Laplacian L (PSD, CSR values on `sm.pattern`) and lumped barycentric mass (area/3 per incident face).
+ * Degenerate faces (`DEGENERATE_AREA`) count for the mass only.
+ */
 export function cotanLaplacian(sm: SurfaceMesh): { L: Float64Array; mass: Float64Array } {
   const P = sm.positions;
   const I = sm.indices;
@@ -351,8 +407,9 @@ export function cotanLaplacian(sm: SurfaceMesh): { L: Float64Array; mass: Float6
   const mass = new Float64Array(sm.nv);
   for (let f = 0; f < sm.nf; f++) {
     const v = [I[3 * f], I[3 * f + 1], I[3 * f + 2]];
-    const area = triArea(P, v[0], v[1], v[2]);
-    for (const x of v) mass[x] += area / 3;
+    const full = triArea(P, v[0], v[1], v[2]);
+    for (const x of v) mass[x] += full / 3;
+    const area = operatorArea(P, v[0], v[1], v[2]);
     if (!(area > 0)) continue;
     for (let e = 0; e < 3; e++) {
       // angle at v[e], opposite edge (v[e+1], v[e+2])
@@ -409,7 +466,7 @@ export function faceGradient(P: ArrayLike<number>, I: ArrayLike<number>, f: numb
   let ny = az * bx - ax * bz;
   let nz = ax * by - ay * bx;
   const n2 = Math.hypot(nx, ny, nz); // = 2A
-  if (!(n2 > 0)) return [0, 0, 0];
+  if (!(n2 > 0) || operatorArea(P, i0, i1, i2) === 0) return [0, 0, 0];
   nx /= n2;
   ny /= n2;
   nz /= n2;
@@ -442,7 +499,7 @@ export function divergence(sm: SurfaceMesh, X: Float64Array): Float64Array {
     const zf = X[3 * f + 2];
     if (xf === 0 && yf === 0 && zf === 0) continue;
     const v = [I[3 * f], I[3 * f + 1], I[3 * f + 2]];
-    const area = triArea(P, v[0], v[1], v[2]);
+    const area = operatorArea(P, v[0], v[1], v[2]);
     if (!(area > 0)) continue;
     for (let e = 0; e < 3; e++) {
       const i = v[e];
@@ -572,7 +629,19 @@ export interface HeatOptions {
   tScale?: number;
   /** Doublings allowed while adjacent critical points remain (spec: 6; 0 = a single solve). */
   maxDoublings?: number;
+  /**
+   * The Poisson solve: 'direct' (default; sparse Cholesky of L pinned at the first source, factored once per solver
+   * and source, so each t doubling costs one heat factorization) or 'pcg' (Jacobi-PCG, rel. tol 1e-8, ≤ 2000
+   * iterations, ε·M regularization, as §2.10.7 words it; falls back to the direct solve when it does not converge).
+   */
+  poisson?: 'direct' | 'pcg';
 }
+
+/**
+ * The heat kernel decays like e^(−d/√t); at most this many √t from the sources keep u above the double range's
+ * floor (e^(−600) ≈ 1e-261). t is raised to (D/600)², D = the farthest graph distance from the sources.
+ */
+export const FAR_FIELD_SQRT_T = 600;
 
 export interface HeatResult {
   /** Geodesic distance per vertex, min over the sources = 0. */
@@ -580,18 +649,88 @@ export interface HeatResult {
   /** The t of the returned φ, and how many times it was doubled. */
   t: number;
   doublings: number;
+  /** The first t: max(tScale·(mean edge)², (D/600)²); `tFloored` when the far-field floor raised it. */
+  t0: number;
+  tFloored: boolean;
   meanEdge: number;
   critical: CriticalPoints;
   /** Adjacent critical pairs left in the returned φ (empty unless the doublings ran out). */
   adjacent: [number, number][];
   poisson: PcgResult;
-  /** Total PCG iterations over every solve. */
+  /** Total PCG iterations over every solve (0 with the direct Poisson solve). */
   pcgIterations: number;
+}
+
+/** Farthest edge-path distance from a set of vertices (multi-source Dijkstra; Infinity when some vertex is unreachable). */
+export function graphEccentricity(sm: SurfaceMesh, sources: readonly number[]): number {
+  const { rowPtr, col } = sm.pattern;
+  const P = sm.positions;
+  const dist = new Float64Array(sm.nv).fill(Infinity);
+  const done = new Uint8Array(sm.nv);
+  // binary heap of (d, v)
+  const hk: number[] = [];
+  const hv: number[] = [];
+  const push = (d: number, v: number): void => {
+    hk.push(d);
+    hv.push(v);
+    let i = hk.length - 1;
+    while (i > 0) {
+      const q = (i - 1) >> 1;
+      if (hk[q] < hk[i] || (hk[q] === hk[i] && hv[q] <= hv[i])) break;
+      [hk[q], hk[i]] = [hk[i], hk[q]];
+      [hv[q], hv[i]] = [hv[i], hv[q]];
+      i = q;
+    }
+  };
+  const pop = (): [number, number] => {
+    const top: [number, number] = [hk[0], hv[0]];
+    const lk = hk.pop() as number;
+    const lv = hv.pop() as number;
+    if (hk.length > 0) {
+      hk[0] = lk;
+      hv[0] = lv;
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < hk.length && (hk[l] < hk[m] || (hk[l] === hk[m] && hv[l] < hv[m]))) m = l;
+        if (r < hk.length && (hk[r] < hk[m] || (hk[r] === hk[m] && hv[r] < hv[m]))) m = r;
+        if (m === i) break;
+        [hk[m], hk[i]] = [hk[i], hk[m]];
+        [hv[m], hv[i]] = [hv[i], hv[m]];
+        i = m;
+      }
+    }
+    return top;
+  };
+  for (const s of sources) {
+    dist[s] = 0;
+    push(0, s);
+  }
+  let far = 0;
+  while (hk.length > 0) {
+    const [d, v] = pop();
+    if (done[v]) continue;
+    done[v] = 1;
+    far = d;
+    for (let k = rowPtr[v]; k < rowPtr[v + 1]; k++) {
+      const w = col[k];
+      if (done[w]) continue;
+      const nd = d + Math.hypot(P[3 * w] - P[3 * v], P[3 * w + 1] - P[3 * v + 1], P[3 * w + 2] - P[3 * v + 2]);
+      if (nd < dist[w]) {
+        dist[w] = nd;
+        push(nd, w);
+      }
+    }
+  }
+  for (let v = 0; v < sm.nv; v++) if (!done[v]) return Infinity;
+  return far;
 }
 
 /**
  * The reusable heat-method machinery of one surface: operators, nested-dissection ordering and the Cholesky symbolic
- * analysis are built once; each t refactors numerically.
+ * analysis are built once; each t refactors numerically; the pinned Poisson factor is kept per pinned vertex.
  */
 export class HeatSolver {
   readonly sm: SurfaceMesh;
@@ -602,6 +741,8 @@ export class HeatSolver {
   private factoredT = NaN;
   private readonly poissonVal: Float64Array;
   private poissonChol: SparseCholesky | null = null;
+  private pinned: SparseCholesky | null = null;
+  private pinnedAt = -1;
 
   constructor(sm: SurfaceMesh) {
     this.sm = sm;
@@ -611,7 +752,7 @@ export class HeatSolver {
     this.mass = mass;
     for (let v = 0; v < sm.nv; v++) if (!(mass[v] > 0)) throw new RangeError(`vertex ${v} has no area (degenerate faces only)`);
     this.chol = new SparseCholesky(sm.pattern, nestedDissection(sm.pattern, sm.positions));
-    // ε·M regularization of the Poisson system: ε·M_ii ≈ 1e-10·L_ii on average.
+    // ε·M regularization of the PCG Poisson system: ε·M_ii ≈ 1e-10·L_ii on average.
     let trL = 0;
     let trM = 0;
     for (let v = 0; v < sm.nv; v++) {
@@ -621,6 +762,11 @@ export class HeatSolver {
     const eps = (1e-10 * trL) / trM;
     this.poissonVal = Float64Array.from(L);
     for (let v = 0; v < sm.nv; v++) this.poissonVal[sm.pattern.diag[v]] += eps * mass[v];
+  }
+
+  /** Lumped vertex areas (a copy). */
+  get vertexMass(): Float64Array {
+    return Float64Array.from(this.mass);
   }
 
   /** Nonzeros of the Cholesky factor (diagnostics). */
@@ -641,17 +787,55 @@ export class HeatSolver {
   }
 
   /**
-   * One heat-method solve at a given t from the source vertices. `warm` (optional) is an initial guess for the
-   * Poisson solve (the unshifted φ of a previous t). Returns φ (unshifted and shifted).
+   * L pinned at vertex s: L + L_ss·e_s·e_sᵀ is positive definite on a connected surface, and for a right-hand side
+   * summing to 0 its solution is exactly the solution of Lφ = b with φ_s = 0 (sum the rows: L_ss·φ_s = Σb = 0).
    */
-  solveAt(sources: readonly number[], t: number, warm?: Float64Array): { phi: Float64Array; raw: Float64Array; poisson: PcgResult } {
+  private pinnedFactor(s: number): SparseCholesky {
+    if (this.pinned && this.pinnedAt === s) return this.pinned;
+    const val = Float64Array.from(this.L);
+    const d = this.sm.pattern.diag[s];
+    val[d] += Math.max(val[d], 1e-300);
+    const c = this.pinned ?? new SparseCholesky(this.sm.pattern, this.chol.perm);
+    if (!c.factor(val)) throw new MeshToolError('bad-mesh', 'the Poisson system is not positive definite (disconnected or degenerate mesh)');
+    this.pinned = c;
+    this.pinnedAt = s;
+    return c;
+  }
+
+  private residual(val: Float64Array, x: Float64Array, b: Float64Array): number {
+    const { rowPtr, col } = this.sm.pattern;
+    let r = 0;
+    let bn = 0;
+    for (let i = 0; i < this.sm.nv; i++) {
+      let q = 0;
+      for (let k = rowPtr[i]; k < rowPtr[i + 1]; k++) q += val[k] * x[col[k]];
+      r += (q - b[i]) ** 2;
+      bn += b[i] ** 2;
+    }
+    return bn > 0 ? Math.sqrt(r / bn) : 0;
+  }
+
+  /**
+   * One heat-method solve at a given t from the source vertices. `warm` (optional) is an initial guess for the PCG
+   * Poisson solve (the unshifted φ of a previous t). Returns φ shifted so min over the sources = 0, the unshifted
+   * solution, and the Poisson report.
+   */
+  solveAt(
+    sources: readonly number[],
+    t: number,
+    warm?: Float64Array,
+    poissonMode: 'direct' | 'pcg' = 'direct',
+  ): { phi: Float64Array; raw: Float64Array; poisson: PcgResult; underflow: number } {
     const sm = this.sm;
     if (sources.length === 0) throw new RangeError('no source vertex');
     for (const s of sources) if (!(Number.isInteger(s) && s >= 0 && s < sm.nv)) throw new RangeError(`source ${s} out of range`);
+    if (!(t > 0) || !Number.isFinite(t)) throw new RangeError(`t must be > 0, got ${t}`);
     this.factorAt(t);
     const delta = new Float64Array(sm.nv);
     for (const s of sources) delta[s] = 1;
     const u = this.chol.solve(delta);
+    let underflow = 0;
+    for (let v = 0; v < sm.nv; v++) if (!(Math.abs(u[v]) > 0)) underflow++;
     const X = normalizedNegGradient(sm, u);
     const div = divergence(sm, X);
     // L φ = −div, with Σ rhs = 0 (the exact divergence sums to 0; remove the rounding).
@@ -660,39 +844,59 @@ export class HeatSolver {
     for (let v = 0; v < sm.nv; v++) mean += div[v];
     mean /= sm.nv;
     for (let v = 0; v < sm.nv; v++) b[v] = -(div[v] - mean);
-    let raw: Float64Array = warm ? Float64Array.from(warm) : new Float64Array(sm.nv);
-    let poisson = pcgJacobi(sm.pattern, this.poissonVal, b, raw, POISSON_TOL, POISSON_MAX_ITER);
-    if (!poisson.converged) {
-      // Not converged in 2000 iterations (very large or badly shaped meshes): the direct solve on the same ordering.
-      if (!this.poissonChol) {
-        const c = new SparseCholesky(sm.pattern, this.chol.perm);
-        if (!c.factor(this.poissonVal)) throw new MeshToolError('bad-mesh', 'the Poisson system is not positive definite (degenerate mesh)');
-        this.poissonChol = c;
+    let raw: Float64Array;
+    let poisson: PcgResult;
+    if (poissonMode === 'pcg') {
+      raw = warm ? Float64Array.from(warm) : new Float64Array(sm.nv);
+      poisson = pcgJacobi(sm.pattern, this.poissonVal, b, raw, POISSON_TOL, POISSON_MAX_ITER);
+      if (!poisson.converged) {
+        // Not converged in 2000 iterations (very large or badly shaped meshes): the direct solve on the same ordering.
+        if (!this.poissonChol) {
+          const c = new SparseCholesky(sm.pattern, this.chol.perm);
+          if (!c.factor(this.poissonVal)) throw new MeshToolError('bad-mesh', 'the Poisson system is not positive definite (degenerate mesh)');
+          this.poissonChol = c;
+        }
+        raw = this.poissonChol.solve(b);
+        poisson = { ...poisson, direct: true };
       }
-      raw = this.poissonChol.solve(b);
-      poisson = { ...poisson, direct: true };
+    } else {
+      raw = this.pinnedFactor(sources[0]).solve(b);
+      poisson = { iterations: 0, relResidual: this.residual(this.L, raw, b), converged: true, direct: true };
     }
     let shift = Infinity;
     for (const s of sources) shift = Math.min(shift, raw[s]);
     const phi = new Float64Array(sm.nv);
     for (let v = 0; v < sm.nv; v++) phi[v] = raw[v] - shift;
-    return { phi, raw, poisson };
+    return { phi, raw, poisson, underflow };
   }
 
-  /** §2.10.7 step 2: φ at t = (mean edge)², doubled while adjacent critical points remain (≤ 6 times). */
+  /**
+   * §2.10.7 step 2: φ at t = (mean edge)² — raised to (D/600)² on parts longer than 600·√t so the heat kernel cannot
+   * underflow —, doubled while adjacent critical points remain (≤ 6 times).
+   */
   geodesic(sources: readonly number[], o: HeatOptions = {}): HeatResult {
-    const t0 = (o.tScale ?? 1) * this.meanEdge * this.meanEdge;
+    const tScale = o.tScale ?? 1;
     const maxD = o.maxDoublings ?? MAX_T_DOUBLINGS;
+    if (!(tScale > 0) || !Number.isFinite(tScale)) throw new RangeError(`tScale must be > 0, got ${tScale}`);
+    if (!Number.isInteger(maxD) || maxD < 0 || maxD > 30) throw new RangeError(`maxDoublings must be an integer in 0…30, got ${maxD}`);
+    const mode = o.poisson ?? 'direct';
+    if (mode !== 'direct' && mode !== 'pcg') throw new RangeError(`unknown Poisson solver ${String(mode)}`);
+    const base = tScale * this.meanEdge * this.meanEdge;
+    const D = graphEccentricity(this.sm, sources);
+    if (!Number.isFinite(D)) throw new MeshToolError('bad-mesh', 'the surface is not connected');
+    const floor = (D / FAR_FIELD_SQRT_T) ** 2;
+    const t0 = Math.max(base, floor);
     let warm: Float64Array | undefined;
     let pcgIterations = 0;
     for (let d = 0; ; d++) {
       const t = t0 * 2 ** d;
-      const r = this.solveAt(sources, t, warm);
+      const r = this.solveAt(sources, t, warm, mode);
       pcgIterations += r.poisson.iterations;
       const critical = criticalPoints(this.sm, r.phi);
       const adjacent = adjacentCriticalPairs(this.sm, critical);
-      if (adjacent.length === 0 || d >= maxD) {
-        return { phi: r.phi, t, doublings: d, meanEdge: this.meanEdge, critical, adjacent, poisson: r.poisson, pcgIterations };
+      // (an underflowed u — not expected above the far-field floor — is treated like an adjacent pair: double t)
+      if ((adjacent.length === 0 && r.underflow === 0) || d >= maxD) {
+        return { phi: r.phi, t, doublings: d, t0, tFloored: floor > base, meanEdge: this.meanEdge, critical, adjacent, poisson: r.poisson, pcgIterations };
       }
       warm = r.raw;
     }
@@ -739,7 +943,8 @@ export function nearestVertex(sm: SurfaceMesh, p: Vec3): number {
 
 /**
  * The seed vertex: `seed` (nearest vertex) else the vertex geodesically farthest from the attachment points (heat
- * distance from their nearest vertices, one solve at the base t) else the lowest vertex along `up` (root part).
+ * distance from their nearest vertices, one solve at the base t) else the lowest vertex along `up` (root part) —
+ * for a flat bottom, the vertex nearest the center of the lowest patch (within one mean edge of the lowest height).
  * Ties → lowest index.
  */
 export function chooseSeed(solver: HeatSolver, o: SeedOptions = {}): SeedChoice {
@@ -747,7 +952,7 @@ export function chooseSeed(solver: HeatSolver, o: SeedOptions = {}): SeedChoice 
   if (o.seed) return { vertex: nearestVertex(sm, o.seed), rule: 'seed' };
   if (o.attach && o.attach.length > 0) {
     const src = [...new Set(o.attach.map((p) => nearestVertex(sm, p)))].sort((a, b) => a - b);
-    const { phi } = solver.solveAt(src, solver.meanEdge * solver.meanEdge);
+    const { phi } = solver.geodesic(src, { maxDoublings: 0 });
     let best = 0;
     for (let v = 1; v < sm.nv; v++) if (phi[v] > phi[best]) best = v;
     return { vertex: best, rule: 'farthest-from-attach' };
@@ -756,12 +961,43 @@ export function chooseSeed(solver: HeatSolver, o: SeedOptions = {}): SeedChoice 
   const len = Math.hypot(up[0], up[1], up[2]);
   if (!(len > 0) || !Number.isFinite(len)) throw new RangeError('bad up vector');
   const P = sm.positions;
-  let best = 0;
-  let bh = Infinity;
+  const height = new Float64Array(sm.nv);
+  let low = 0;
   for (let v = 0; v < sm.nv; v++) {
-    const h = P[3 * v] * up[0] + P[3 * v + 1] * up[1] + P[3 * v + 2] * up[2];
-    if (h < bh) {
-      bh = h;
+    height[v] = (P[3 * v] * up[0] + P[3 * v + 1] * up[1] + P[3 * v + 2] * up[2]) / len;
+    if (height[v] < height[low]) low = v;
+  }
+  // A flat bottom (a body standing on its base) has its lowest vertex anywhere on the base, typically on the rim:
+  // take the connected patch within one mean edge of the lowest height and seed at its vertex nearest the patch's
+  // area-weighted centroid (on a rounded bottom the patch is a small cap around the lowest vertex).
+  const band = height[low] + solver.meanEdge;
+  const { rowPtr, col } = sm.pattern;
+  const inPatch = new Uint8Array(sm.nv);
+  const patch = [low];
+  inPatch[low] = 1;
+  for (let q = 0; q < patch.length; q++) {
+    const v = patch[q];
+    for (let k = rowPtr[v]; k < rowPtr[v + 1]; k++) {
+      const w = col[k];
+      if (!inPatch[w] && height[w] <= band) {
+        inPatch[w] = 1;
+        patch.push(w);
+      }
+    }
+  }
+  const mass = solver.vertexMass;
+  const c = [0, 0, 0];
+  let m = 0;
+  for (const v of patch) {
+    for (let a = 0; a < 3; a++) c[a] += mass[v] * P[3 * v + a];
+    m += mass[v];
+  }
+  let best = low;
+  let bd = Infinity;
+  for (const v of patch.sort((a, b) => a - b)) {
+    const d = (P[3 * v] - c[0] / m) ** 2 + (P[3 * v + 1] - c[1] / m) ** 2 + (P[3 * v + 2] - c[2] / m) ** 2;
+    if (d < bd) {
+      bd = d;
       best = v;
     }
   }

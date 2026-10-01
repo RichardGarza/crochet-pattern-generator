@@ -42,6 +42,7 @@ export function edgeCrossing(sm: SurfaceMesh, phi: ArrayLike<number>, e: number,
  */
 export function isolineLoops(sm: SurfaceMesh, phi: ArrayLike<number>, level: number): IsolineLoop[] {
   if (!Number.isFinite(level)) throw new RangeError(`bad level ${level}`);
+  if (sm.misorientedEdges > 0) throw new RangeError('isolines need a consistently oriented mesh');
   const I = sm.indices;
   const ne = sm.edges.length / 2;
   const next = new Int32Array(ne).fill(-1); // edge → the edge its segment leads to

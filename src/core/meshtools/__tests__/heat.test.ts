@@ -298,3 +298,75 @@ describe('re-mesh (§2.10.7 step 1) and seed', HEAVY, () => {
     expect(() => chooseSeed(solver, { up: [0, 0, 0] })).toThrow(RangeError);
   });
 });
+
+describe('review fixes: Poisson solvers, option checks, vertex cap, far-field floor', HEAVY, () => {
+  it('the direct (pinned) and PCG Poisson solves agree; PCG is the §2.10.7 wording', () => {
+    const rm = remeshForPathB(uvSphere(1.5, 64, 32), 0.08);
+    const seed = lowest(rm.mesh);
+    const s = new HeatSolver(surfaceMesh(rm.mesh));
+    const d = s.geodesic([seed], { maxDoublings: 0 });
+    const p = s.geodesic([seed], { maxDoublings: 0, poisson: 'pcg' });
+    expect(d.poisson.direct).toBe(true);
+    expect(d.pcgIterations).toBe(0);
+    expect(d.poisson.relResidual).toBeLessThan(1e-10);
+    expect(p.pcgIterations).toBeGreaterThan(0);
+    let worst = 0;
+    for (let v = 0; v < d.phi.length; v++) worst = Math.max(worst, Math.abs(d.phi[v] - p.phi[v]));
+    expect(worst).toBeLessThan(1e-5);
+  });
+
+  it('refuses bad heat options', () => {
+    const s = new HeatSolver(surfaceMesh(uvSphere(1, 12, 6)));
+    expect(() => s.geodesic([0], { maxDoublings: NaN })).toThrow(RangeError);
+    expect(() => s.geodesic([0], { maxDoublings: -1 })).toThrow(RangeError);
+    expect(() => s.geodesic([0], { maxDoublings: 2.5 })).toThrow(RangeError);
+    expect(() => s.geodesic([0], { tScale: 0 })).toThrow(RangeError);
+    expect(() => s.geodesic([0], { tScale: NaN })).toThrow(RangeError);
+    expect(() => s.geodesic([0], { poisson: 'lu' as 'pcg' })).toThrow(RangeError);
+    expect(() => s.solveAt([0], 0)).toThrow(RangeError);
+  });
+
+  it('a disconnected surface is refused (no geodesic between components)', () => {
+    const a = uvSphere(1, 12, 6);
+    const b = uvSphere(1, 12, 6, [5, 0, 0]);
+    const n = a.positions.length / 3;
+    const m = { positions: new Float32Array([...a.positions, ...b.positions]), indices: new Uint32Array([...a.indices, ...Array.from(b.indices, (i) => i + n)]) };
+    expect(() => heatGeodesic(m, [0])).toThrow(MeshToolError);
+  });
+
+  it('the far-field floor raises t only on parts longer than 600·√t', () => {
+    const short = heatGeodesic(uvSphere(1, 32, 16), [0]);
+    expect(short.tFloored).toBe(false);
+    expect(short.t0).toBeCloseTo(short.meanEdge ** 2, 12);
+    // a 1 × 40 × 1 ellipsoid with ≈ 0.02 edges along its length: ≈ 3000 edges pole to pole
+    const long = uvSphere(1, 24, 2000);
+    for (let v = 0; v < long.positions.length / 3; v++) {
+      long.positions[3 * v] *= 0.5;
+      long.positions[3 * v + 2] *= 0.5;
+      long.positions[3 * v + 1] *= 20;
+    }
+    const h = heatGeodesic(long, [0], { maxDoublings: 0 });
+    expect(h.tFloored).toBe(true);
+    let max = 0;
+    for (const p of h.phi) max = Math.max(max, p);
+    expect(Math.abs(max / 40 - 1)).toBeLessThan(0.03); // pole to pole ≈ 40 in (the ellipse meridian is a hair longer)
+  });
+
+  it('the re-mesh keeps the vertex count under the cap by coarsening the edge', () => {
+    const rm = remeshForPathB(uvSphere(3, 96, 48), 0.04, { maxVertices: 20_000 });
+    expect(rm.coarsened).toBe(true);
+    expect(rm.mesh.positions.length / 3).toBeLessThan(25_000);
+    expect(rm.meanEdge).toBeGreaterThan(0.04);
+    expect(() => remeshForPathB(uvSphere(1, 8, 4), 0.1, { maxVertices: 5 })).toThrow(RangeError);
+  });
+
+  it('a flat-bottomed root part seeds at the center of its base; a round bottom at its lowest point', () => {
+    const cyl = (x: number, y: number, z: number): number => Math.min(1 - Math.hypot(x, z), 1 - Math.abs(y));
+    const m = remeshForPathB(meshOf(cyl, 40, 1.3, 0), 0.067).mesh;
+    const s = chooseSeed(new HeatSolver(surfaceMesh(m)));
+    expect(Math.hypot(m.positions[3 * s.vertex], m.positions[3 * s.vertex + 2])).toBeLessThan(0.1);
+    const ball = remeshForPathB(uvSphere(1, 64, 32), 0.067).mesh;
+    const b = chooseSeed(new HeatSolver(surfaceMesh(ball)));
+    expect(ball.positions[3 * b.vertex + 1]).toBeLessThan(-0.99);
+  });
+});
