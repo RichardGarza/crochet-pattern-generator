@@ -2,7 +2,7 @@
 // the BLO/FLO round of every corner, and `roundsForPart`, which picks the textbook or the generic path.
 //
 // ```ts
-// const wS = w * s, hS = h * s;                    // s = 1.05 firm/medium stuffing, 1.0 light/none
+// const wS = w * s, hS = h * s;                    // the caller passes stuffedCell(gauge, stuffing)
 // const N = Math.max(2, Math.round(L / hS)), hEff = L / N;
 // const ks = closedFarEnd ? range(1, N - 1) : range(1, N);
 // const ideal = ks.map(k => 2 * Math.PI * r(k * hEff) / wS);        // circular part (minor radius b for ovals)

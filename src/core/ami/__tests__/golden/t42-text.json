@@ -1,0 +1,325 @@
+{
+  "G5-textbook-sphere": {
+    "text": [
+      "Rnd 1: 6 sc in MR (6)",
+      "Rnd 2: inc in each st around (12)",
+      "Rnd 3: (sc, inc) x 6 (18)",
+      "Rnd 4: (sc, inc, sc) x 6 (24)",
+      "Rnd 5: (3 sc, inc) x 6 (30)",
+      "Rnd 6: (2 sc, inc, 2 sc) x 6 (36)",
+      "Rnds 7–12 (6 rnds): sc in each st around (36)",
+      "Rnd 13: (4 sc, dec) x 6 (30)",
+      "Rnd 14: (sc, dec, 2 sc) x 6 (24)",
+      "Rnd 15: (2 sc, dec) x 6 (18)",
+      "Rnd 16: (dec, sc) x 6 (12)",
+      "Rnd 17: dec around (6)"
+    ],
+    "issues": []
+  },
+  "G5-textbook-sphere-worsted": {
+    "text": [
+      "Rnd 1: 6 sc in MR (6)",
+      "Rnd 2: inc in each st around (12)",
+      "Rnd 3: (sc, inc) x 6 (18)",
+      "Rnd 4: (sc, inc, sc) x 6 (24)",
+      "Rnd 5: (3 sc, inc) x 6 (30)",
+      "Rnd 6: (2 sc, inc, 2 sc) x 6 (36)",
+      "Rnds 7–13 (7 rnds): sc in each st around (36)",
+      "Rnd 14: (4 sc, dec) x 6 (30)",
+      "Rnd 15: (sc, dec, 2 sc) x 6 (24)",
+      "Rnd 16: (2 sc, dec) x 6 (18)",
+      "Rnd 17: (dec, sc) x 6 (12)",
+      "Rnd 18: dec around (6)"
+    ],
+    "issues": []
+  },
+  "G6-lathe-semicircle-exact": {
+    "text": [
+      "Rnd 1: 6 sc in MR (6)",
+      "Rnd 2: inc in each st around (12)",
+      "Rnd 3: (sc, inc) x 6 (18)",
+      "Rnd 4: (sc, inc, sc) x 6 (24)",
+      "Rnd 5: (4 sc, inc) x 4, 3 sc, inc (29)",
+      "Rnd 6: (4 sc, inc, 2 sc) x 4, sc (33)",
+      "Rnd 7: sc, (7 sc, inc) x 4 (37)",
+      "Rnd 8: (5 sc, inc, 3 sc) x 4, sc (41)",
+      "Rnd 9: (13 sc, inc) x 2, 12 sc, inc (44)",
+      "Rnd 10: (10 sc, inc, 11 sc) x 2 (46)",
+      "Rnd 11: sc in each st around (46)",
+      "Rnd 12: 45 sc, inc (47)",
+      "Rnd 13: 22 sc, dec, 23 sc (46)",
+      "Rnd 14: sc in each st around (46)",
+      "Rnd 15: (21 sc, dec) x 2 (44)",
+      "Rnd 16: 6 sc, (sc, dec, 12 sc) x 2, dec, 6 sc (41)",
+      "Rnd 17: sc, (8 sc, dec) x 4 (37)",
+      "Rnd 18: (4 sc, dec, 3 sc) x 4, sc (33)",
+      "Rnd 19: sc, (6 sc, dec) x 4 (29)",
+      "Rnd 20: sc, (sc, dec, 3 sc) x 4, dec, 2 sc (24)",
+      "Rnd 21: (2 sc, dec) x 6 (18)",
+      "Rnd 22: (dec, sc) x 6 (12)",
+      "Rnd 23: dec around (6)"
+    ],
+    "issues": []
+  },
+  "G6-lathe-semicircle-classic": {
+    "text": [
+      "Rnd 1: 6 sc in MR (6)",
+      "Rnd 2: inc in each st around (12)",
+      "Rnd 3: (sc, inc) x 6 (18)",
+      "Rnd 4: (sc, inc, sc) x 6 (24)",
+      "Rnd 5: (3 sc, inc) x 6 (30)",
+      "Rnd 6: (2 sc, inc, 2 sc) x 6 (36)",
+      "Rnd 7: sc in each st around (36)",
+      "Rnd 8: (5 sc, inc) x 6 (42)",
+      "Rnd 9: sc in each st around (42)",
+      "Rnd 10: (3 sc, inc, 3 sc) x 6 (48)",
+      "Rnds 11–14 (4 rnds): sc in each st around (48)",
+      "Rnd 15: (6 sc, dec) x 6 (42)",
+      "Rnd 16: sc in each st around (42)",
+      "Rnd 17: (2 sc, dec, 3 sc) x 6 (36)",
+      "Rnd 18: sc in each st around (36)",
+      "Rnd 19: (4 sc, dec) x 6 (30)",
+      "Rnd 20: (sc, dec, 2 sc) x 6 (24)",
+      "Rnd 21: (2 sc, dec) x 6 (18)",
+      "Rnd 22: (dec, sc) x 6 (12)",
+      "Rnd 23: dec around (6)"
+    ],
+    "issues": []
+  },
+  "G6-sphere-exact": {
+    "text": [
+      "Rnd 1: 6 sc in MR (6)",
+      "Rnd 2: inc in each st around (12)",
+      "Rnd 3: (sc, inc) x 6 (18)",
+      "Rnd 4: (sc, inc, sc) x 6 (24)",
+      "Rnd 5: (4 sc, inc) x 4, 3 sc, inc (29)",
+      "Rnd 6: (4 sc, inc, 2 sc) x 4, sc (33)",
+      "Rnd 7: sc, (7 sc, inc) x 4 (37)",
+      "Rnd 8: (5 sc, inc, 3 sc) x 4, sc (41)",
+      "Rnd 9: (13 sc, inc) x 2, 12 sc, inc (44)",
+      "Rnd 10: (10 sc, inc, 11 sc) x 2 (46)",
+      "Rnd 11: sc in each st around (46)",
+      "Rnd 12: 45 sc, inc (47)",
+      "Rnd 13: 22 sc, dec, 23 sc (46)",
+      "Rnd 14: sc in each st around (46)",
+      "Rnd 15: (21 sc, dec) x 2 (44)",
+      "Rnd 16: 6 sc, (sc, dec, 12 sc) x 2, dec, 6 sc (41)",
+      "Rnd 17: sc, (8 sc, dec) x 4 (37)",
+      "Rnd 18: (4 sc, dec, 3 sc) x 4, sc (33)",
+      "Rnd 19: sc, (6 sc, dec) x 4 (29)",
+      "Rnd 20: sc, (sc, dec, 3 sc) x 4, dec, 2 sc (24)",
+      "Rnd 21: (2 sc, dec) x 6 (18)",
+      "Rnd 22: (dec, sc) x 6 (12)",
+      "Rnd 23: dec around (6)"
+    ],
+    "issues": []
+  },
+  "G7-cone-classic": {
+    "text": [
+      "Rnd 1: 6 sc in MR (6)",
+      "Rnds 2–4 (3 rnds): sc in each st around (6)",
+      "Rnd 5: inc in each st around (12)",
+      "Rnds 6–7 (2 rnds): sc in each st around (12)",
+      "Rnd 8: (sc, inc) x 6 (18)",
+      "Rnds 9–10 (2 rnds): sc in each st around (18)",
+      "Rnd 11: (sc, inc, sc) x 6 (24)",
+      "Rnds 12–13 (2 rnds): sc in each st around (24)",
+      "Rnd 14: (3 sc, inc) x 6 (30)",
+      "Rnds 15–16 (2 rnds): sc in each st around (30)"
+    ],
+    "issues": []
+  },
+  "G7-cone-exact": {
+    "text": [
+      "Rnd 1: 5 sc in MR (5)",
+      "Rnd 2: sc in each st around (5)",
+      "Rnd 3: 2 sc, inc, 2 sc (6)",
+      "Rnd 4: (2 sc, inc) x 2 (8)",
+      "Rnd 5: (sc, inc, 2 sc) x 2 (10)",
+      "Rnd 6: (4 sc, inc) x 2 (12)",
+      "Rnd 7: (2 sc, inc, 3 sc) x 2 (14)",
+      "Rnd 8: (6 sc, inc) x 2 (16)",
+      "Rnd 9: (3 sc, inc, 4 sc) x 2 (18)",
+      "Rnd 10: (8 sc, inc) x 2 (20)",
+      "Rnd 11: (4 sc, inc, 5 sc) x 2 (22)",
+      "Rnd 12: (10 sc, inc) x 2 (24)",
+      "Rnd 13: (5 sc, inc, 6 sc) x 2 (26)",
+      "Rnd 14: 25 sc, inc (27)",
+      "Rnd 15: (7 sc, inc, 5 sc) x 2, sc (29)",
+      "Rnd 16: sc, (13 sc, inc) x 2 (31)"
+    ],
+    "issues": []
+  },
+  "G7-horn": {
+    "text": [
+      "Rnd 1: 7 sc in MR (7)",
+      "Rnd 2: sc, 6 inc (13)",
+      "Rnd 3: (sc, inc) x 6, sl st (19)",
+      "Rnd 4: BLO (4 sc, sc2tog, 3 sc) x 2, sc (17)",
+      "Rnd 5: (4 sc, dec) x 2, 3 sc, dec (14)",
+      "Rnd 6: (2 sc, dec, 3 sc) x 2 (12)",
+      "Rnd 7: (4 sc, dec) x 2 (10)",
+      "Rnd 8: (sc, dec, 2 sc) x 2 (8)",
+      "Rnd 9: (2 sc, dec) x 2 (6)",
+      "Rnd 10: 2 sc, dec, 2 sc (5)"
+    ],
+    "issues": []
+  },
+  "G7-cylinder-exact": {
+    "text": [
+      "Rnd 1: 6 sc in MR (6)",
+      "Rnd 2: inc in each st around (12)",
+      "Rnd 3: (sc, inc) x 6 (18)",
+      "Rnd 4: sc, (inc, 2 sc) x 5, inc, sl st (24)",
+      "Rnd 5: BLO sc in each st around (24)",
+      "Rnds 6–13 (8 rnds): sc in each st around (24)",
+      "Rnd 14: 23 sc, sl st (24)",
+      "Rnd 15: BLO (2 sc, sc2tog) x 6 (18)",
+      "Rnd 16: (dec, sc) x 6 (12)",
+      "Rnd 17: dec around (6)"
+    ],
+    "issues": []
+  },
+  "G7-cylinder-classic": {
+    "text": [
+      "Rnd 1: 6 sc in MR (6)",
+      "Rnd 2: inc in each st around (12)",
+      "Rnd 3: (sc, inc) x 6 (18)",
+      "Rnd 4: sc, (inc, 2 sc) x 5, inc, sl st (24)",
+      "Rnd 5: BLO sc in each st around (24)",
+      "Rnds 6–13 (8 rnds): sc in each st around (24)",
+      "Rnd 14: 23 sc, sl st (24)",
+      "Rnd 15: BLO (2 sc, sc2tog) x 6 (18)",
+      "Rnd 16: (dec, sc) x 6 (12)",
+      "Rnd 17: dec around (6)"
+    ],
+    "issues": []
+  },
+  "G19-box-closed-oval": {
+    "text": [
+      "Ch 8. Rnd 1: sc in 2nd ch from hook, sc in next 5 ch, 3 sc in last ch; working along the other side of the chain, sc in next 5 ch, 2 sc in last ch (16)",
+      "Rnd 2: inc, 5 sc, 3 inc, 5 sc, 2 inc (22)",
+      "Rnd 3: sc, inc, 5 sc, (2 sc, inc) x 2, 5 sc, 2 sc, inc, sl st (26)",
+      "Rnd 4: BLO sc in each st around (26)",
+      "Rnds 5–9 (5 rnds): sc in each st around (26)",
+      "Rnd 10: 25 sc, sl st (26)",
+      "Rnd 11: BLO sc2tog, sc, 5 sc, (sc, sc2tog, sc) x 2, 5 sc, sc, sc2tog, 2 sc (22)",
+      "Rnd 12: dec, 5 sc, 3 dec, 5 sc, 2 dec (16)"
+    ],
+    "issues": []
+  },
+  "G19-oval-ellipsoid": {
+    "text": [
+      "Ch 5. Rnd 1: sc in 2nd ch from hook, sc in next 2 ch, 3 sc in last ch; working along the other side of the chain, sc in next 2 ch, 2 sc in last ch (10)",
+      "Rnd 2: sc, inc, sc, sc, 2 inc, inc, sc, sc, inc (15)",
+      "Rnd 3: inc, sc, inc, sc, 4 sc, inc, sc, inc, sc, sc, inc, sc (20)",
+      "Rnd 4: 2 sc, 4 sc, 2 sc, inc, 3 sc, 4 sc, 2 sc, inc, sc (22)",
+      "Rnd 5: sc, inc, sc, inc, 2 sc, 7 sc, sc, inc, 2 sc, 5 sc (25)",
+      "Rnd 6: 3 sc, 5 sc, 3 sc, inc, 3 sc, 5 sc, 5 sc (26)",
+      "Rnd 7: 2 sc, inc, 2 sc, inc, 2 sc, 8 sc, 2 sc, inc, 2 sc, 5 sc (29)",
+      "Rnd 8: 4 sc, 6 sc, 3 sc, inc, 4 sc, 6 sc, 5 sc (30)",
+      "Rnd 9: sc in each st around (30)",
+      "Rnd 10: 4 sc, 6 sc, 8 sc, inc, 6 sc, 5 sc (31)",
+      "Rnds 11–12 (2 rnds): sc in each st around (31)",
+      "Rnd 13: 4 sc, 6 sc, 4 sc, dec, 4 sc, 6 sc, 5 sc (30)",
+      "Rnd 14: sc in each st around (30)",
+      "Rnd 15: 4 sc, 6 sc, 7 sc, dec, 6 sc, 5 sc (29)",
+      "Rnd 16: 4 sc, 2 sc, dec, 2 sc, 8 sc, 2 sc, dec, 2 sc, 3 sc, dec (26)",
+      "Rnd 17: 4 sc, 5 sc, 6 sc, dec, 5 sc, 4 sc (25)",
+      "Rnd 18: 4 sc, sc, dec, 2 sc, 7 sc, sc, dec, 2 sc, 2 sc, dec (22)",
+      "Rnd 19: 2 sc, dec, 4 sc, 5 sc, dec, 4 sc, 3 sc (20)",
+      "Rnd 20: dec, sc, sc, dec, sc, 2 sc, dec, 2 sc, sc, dec, sc, dec, sc (15)",
+      "Rnd 21: dec, dec, sc, sc, 2 dec, dec, sc, 2 sc (10)"
+    ],
+    "issues": []
+  },
+  "G20-open-capsule": {
+    "text": [
+      "Rnd 1: 6 sc in MR (6)",
+      "Rnd 2: inc in each st around (12)",
+      "Rnds 3–7 (5 rnds): sc in each st around (12)"
+    ],
+    "issues": []
+  },
+  "G20-closed-capsule": {
+    "text": [
+      "Rnd 1: 6 sc in MR (6)",
+      "Rnd 2: inc in each st around (12)",
+      "Rnds 3–8 (6 rnds): sc in each st around (12)",
+      "Rnd 9: dec around (6)"
+    ],
+    "issues": []
+  },
+  "G8-oval-ch10": {
+    "text": [
+      "Ch 10. Rnd 1: sc in 2nd ch from hook, sc in next 7 ch, 3 sc in last ch; working along the other side of the chain, sc in next 7 ch, 2 sc in last ch (20)",
+      "Rnd 2: inc, 7 sc, 3 inc, 7 sc, 2 inc (26)",
+      "Rnd 3: sc, inc, 7 sc, (sc, inc) x 3, 7 sc, (sc, inc) x 2 (32)"
+    ],
+    "issues": []
+  },
+  "teddy-muzzle-classic-closed": {
+    "text": [
+      "Ch 4. Rnd 1: sc in 2nd ch from hook, sc in next ch, 3 sc in last ch; working along the other side of the chain, sc in next ch, 2 sc in last ch (8)",
+      "Rnd 2: inc, sc, 3 inc, sc, 2 inc (14)",
+      "Rnd 3: sc, inc, inc, (sc, inc) x 3, inc, (sc, inc) x 2 (22)",
+      "Rnd 4: sc, inc, sc, 2 sc, (sc, inc, sc) x 3, 2 sc, (sc, inc, sc) x 2 (28)",
+      "Rnd 5: 4 sc, inc, sc, 12 sc, inc, sc, 8 sc (30)",
+      "Rnd 6: sc in each st around (30)",
+      "Rnd 7: 4 sc, dec, sc, 12 sc, dec, sc, 8 sc (28)",
+      "Rnd 8: 2 sc, dec, 2 sc, (2 sc, dec) x 3, 2 sc, (2 sc, dec) x 2 (22)",
+      "Rnd 9: dec, sc, dec, (dec, sc) x 3, dec, (dec, sc) x 2 (14)",
+      "Rnd 10: dec, sc, 3 dec, sc, 2 dec (8)"
+    ],
+    "issues": [
+      "W_CLOSE@10",
+      "W_RUFFLE@3",
+      "W_RUFFLE@9",
+      "W_SIZE"
+    ]
+  },
+  "teddy-muzzle-classic-trimmed-46pct": {
+    "text": [
+      "Ch 4. Rnd 1: sc in 2nd ch from hook, sc in next ch, 3 sc in last ch; working along the other side of the chain, sc in next ch, 2 sc in last ch (8)",
+      "Rnd 2: inc, sc, 3 inc, sc, 2 inc (14)",
+      "Rnd 3: sc, inc, inc, (sc, inc) x 3, inc, (sc, inc) x 2 (22)",
+      "Rnd 4: sc, inc, sc, 2 sc, (sc, inc, sc) x 3, 2 sc, (sc, inc, sc) x 2 (28)",
+      "Rnd 5: 4 sc, inc, sc, 12 sc, inc, sc, 8 sc (30)"
+    ],
+    "issues": [
+      "W_RUFFLE@3"
+    ]
+  },
+  "teddy-muzzle-exact-closed": {
+    "text": [
+      "Ch 4. Rnd 1: sc in 2nd ch from hook, sc in next ch, 3 sc in last ch; working along the other side of the chain, sc in next ch, 2 sc in last ch (8)",
+      "Rnd 2: inc, sc, 3 inc, sc, 2 inc (14)",
+      "Rnd 3: sc, inc, inc, (2 sc, inc) x 2, inc, (sc, inc) x 2 (21)",
+      "Rnd 4: inc, 2 sc, 2 sc, (sc, inc, sc) x 2, inc, sc, 2 sc, 2 sc, inc, 3 sc (26)",
+      "Rnd 5: 3 sc, inc, inc, sc, 10 sc, inc, inc, sc, 7 sc (30)",
+      "Rnd 6: sc in each st around (30)",
+      "Rnd 7: 5 sc, dec, sc, 5 sc, dec, 5 sc, dec, sc, 5 sc, dec (26)",
+      "Rnd 8: dec, sc, dec, 2 sc, sc, (3 sc, dec) x 2, 2 sc, 2 sc, dec, 2 sc (21)",
+      "Rnd 9: dec, sc, dec, (dec, sc) x 3, dec, sc, dec, 2 sc (14)",
+      "Rnd 10: dec, sc, 3 dec, sc, 2 dec (8)"
+    ],
+    "issues": [
+      "W_CLOSE@10",
+      "W_RUFFLE@3",
+      "W_RUFFLE@9",
+      "W_SIZE"
+    ]
+  },
+  "teddy-muzzle-exact-trimmed-46pct": {
+    "text": [
+      "Ch 4. Rnd 1: sc in 2nd ch from hook, sc in next ch, 3 sc in last ch; working along the other side of the chain, sc in next ch, 2 sc in last ch (8)",
+      "Rnd 2: inc, sc, 3 inc, sc, 2 inc (14)",
+      "Rnd 3: sc, inc, inc, (sc, inc) x 3, inc, (sc, inc) x 2 (22)",
+      "Rnd 4: inc, 2 sc, 2 sc, (2 sc, inc, sc) x 2, sc, 2 sc, 2 sc, inc, 3 sc (26)",
+      "Rnd 5: 3 sc, inc, inc, sc, 10 sc, inc, inc, sc, 7 sc (30)"
+    ],
+    "issues": [
+      "W_RUFFLE@3"
+    ]
+  }
+}

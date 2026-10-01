@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 
 const DESIGN = readFileSync(new URL('../../../../../docs/DESIGN.md', import.meta.url), 'utf8');
 const RESEARCH_03 = readFileSync(new URL('../../../../../docs/research/03-3d-amigurumi-generation.md', import.meta.url), 'utf8');
+const RESEARCH_07 = readFileSync(new URL('../../../../../docs/research/07-pattern-writing-conventions.md', import.meta.url), 'utf8');
 
 /** The text of a `####` section, from its heading to the next heading of any level. */
 function section(doc: string, heading: string): string {
@@ -55,6 +56,20 @@ export function prefixList(s: string): number[] {
 const S2105 = flat(section(DESIGN, '#### 2.10.5 Path A: counts from a profile (normative)'));
 const S2106 = flat(section(DESIGN, '#### 2.10.6 Starts and finishes'));
 const S2108 = section(DESIGN, '#### 2.10.8 Placing increases and decreases (both paths, normative)');
+const S2105_RAW = section(DESIGN, '#### 2.10.5 Path A: counts from a profile (normative)');
+const S213 = flat(section(DESIGN, '### 2.13 Validation rules and golden tests'));
+
+/** The lines of the first ``` block after `anchor` in `text` (indentation removed, empty lines dropped). */
+function codeBlockAfter(text: string, anchor: string, what: string): string[] {
+  const at = text.indexOf(anchor);
+  if (at < 0) throw new Error(`spec helper: ${what} not found (anchor "${anchor}")`);
+  const block = text.slice(at).split('```')[1];
+  if (block === undefined) throw new Error(`spec helper: no code block after "${anchor}"`);
+  return block
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
 
 export const spec = {
   textbookSphere(): { counts: number[]; rounds: number; worstedPlain: number; worstedRounds: number } {
@@ -177,6 +192,40 @@ export const spec = {
     return { min: Number(m[1]), mult: Number(m[2]), plus: Number(m[3]), gather: Number(g[1]) };
   },
 
+  /** §2.10.8 golden text (G5), line by line as the spec prints it. */
+  textbookText(): string[] {
+    return codeBlockAfter(S2108, 'Golden text (textbook sphere, k = 6', '§2.10.8 golden text');
+  },
+
+  /** §2.10.5 closed cylinder exact text (Rnds 4, 5, 6–13, 14, 15) and the ops the spec gives for Rnd 4. */
+  cylinderText(): { lines: string[]; rnd4Ops: string } {
+    const lines = codeBlockAfter(S2105_RAW, 'Closed cylinder ⌀1.5 × 2', 'closed cylinder text');
+    const m = match(flat(S2105_RAW), /\(Rnd 4's ops are `([^`]+)`; the encoder prints their shortest form\.\)/, "cylinder Rnd 4's ops");
+    return { lines, rnd4Ops: m[1] };
+  },
+
+  /** §2.10.5 horn: "BLO on Rnd 4, written `BLO (…, sc2tog) …`". */
+  hornBloText(): string {
+    return match(S2105, /BLO on Rnd \d+, written `([^`]+)`/, 'horn BLO text')[1];
+  },
+
+  /** §2.10.5 box: "BLO on Rnds 4 and 11 (Rnd 11 is a BLO sc2tog round)". */
+  boxSc2togRound(): number {
+    return Number(match(S2105, /BLO on Rnds \d+ and \d+ \(Rnd (\d+) is a BLO sc2tog round\)/, 'box BLO sc2tog round')[1]);
+  },
+
+  /** §2.13 G8: ch 10 ⇒ S = 7: Rnd 1 (20), Rnd 2 `…` (26), Rnd 3 (32). */
+  g8(): { chains: number; S: number; counts: number[]; rnd2: string } {
+    const m = match(S213, /\| G8 \| Oval ch (\d+) \| ch \d+ ⇒ S = (\d+): Rnd 1 \((\d+)\), Rnd 2 `([^`]+)` \([^)]*\), Rnd 3 \((\d+)\)/, 'G8 row');
+    const c2 = match(m[4], /\((\d+)\)$/, 'G8 Rnd 2 count');
+    return { chains: Number(m[1]), S: Number(m[2]), counts: [Number(m[3]), Number(c2[1]), Number(m[5])], rnd2: `Rnd 2: ${m[4]}` };
+  },
+
+  /** §2.13 intro sentence: G5 raises no W_STACKED, and the oval tests' scope. */
+  g5NoStacked(): boolean {
+    return /G5 raises no `W_STACKED`/.test(S213);
+  },
+
   /** §2.10.8 golden text (G5): the stated count of every round, `Rnds a–b` expanded. */
   textbookTextCounts(): number[] {
     const at = S2108.indexOf('Golden text (textbook sphere, k = 6');
@@ -197,4 +246,22 @@ export const spec = {
 export function researchTorus(): number[] {
   const m = match(flat(RESEARCH_03), /\*\*Torus, R = 1\.5 in, a = 0\.5 in:\*\* `([^`]+)`, then seam/, 'research torus');
   return parseList(m[1]);
+}
+
+/** Research 07 §6.9: the ch-10 oval as research 07 prints it (Ch line, Rnd 1 joined across its wrapped line, Rnd 3). */
+export function researchOval(): { chain: string; rnd1: string; rnd3: string } {
+  const lines = codeBlockAfter(RESEARCH_07, '### 6.9 Ovals worked around a chain', 'research 07 §6.9 oval');
+  const rnd1 = lines.findIndex((l) => l.startsWith('Rnd 1:'));
+  const rnd2 = lines.findIndex((l) => l.startsWith('Rnd 2:'));
+  const rnd3 = lines.find((l) => l.startsWith('Rnd 3:'));
+  if (rnd1 < 0 || rnd2 < 0 || !rnd3) throw new Error('spec helper: research 07 §6.9 rounds not found');
+  return { chain: lines[0], rnd1: lines.slice(rnd1, rnd2).join(' '), rnd3 };
+}
+
+/** Research 07 §6.6: the grouped layout examples `P→T gives `…``. */
+export function researchGrouped(): { P: number; T: number; text: string }[] {
+  const out: { P: number; T: number; text: string }[] = [];
+  for (const m of RESEARCH_07.matchAll(/Example: (\d+)→(\d+) gives `([^`]+)`/g)) out.push({ P: Number(m[1]), T: Number(m[2]), text: m[3] });
+  if (out.length < 2) throw new Error('spec helper: research 07 §6.6 grouped examples not found');
+  return out;
 }
