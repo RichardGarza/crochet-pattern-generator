@@ -348,6 +348,20 @@ export function placeFeatureAt(kind: FeatureKind, partId: string, hitWorld: Vec3
   return id;
 }
 
+/** Adds a detail that already has its angles (the keyboard path: "Add at the front"). Returns its id. */
+export function addDetail(f: Omit<Feature, 'id'>): string | null {
+  const model = currentModel();
+  const part = model?.parts.find((p) => p.id === f.on);
+  if (!model || !part || readOnly()) return null;
+  let id: string | null = null;
+  editModel(`Add ${FEATURE_NAMES[f.kind].toLowerCase()} on ${partName(part)}`, (m) => {
+    const r = addFeature(m, f);
+    id = r.id;
+    return r.model;
+  });
+  return id;
+}
+
 export function changeFeature(id: string, patch: Partial<Omit<Feature, 'id' | 'color'>> & { color?: string | null }, o: { coalesceKey?: string } = {}): boolean {
   if (readOnly()) return false;
   const f = currentModel()?.features?.find((x) => x.id === id);
@@ -388,4 +402,18 @@ export const FEATURE_HINTS: Readonly<Record<FeatureKind, string>> = {
   line: 'Any embroidered line: click its points.',
   felt: 'A felt shape glued or sewn on.',
   applique: 'A small flat crocheted shape sewn on.',
+};
+
+/** How a detail without a color of its own is drawn (the pattern's default: dark yarn, pink cheeks, white felt). */
+export const DEFAULT_FEATURE_HEX: Record<FeatureKind, string> = {
+  safety_eye: '#111111',
+  embroidered_eye: '#1d1712',
+  nose: '#2b211b',
+  mouth: '#2b211b',
+  cheek: '#e8a0b4',
+  brow: '#2b211b',
+  whiskers: '#2b211b',
+  line: '#2b211b',
+  felt: '#f2efe9',
+  applique: '#f2efe9',
 };

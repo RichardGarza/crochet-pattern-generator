@@ -14,13 +14,16 @@ import {
   type AttachMethod,
   type OpenEnd,
 } from '../../state/slices/model3d';
+import { notify } from '../../app/toasts';
 import { useProjectStore } from '../../state/projectStore';
 import type { CrochetModelV1, Vec3 } from '../../types/model';
-import { Banner, Button, ConfirmDialog, Dialog, SegmentedControl, Select, Switch } from '../common';
+import { Banner, Button, ConfirmDialog, Dialog, NumberField, SegmentedControl, Select, Switch, formatLength } from '../common';
 import { TYPE_NAMES } from './dimSpecs';
 import { editorStore, useEditorStore } from './editorStore';
 import { ShapeGlyph } from './glyphs';
 import { addPartAt, attachTo, deleteNow, deleteSummary, startPlacing } from './tools';
+import { HEIGHT_LIMITS_IN } from './yarnSize';
+import { modelHeight, scaleBlockedReason as scaleModelBlockedReason, scaleModelToHeight } from './yarnSizeModel';
 
 /** What each shape is good for, in crocheters' words. */
 const SHAPE_USES: Record<AddableType, string> = {
@@ -53,6 +56,7 @@ export function ShapeDialogs({ model }: { model: CrochetModelV1 }) {
       <AddPartDialog model={model} />
       <AttachDialog model={model} />
       <DeleteDialog model={model} />
+      <ScaleDialog model={model} />
     </>
   );
 }
@@ -299,5 +303,64 @@ function DeleteDialog({ model }: { model: CrochetModelV1 }) {
       {everything ? <Banner tone="warn">That would delete every part; a model needs at least one.</Banner> : null}
       <p className="shape-hint">You can undo this, and the model as it was is kept as a revision.</p>
     </ConfirmDialog>
+  );
+}
+
+/** Scale model to height (§4.2): every part together, about the ground center; one history step and a new revision. */
+function ScaleDialog({ model }: { model: CrochetModelV1 }) {
+  const open = useEditorStore((s) => s.scaleDialog);
+  const units = useProjectStore((s) => s.doc?.units ?? 'in');
+  const readOnly = useProjectStore((s) => s.readOnly);
+  const height = modelHeight(model);
+  const [want, setWant] = useState(height);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) setWant(Math.round(height * 100) / 100);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  const close = () => editorStore.getState().setScaleDialog(false);
+  const same = Math.abs(want - height) < 0.005;
+  const blocked = readOnly ? 'This project is read-only' : same ? 'Type a different height' : scaleModelBlockedReason(model, want);
+  const go = async () => {
+    if (blocked) return;
+    setBusy(true);
+    try {
+      if (await scaleModelToHeight(want)) close();
+    } catch (e) {
+      notify.error(`The toy could not be resized: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const pct = height > 0 ? Math.round((want / height - 1) * 100) : 0;
+  return (
+    <Dialog
+      open={open}
+      onClose={close}
+      size="sm"
+      title="Scale the toy to a height"
+      description="Every part grows or shrinks together, so the proportions stay. You can undo it, and the toy as it was is kept as a revision."
+      footer={
+        <>
+          <Button onClick={close}>Cancel</Button>
+          <Button variant="primary" loading={busy} disabledReason={blocked ?? undefined} onClick={() => void go()}>
+            Scale
+          </Button>
+        </>
+      }
+    >
+      <div className="shape-scale">
+        <NumberField
+          label="Height"
+          kind="length"
+          units={units}
+          value={want}
+          min={HEIGHT_LIMITS_IN[0]}
+          max={HEIGHT_LIMITS_IN[1]}
+          onChange={(v) => v !== null && setWant(v)}
+          hint={`Now ${formatLength(height, units)}${same ? '' : ` · ${pct > 0 ? '+' : ''}${pct}%`}`}
+        />
+      </div>
+    </Dialog>
   );
 }

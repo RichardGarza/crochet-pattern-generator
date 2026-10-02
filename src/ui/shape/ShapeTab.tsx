@@ -4,24 +4,31 @@
 //
 // The viewport is injectable (`ShapeTabProps.Viewport`, §5.2.1): the app uses the react-three-fiber viewport
 // (`Viewport3D`, loaded on demand), tests pass a stub (happy-dom has no WebGL context).
-import { lazy, Suspense, useEffect, useMemo, useState, type ComponentType } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
 import { navigate } from '../../app/router';
 import { notify } from '../../app/toasts';
-import { gapIssues, scaleBlockedReason } from '../../state/slices/model3d';
+import { modelHeight } from '../../core/model/transforms';
+import { useDerivedStore } from '../../state/derivedStore';
+import { gapIssues, partName, scaleBlockedReason } from '../../state/slices/model3d';
 import { projectStore, useProjectStore } from '../../state/projectStore';
-import type { ColoredMesh } from '../../types/geometry';
 import type { CrochetModelV1 } from '../../types/model';
 import type { ShapeTabProps, ViewportProps } from '../../types/ui';
-import { Badge, Button, EmptyState, IconButton, SegmentedControl, Spinner, Switch, TabLayout, Toolbar, ToolbarDivider, Tooltip } from '../common';
+import { Badge, Button, EmptyState, IconButton, SegmentedControl, Spinner, Switch, TabLayout, Toolbar, ToolbarDivider, Tooltip, formatLength } from '../common';
 import { StatusItems, useShortcutGroup, type ShortcutGroup } from '../shell';
 import { isEditableTarget, IS_MAC } from '../shell/shortcuts';
+import { toyGhostHeight } from './amiView';
+import { FEATURE_NAMES } from './colorTools';
 import { TYPE_NAMES } from './dimSpecs';
-import { editorStore, useEditorStore, type CameraView, type EditorTool } from './editorStore';
+import { BRUSH_LIMITS_IN, editorStore, useEditorStore, type CameraView, type EditorTool } from './editorStore';
+import { GhostGlyph, RingsGlyph } from './glyphs';
 import { ShapeInspector } from './Inspector';
+import { startLiveLoop } from './liveLoop';
+import { useModelMeshes } from './meshAssets';
 import { ShapeDialogs } from './ShapeDialogs';
-import { duplicateSelection, mirrorSelection, requestDeleteSelection } from './tools';
+import { duplicateSelection, finishPath, mirrorSelection, requestDeleteSelection, undoPathPoint } from './tools';
 import { useModifierKeys } from './modifiers';
 import { Outliner } from './Outliner';
+import { useLoopStatus } from './useLoopStatus';
 import './shape.css';
 
 export type { ShapeTabProps, ViewportProps } from '../../types/ui';
@@ -42,18 +49,15 @@ function DefaultViewport(props: ViewportProps) {
   );
 }
 
-/** Mesh-part buffers by `meshRef`. Decoding `threeD.meshAssets` arrives with the mesh tools (T6.4); until then a
- * mesh part is drawn as the ellipsoid of its bounding box (the builder's fallback). */
-const NO_MESHES: Record<string, ColoredMesh> = Object.freeze({}) as Record<string, ColoredMesh>;
-
 const TOOLS: { value: EditorTool; label: string; key: string; tooltip: string }[] = [
   { value: 'select', label: 'Select', key: 'Q', tooltip: 'Select parts (Q) · ⇧-click adds' },
   { value: 'move', label: 'Move', key: 'W', tooltip: 'Move (W) · hold ⌥ to move a part alone · ⇧ turns snapping off' },
   { value: 'rotate', label: 'Rotate', key: 'E', tooltip: 'Rotate (E) · turns about the part’s center' },
   { value: 'scale', label: 'Resize', key: 'R', tooltip: 'Resize (R) · attached parts stay on the surface' },
+  { value: 'paint', label: 'Paint', key: 'P', tooltip: 'Paint (P) · drag on a part · [ and ] change the brush size' },
 ];
 
-const TOOL_KEYS: Record<string, EditorTool> = { q: 'select', w: 'move', e: 'rotate', r: 'scale' };
+const TOOL_KEYS: Record<string, EditorTool> = { q: 'select', w: 'move', e: 'rotate', r: 'scale', p: 'paint' };
 
 const VIEWS: { view: CameraView; label: string; tip: string }[] = [
   { view: 'front', label: 'Front', tip: 'Look at the front' },
@@ -140,11 +144,20 @@ function NoModel({ projectId, origin, readOnly }: { projectId: string | null; or
 
 function Editor({ Viewport, units, readOnly }: { Viewport: ComponentType<ViewportProps>; units: 'in' | 'cm'; readOnly: boolean }) {
   const model = useProjectStore((s) => s.doc?.threeD?.model);
+  const projectId = useProjectStore((s) => s.doc?.id ?? null);
   const selection = useEditorStore((s) => s.selection);
   const layers = useEditorStore((s) => s.layers);
   const tool = useEditorStore((s) => s.tool);
   const keys = useModifierKeys();
+  const meshes = useModelMeshes();
   const issues = useMemo(() => (model ? gapIssues(model) : []), [model]);
+
+  // §4.3: the live pattern loop runs while the editor is open.
+  useEffect(() => {
+    if (!projectId) return;
+    const loop = startLiveLoop();
+    return () => loop.stop();
+  }, [projectId]);
 
   const onPick = (id: string | null) => editorStore.getState().select(id, { additive: keys.current.shift });
 
@@ -168,7 +181,7 @@ function Editor({ Viewport, units, readOnly }: { Viewport: ComponentType<Viewpor
       toolbar={<ShapeToolbar tool={tool} readOnly={readOnly} />}
     >
       <div className="shape-stage">
-        <Viewport model={model} meshes={NO_MESHES} selection={selection} layers={layers} onPick={onPick} />
+        <Viewport model={model} meshes={meshes} selection={selection} layers={layers} onPick={onPick} />
         <CameraButtons />
         <StageHint model={model} selection={selection} tool={tool} readOnly={readOnly} />
         <PickHint model={model} />
@@ -194,6 +207,7 @@ function Editor({ Viewport, units, readOnly }: { Viewport: ComponentType<Viewpor
           </Tooltip>
         )}
         {primaryPart ? <span className="shape-muted">Selected: {primaryPart.label ?? primaryPart.id}</span> : null}
+        <PatternStatus model={model} units={units} />
       </StatusItems>
       <ShapeDialogs model={model} />
     </TabLayout>
@@ -201,18 +215,43 @@ function Editor({ Viewport, units, readOnly }: { Viewport: ComponentType<Viewpor
 }
 
 /** A line on the view when the active tool cannot act: nothing selected, or a part it cannot resize. */
-/** While the editor waits for a click on a part's surface (Add part, a sculpted part's start point). */
+/** While the editor waits for a click on a part's surface (Add part, a start point, a detail, a patch, a line). */
 function PickHint({ model }: { model: CrochetModelV1 }) {
   const pick = useEditorStore((s) => s.surfacePick);
   if (!pick) return null;
-  const part = pick.kind === 'seed' ? model.parts.find((p) => p.id === pick.partId) : undefined;
-  const text =
-    pick.kind === 'add'
-      ? `Click on the model where the new ${TYPE_NAMES[pick.type].toLowerCase()} goes. It hangs from the part you click.`
-      : `Click on ${part ? (part.label ?? part.id) : 'the part'} where round 1 should start.`;
+  const nameOf = (id: string | null | undefined) => {
+    const p = id ? model.parts.find((q) => q.id === id) : undefined;
+    return p ? partName(p) : 'the part';
+  };
+  let text: string;
+  switch (pick.kind) {
+    case 'add':
+      text = `Click on the model where the new ${TYPE_NAMES[pick.type].toLowerCase()} goes. It hangs from the part you click.`;
+      break;
+    case 'seed':
+      text = `Click on ${nameOf(pick.partId)} where round 1 should start.`;
+      break;
+    case 'feature':
+      text = `Click on the model where the ${FEATURE_NAMES[pick.featureKind].toLowerCase()} goes.`;
+      break;
+    case 'region':
+      text = `Click on ${nameOf(pick.partId)} where it should sit.`;
+      break;
+    case 'path':
+      text =
+        pick.points.length === 0
+          ? `Click the points of the ${FEATURE_NAMES[pick.featureKind].toLowerCase()} on the model, one after another.`
+          : `${pick.points.length} ${pick.points.length === 1 ? 'point' : 'points'} on ${nameOf(pick.partId)}. Keep clicking; Enter finishes, ⌫ removes the last.`;
+      break;
+  }
   return (
     <div className="shape-stage__pick" role="status">
       <span>{text}</span>
+      {pick.kind === 'path' ? (
+        <Button size="sm" variant="primary" disabledReason={pick.points.length < 2 ? 'Click at least two points' : undefined} onClick={() => finishPath()}>
+          Done (Enter)
+        </Button>
+      ) : null}
       <Button size="sm" variant="secondary" onClick={() => editorStore.getState().setSurfacePick(null)}>
         Cancel (Esc)
       </Button>
@@ -221,7 +260,18 @@ function PickHint({ model }: { model: CrochetModelV1 }) {
 }
 
 function StageHint({ model, selection, tool, readOnly }: { model: CrochetModelV1; selection: string[]; tool: EditorTool; readOnly: boolean }) {
-  if (readOnly || tool === 'select') return null;
+  const mode = useEditorStore((s) => s.paint.mode);
+  const picking = useEditorStore((s) => s.surfacePick !== null);
+  if (readOnly || tool === 'select' || picking) return null;
+  if (tool === 'paint') {
+    const how = { brush: 'Drag on a part to paint', erase: 'Drag on a part to erase brush strokes', fill: 'Click a part to fill it', pick: 'Click the model to pick a color' }[mode];
+    return (
+      <p className="shape-stage__hint shape-stage__hint--paint" role="status">
+        {how}
+        {mode === 'brush' || mode === 'erase' ? ' · [ ] brush size' : ''} · drag the background to turn the view
+      </p>
+    );
+  }
   const verb = tool === 'move' ? 'move' : tool === 'rotate' ? 'turn' : 'resize';
   const primary = selection[selection.length - 1];
   const part = primary ? model.parts.find((p) => p.id === primary) : undefined;
@@ -254,11 +304,100 @@ function ShapeToolbar({ tool, readOnly }: { tool: EditorTool; readOnly: boolean 
       <Button size="sm" icon="plus" disabledReason={readOnly ? 'This project is read-only' : undefined} onClick={() => editorStore.getState().setAddDialog(true)}>
         Add part
       </Button>
+      <Button size="sm" icon="ruler" disabledReason={readOnly ? 'This project is read-only' : undefined} onClick={() => editorStore.getState().setScaleDialog(true)}>
+        Height…
+      </Button>
       <span className="shape-toolbar__spacer" />
+      <LayerToggle name="rings" label="Rounds" tip="Show the pattern’s rounds as rings on the model" glyph={<RingsGlyph />} on={!!layers.rings} />
+      <LayerToggle name="ghost" label="Ghost" tip="Show the shape the pattern makes (the pattern ghost)" glyph={<GhostGlyph />} on={!!layers.ghost} />
+      <ToolbarDivider />
       <IconButton icon="grid" label="Ground grid" pressed={!!layers.grid} size="sm" onClick={() => editorStore.getState().setLayer('grid', !layers.grid)} />
       <IconButton icon="sun" label="Ground shadow" pressed={layers.shadow !== false} size="sm" onClick={() => editorStore.getState().setLayer('shadow', layers.shadow === false)} />
       <IconButton icon="layers" label="Wireframe" pressed={!!layers.wireframe} size="sm" onClick={() => editorStore.getState().setLayer('wireframe', !layers.wireframe)} />
     </Toolbar>
+  );
+}
+
+function LayerToggle({ name, label, tip, glyph, on }: { name: string; label: string; tip: string; glyph: ReactNode; on: boolean }) {
+  return (
+    <Tooltip content={tip} describe={false}>
+      <button type="button" className={`shape-layer${on ? ' shape-layer--on' : ''}`} aria-pressed={on} onClick={() => editorStore.getState().setLayer(name, !on)}>
+        {glyph}
+        <span>{label}</span>
+      </button>
+    </Tooltip>
+  );
+}
+
+/** Status strip (§4.1): the live loop (worker activity) and the ghost mismatch. */
+function PatternStatus({ model, units }: { model: CrochetModelV1; units: 'in' | 'cm' }) {
+  const status = useLoopStatus();
+  const result = useDerivedStore((s) => s.ami?.value ?? null);
+  const ghost = useMemo(() => (result ? toyGhostHeight(result, model) : null), [result, model]);
+  const height = useMemo(() => modelHeight(model), [model]);
+  let loop: ReactNode = null;
+  switch (status.kind) {
+    case 'unavailable':
+      loop = (
+        <Tooltip content="Rounds, rings and the pattern ghost appear once the pattern engine is part of the app.">
+          <span tabIndex={0} className="shape-status-focus">
+            <Badge tone="neutral" size="sm" icon="info">
+              Pattern preview not available yet
+            </Badge>
+          </span>
+        </Tooltip>
+      );
+      break;
+    case 'running':
+      loop = (
+        <span className="shape-status-busy">
+          <Spinner size={12} label="Updating the pattern" /> Updating the pattern…
+        </span>
+      );
+      break;
+    case 'error':
+      loop = (
+        <Tooltip content={status.message}>
+          <span tabIndex={0} className="shape-status-focus">
+            <Badge tone="danger" size="sm">
+              The pattern could not be made
+            </Badge>
+          </span>
+        </Tooltip>
+      );
+      break;
+    case 'ready':
+      loop = status.fresh ? (
+        <Badge tone="success" size="sm">
+          Pattern up to date
+        </Badge>
+      ) : null;
+      break;
+    default:
+      loop = null;
+  }
+  let size: ReactNode = null;
+  if (ghost !== null && height > 0) {
+    const pct = Math.round((ghost / height - 1) * 100);
+    const off = Math.abs(ghost / height - 1) > 0.05;
+    const text = `Pattern makes it ${formatLength(ghost, units)} tall${pct === 0 ? '' : ` (${pct > 0 ? '+' : '−'}${Math.abs(pct)}%)`}`;
+    size = off ? (
+      <Tooltip content={`The model is ${formatLength(height, units)} tall. Turn on Ghost to see where the pattern differs.`}>
+        <span tabIndex={0} className="shape-status-focus">
+          <Badge tone="warn" size="sm">
+            {text}
+          </Badge>
+        </span>
+      </Tooltip>
+    ) : (
+      <span className="shape-muted">{text}</span>
+    );
+  }
+  return (
+    <>
+      {loop}
+      {size}
+    </>
   );
 }
 
@@ -297,6 +436,9 @@ const SHAPE_SHORTCUTS: ShortcutGroup = {
     { keys: [['W']], what: 'Move' },
     { keys: [['E']], what: 'Rotate' },
     { keys: [['R']], what: 'Resize' },
+    { keys: [['P']], what: 'Paint' },
+    { keys: [['['], [']']], what: 'Paint: smaller or bigger brush' },
+    { keys: [['Enter']], what: 'Finish an embroidered line' },
     { keys: [['F']], what: 'Frame the selection' },
     { keys: [[IS_MAC ? '⌘' : 'Ctrl', 'D']], what: 'Duplicate the selected parts' },
     { keys: [['M']], what: 'Mirror to the other side (or update the mirrored twin)' },
@@ -342,6 +484,25 @@ function useEditorShortcuts(): void {
       if (e.key === 'Escape' && editor.surfacePick) {
         e.preventDefault();
         editor.setSurfacePick(null);
+        return;
+      }
+      if (editor.surfacePick?.kind === 'path' && !isControl(e.target)) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          finishPath();
+          return;
+        }
+        if (e.key === 'Backspace' || e.key === 'Delete') {
+          e.preventDefault();
+          undoPathPoint();
+          return;
+        }
+      }
+      if ((e.key === '[' || e.key === ']') && editor.tool === 'paint') {
+        e.preventDefault();
+        const r = editor.paint.radiusIn;
+        const step = Math.max(BRUSH_LIMITS_IN[0], r * 0.2);
+        editor.setPaint({ radiusIn: e.key === ']' ? r + step : r - step });
         return;
       }
       const tool = TOOL_KEYS[key];

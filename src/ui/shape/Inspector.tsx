@@ -22,7 +22,10 @@ import { Badge, Banner, Button, EmptyState, IconButton, Kbd, NumberField, Panel,
 import { MOD } from '../shell/shortcuts';
 import { dimSpecs, dimValue, prettyName, TYPE_NAMES, type DimSpec } from './dimSpecs';
 import { editorStore, transformScope, useEditorStore, type InspectorPage } from './editorStore';
+import { ColorsPanel } from './ColorsPanel';
 import { HowItsMade, MirrorLink, PartActions } from './PartTools';
+import { ProportionsPanel } from './ProportionsPanel';
+import { RoundsPanel } from './RoundsPanel';
 import { YarnSizePanel } from './YarnSizePanel';
 
 export interface InspectorProps {
@@ -34,6 +37,8 @@ export interface InspectorProps {
 
 const PAGES: { id: InspectorPage; label: string }[] = [
   { id: 'part', label: 'Part' },
+  { id: 'colors', label: 'Colors' },
+  { id: 'proportions', label: 'Proportions' },
   { id: 'yarn', label: 'Yarn & size' },
 ];
 
@@ -54,6 +59,10 @@ export function ShapeInspector(props: InspectorProps) {
       <TabPanel idBase="shape-inspector" id={page}>
         {page === 'part' ? (
           <Inspector {...props} />
+        ) : page === 'colors' ? (
+          <ColorsPanel model={props.model} units={props.units} readOnly={props.readOnly} />
+        ) : page === 'proportions' ? (
+          <ProportionsPanel model={props.model} units={props.units} readOnly={props.readOnly} />
         ) : (
           <Sidebar>
             <YarnSizePanel context="shape" />
@@ -193,6 +202,8 @@ function PartInspector({ model, part, units, issues, readOnly, others }: { model
         <HowItsMade part={part} readOnly={readOnly} />
       </Panel>
 
+      <RoundsPanel model={model} part={part} />
+
       <Panel title="Position" icon="arrow-right">
         <TransformFields part={part} units={units} readOnly={readOnly} scope={scope} childCount={childCount} />
       </Panel>
@@ -204,13 +215,29 @@ function PartInspector({ model, part, units, issues, readOnly, others }: { model
           disabled={readOnly}
           options={model.palette.map((c) => ({ value: c.id, label: c.name ? prettyName(c.name) : c.id }))}
           onChange={(color) => editModel(`Color ${name}`, (m) => setPartColor(m, part.id, color))}
-          hint="Stripes, spots and painting come with the Paint tool."
         />
+        <p className="shape-hint shape-color-more">
+          {colorSummary(model, part)}{' '}
+          <Button size="sm" variant="ghost" icon="palette" onClick={() => editorStore.getState().setInspectorPage('colors')}>
+            Paint, stripes &amp; details
+          </Button>
+        </p>
       </Panel>
     </Sidebar>
   );
 }
 
+
+/** "2 stripes or spots, brush strokes and 3 details" — what else colors the part. */
+function colorSummary(model: CrochetModelV1, part: Part): string {
+  const bits: string[] = [];
+  const r = part.regions?.length ?? 0;
+  if (r) bits.push(r === 1 ? '1 stripe or spot' : `${r} stripes or spots`);
+  if (part.paint) bits.push('brush strokes');
+  const f = (model.features ?? []).filter((x) => x.on === part.id).length;
+  if (f) bits.push(f === 1 ? '1 detail' : `${f} details`);
+  return bits.length === 0 ? 'One solid color.' : `Also: ${bits.join(', ')}.`;
+}
 
 // ---- size
 

@@ -1,6 +1,6 @@
-// Track T6.2 — icons the Shape tab needs that the S0 icon set does not have yet (§6.1 rule 7: a track draws its
-// own in the same style — 24 grid, 1.75 stroke, currentColor — and lists them under its requests): Mirror, Link,
-// and one pictogram per primitive for Add part.
+// Track T6.2/T6.3 — icons the Shape tab needs that the S0 icon set does not have (§6.1 rule 7: a track draws its own
+// in the same style — 24 grid, 1.75 stroke, currentColor — and lists them under its requests): one pictogram per
+// primitive for Add part, and the Rounds (rings) and Ghost view toggles. Mirror and Link are S0 icons since v1.5.
 import type { ReactNode } from 'react';
 import type { AddableType } from '../../state/slices/model3d';
 
@@ -80,6 +80,27 @@ export function ShapeGlyph({ type, size = 28 }: { type: AddableType; size?: numb
   return (
     <Svg size={size} className="shape-glyph shape-glyph--shape">
       {SHAPES[type]}
+    </Svg>
+  );
+}
+
+/** Rounds as rings: three stacked ellipses. */
+export function RingsGlyph({ size = 16 }: { size?: number }) {
+  return (
+    <Svg size={size}>
+      <ellipse cx="12" cy="6" rx="5" ry="1.8" />
+      <ellipse cx="12" cy="12" rx="8" ry="2.6" />
+      <ellipse cx="12" cy="18" rx="5.5" ry="1.9" />
+    </Svg>
+  );
+}
+
+/** The pattern ghost: a dashed outline over a solid one. */
+export function GhostGlyph({ size = 16 }: { size?: number }) {
+  return (
+    <Svg size={size}>
+      <circle cx="11" cy="13" r="6.5" />
+      <circle cx="13" cy="11" r="7.5" strokeDasharray="2.2 2.6" />
     </Svg>
   );
 }

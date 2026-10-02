@@ -30,6 +30,7 @@ import {
 } from '../../state/slices/model3d';
 import { commitModelRevision, projectStore } from '../../state/projectStore';
 import type { CrochetModelV1, Vec3 } from '../../types/model';
+import { FEATURE_NAMES, placeFeatureAt, placeRegionAt } from './colorTools';
 import { TYPE_NAMES } from './dimSpecs';
 import { editorStore } from './editorStore';
 
@@ -85,9 +86,37 @@ export function startPlacing(type: AddableType): void {
 export function completeSurfacePick(partId: string, hit: Vec3, normal: Vec3): void {
   const pick = editorStore.getState().surfacePick;
   if (!pick) return;
+  if (pick.kind === 'path') {
+    // An embroidered line: every click adds a point on the first part clicked; Enter (or Done) finishes it.
+    if (pick.partId && pick.partId !== partId) {
+      const part = currentModel()?.parts.find((p) => p.id === pick.partId);
+      notify.info(`Keep the line on ${part ? partName(part) : 'one part'}: click on it, or press Enter to finish.`);
+      return;
+    }
+    editorStore.getState().addPathPoint(partId, hit);
+    return;
+  }
   editorStore.getState().setSurfacePick(null);
   if (pick.kind === 'add') {
     addPartAt(partId, pick.type, { hit, normal });
+    return;
+  }
+  if (pick.kind === 'feature') {
+    const id = placeFeatureAt(pick.featureKind, partId, hit);
+    if (id) {
+      editorStore.getState().select(partId);
+      editorStore.getState().setInspectorPage('colors');
+    }
+    return;
+  }
+  if (pick.kind === 'region') {
+    if (partId !== pick.partId) {
+      const part = currentModel()?.parts.find((p) => p.id === pick.partId);
+      notify.info(`Click on ${part ? partName(part) : 'the part'} itself to place it.`);
+      editorStore.getState().setSurfacePick(pick);
+      return;
+    }
+    placeRegionAt(pick.partId, pick.index, hit);
     return;
   }
   // A mesh part's start point: the clicked point in the part's own frame.
@@ -240,4 +269,26 @@ export function setAttach(partId: string, o: { openEnd?: OpenEnd | null; method?
 export function setHints(ids: readonly string[], patch: CrochetHintsPatch, label: string): boolean {
   if (readOnly()) return false;
   return editModel(label, (m) => setCrochetHints(m, ids, patch));
+}
+
+// ---- embroidered lines
+
+/** Finishes the line being drawn (Enter / Done): at least two points make a detail. Returns its id. */
+export function finishPath(): string | null {
+  const pick = editorStore.getState().surfacePick;
+  if (pick?.kind !== 'path') return null;
+  if (pick.points.length < 2 || !pick.partId) {
+    notify.info(`Click at least two points on the model for the ${FEATURE_NAMES[pick.featureKind].toLowerCase()}.`);
+    return null;
+  }
+  editorStore.getState().setSurfacePick(null);
+  return placeFeatureAt(pick.featureKind, pick.partId, pick.points[0], pick.points);
+}
+
+/** Removes the last clicked point of the line being drawn (⌫ while drawing). */
+export function undoPathPoint(): void {
+  const pick = editorStore.getState().surfacePick;
+  if (pick?.kind !== 'path' || pick.points.length === 0) return;
+  const points = pick.points.slice(0, -1);
+  editorStore.getState().setSurfacePick({ ...pick, points, partId: points.length > 0 ? pick.partId : null });
 }
