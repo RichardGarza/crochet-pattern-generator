@@ -139,11 +139,22 @@ describe('colors: E_COLOR_SEQ, W_ROUND_COLORS, W_SINGLE_ST (R12)', () => {
   const ring = mr(6);
   it('a whole-round change needs "change to B" on the round before', () => {
     const lines = [ring, rnd(2, sc(6), 6, { colorHeader: 'B' })];
-    expect(codes(check(lines))).toEqual(['E_COLOR_SEQ']);
+    expect(codes(check(lines))).toEqual(['E_COLOR_SEQ', 'W_JOG']);
+    // told on the round before: no error; worked in a spiral a jog still shows (W_JOG, v1.5)
     lines[0] = { ...ring, cues: [{ kind: 'color', text: 'change to B on the last yo' }] };
-    expect(codes(check(lines))).toEqual([]);
+    expect(codes(check(lines))).toEqual(['W_JOG']);
     const joined = [{ ...ring, join: { changeTo: 'B' } }, rnd(2, sc(6), 6, { colorHeader: 'B', start: { k: 'join' }, join: {} })];
     expect(codes(check(joined)).filter((c) => c === 'E_COLOR_SEQ')).toEqual([]);
+    // joined rounds change color on the join: no jog
+    expect(codes(check(joined)).filter((c) => c === 'W_JOG')).toEqual([]);
+  });
+
+  it('W_JOG: a whole-round color change in a spiral (task T4-4); mixed rounds and same-color rounds do not jog', () => {
+    const told = { ...ring, cues: [{ kind: 'color' as const, text: 'change to B on the last yo' }] };
+    const w = check([told, rnd(2, sc(6), 6, { colorHeader: 'B' }), rnd(3, sc(6), 6, { colorHeader: 'B' })]);
+    expect(w.filter((i) => i.code === 'W_JOG').map((i) => i.where?.line)).toEqual([2]);
+    // a mixed round is not a whole-round change
+    expect(codes(check([ring, rnd(2, [...sc(3, { color: 'B' }), ...sc(3)], 6)])).filter((c) => c === 'W_JOG')).toEqual([]);
   });
 
   it('a tagged first stitch says its color itself', () => {

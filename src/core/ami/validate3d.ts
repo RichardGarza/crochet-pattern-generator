@@ -25,7 +25,7 @@
 // | W_ROUND_COLORS | warn | exactly 3 colors in a round |
 // | W_CLOSE | warn | a gathered closing round of 7–8 sts |
 // | W_FAN3 | warn | an inc3 / dec3 outside a chain oval's first round |
-// | W_JOG | warn | a spiral round before a BLO/FLO round that does not end with the jogless sl st |
+// | W_JOG | warn | a spiral round before a BLO/FLO round that does not end with the jogless sl st; a whole-round color change in a spiral (v1.5) |
 // | W_EYE_OPENING | warn | the round after which safety eyes go in measures < 3 in around |
 //
 // E_CORNER (R6, "no stitch is part of both an inc and a dec") cannot occur in a `Line`: every stitch of the round
@@ -337,6 +337,17 @@ function cueRules(p: Piece3dInput, add: Add): void {
     const before = lines[i - 1];
     const lastOp = before.ops[before.ops.length - 1];
     if (!(lastOp && lastOp.k === 'st' && lastOp.st === 'slst')) add('W_JOG', `Rnd ${lines[i].n} (${loop}) starts with a jog: Rnd ${before.nEnd ?? before.n} cannot end with the slip-stitch trick`, { line: lines[i].n });
+  }
+  // W_JOG (v1.5): a whole-round color change in a spiral piece begins with a jog (§2.11.3 prints the jog note)
+  const solid = (l: Line): string | undefined => {
+    const cs = new Set(l.ops.map((op) => (op.k === 'tile' ? op.color : (op.color ?? l.colorHeader ?? '\u0000main'))));
+    return cs.size === 1 ? [...cs][0] : undefined;
+  };
+  for (let i = 1; i < lines.length; i++) {
+    if (isJoined(lines[i]) || isJoined(lines[i - 1])) continue;
+    const a = solid(lines[i - 1]);
+    const b = solid(lines[i]);
+    if (a !== undefined && b !== undefined && a !== b) add('W_JOG', `Rnd ${lines[i].n} changes color for the whole round; worked in a spiral, a small jog shows where it begins`, { line: lines[i].n });
   }
 }
 
