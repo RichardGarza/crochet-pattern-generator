@@ -496,7 +496,9 @@ export function colorize(s: SampledImage, req: ColorizeRequest): Colorized {
     const assignedLab = new Float64Array(n * 3);
     const eligible = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
-      if (a.cell[i] < 0 || overrideCell[i] >= 0) continue;
+      // A thin-feature cell (flat art) already holds its feature's label, and its mean color is a blend of the
+      // feature and both sides — not a detail (T1.3: such cells broke 2 px outlines into pieces).
+      if (a.cell[i] < 0 || overrideCell[i] >= 0 || (thin !== undefined && thin[i])) continue;
       eligible[i] = 1;
       assignedLab.set(centerLab[solidOf(a.cell[i], i)], i * 3);
     }

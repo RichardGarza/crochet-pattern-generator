@@ -74,8 +74,23 @@ export interface PixelHistogram {
   binPoint: Int32Array<ArrayBuffer>;
 }
 
-/** The §2.4.2 flat-art histogram: 5-bit sRGB bins of the straight color of every pixel with α ≥ 0.5. */
+/** Histograms of working images already seen (they depend only on the image: a size change reuses it). */
+const histogramCache = new WeakMap<LinearImage, PixelHistogram>();
+
+/**
+ * The §2.4.2 flat-art histogram: 5-bit sRGB bins of the straight color of every pixel with α ≥ 0.5. Memoized
+ * per image object (the cached `PreparedWork` image), so the result is shared and must be treated as
+ * read-only.
+ */
 export function pixelHistogram(img: LinearImage): PixelHistogram {
+  const hit = histogramCache.get(img);
+  if (hit !== undefined && hit.pixelBin.length === img.w * img.h) return hit;
+  const out = computeHistogram(img);
+  histogramCache.set(img, out);
+  return out;
+}
+
+function computeHistogram(img: LinearImage): PixelHistogram {
   const lut = srgb8Lut();
   const n = img.w * img.h;
   const d = img.data;
@@ -84,13 +99,13 @@ export function pixelHistogram(img: LinearImage): PixelHistogram {
   const sumR = new Float64Array(HISTOGRAM_BINS);
   const sumG = new Float64Array(HISTOGRAM_BINS);
   const sumB = new Float64Array(HISTOGRAM_BINS);
-  const q = (v: number): number => lut[Math.min(65535, Math.max(0, Math.round(v * 65535)))] >> 3;
+  const q = (v: number): number => lut[v <= 0 ? 0 : v >= 1 ? 65535 : Math.round(v * 65535)] >> 3;
   for (let i = 0; i < n; i++) {
     const a = d[i * 4 + 3];
     if (!(a >= OPAQUE)) continue;
-    const r = d[i * 4] / a;
-    const g = d[i * 4 + 1] / a;
-    const b = d[i * 4 + 2] / a;
+    const r = a === 1 ? d[i * 4] : d[i * 4] / a;
+    const g = a === 1 ? d[i * 4 + 1] : d[i * 4 + 1] / a;
+    const b = a === 1 ? d[i * 4 + 2] : d[i * 4 + 2] / a;
     const bin = (q(r) << 10) | (q(g) << 5) | q(b);
     pixelBin[i] = bin;
     count[bin]++;

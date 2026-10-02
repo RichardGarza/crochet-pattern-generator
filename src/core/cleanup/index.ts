@@ -1,4 +1,5 @@
-// Track T1 — src/core/cleanup/index.ts
-// Step 0 placeholder: DESIGN.md §5.1 assigns this module to T1 (scope: §6.3 T1). It has no cross-track entry
-// point, so nothing in it is frozen. T1 writes it.
-export {};
+// Track T1 — crochet cleanup and workability metrics (DESIGN.md §2.5), sprint T1.3.
+export * from './params';
+export * from './metrics';
+export * from './passes';
+export * from './cleanup';

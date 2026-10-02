@@ -60,7 +60,10 @@ export function despeckleLabels(labels: Uint8Array, w: number, h: number, keep?:
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
       const own = labels[i];
-      if (own === NO_LABEL || keep?.has(own)) continue;
+      if (own === NO_LABEL) continue;
+      // Fastest path (interior pixels of a run with a same-label pixel above or below: ≥ 4 of the window).
+      if (x > 0 && x < w - 1 && labels[i - 1] === own && labels[i + 1] === own && ((y > 0 && labels[i - w] === own) || (y < h - 1 && labels[i + w] === own))) continue;
+      if (keep?.has(own)) continue;
       // Fast path: a pixel whose label fills ≥ 3 cells of its window keeps it (most pixels, after 2–8 reads).
       let same = 0;
       for (let dy = -1; dy <= 1 && same <= SPECKLE_MAX; dy++) {
@@ -130,43 +133,84 @@ function overlaps(s: Spans, n: number): { cells: number[][]; w: number[][] } {
   return { cells, w };
 }
 
-/** 8-connected components of equal labels (NO_LABEL excluded). Component ids follow scan order. */
+/**
+ * 8-connected components of equal labels (NO_LABEL excluded). Component ids follow scan order (of each
+ * component's first pixel). Works on horizontal runs with a union-find (T1.3: ≈ 10× faster than a pixel flood
+ * on flat art, whose rows hold few runs).
+ */
 export function labelComponents(labels: Uint8Array, w: number, h: number): { comp: Int32Array; count: number; label: number[]; size: number[] } {
   checkLabels(labels, w, h, 'labelComponents');
-  const comp = new Int32Array(w * h).fill(-1);
-  const label: number[] = [];
-  const size: number[] = [];
-  const stack = new Int32Array(w * h);
-  let count = 0;
-  for (let s = 0; s < w * h; s++) {
-    if (comp[s] >= 0 || labels[s] === NO_LABEL) continue;
-    const l = labels[s];
-    let top = 0;
-    stack[top++] = s;
-    comp[s] = count;
-    let n = 0;
-    while (top > 0) {
-      const i = stack[--top];
-      n++;
-      const x = i % w;
-      const y = (i - x) / w;
-      for (let dy = -1; dy <= 1; dy++) {
-        const yy = y + dy;
-        if (yy < 0 || yy >= h) continue;
-        for (let dx = -1; dx <= 1; dx++) {
-          const xx = x + dx;
-          if (xx < 0 || xx >= w || (dx === 0 && dy === 0)) continue;
-          const j = yy * w + xx;
-          if (comp[j] < 0 && labels[j] === l) {
-            comp[j] = count;
-            stack[top++] = j;
-          }
+  // Runs, row by row (x0..x1 inclusive).
+  let runs = 0;
+  for (let y = 0; y < h; y++) {
+    const o = y * w;
+    for (let x = 0; x < w; x++) if (labels[o + x] !== NO_LABEL && (x === 0 || labels[o + x - 1] !== labels[o + x])) runs++;
+  }
+  const rx0 = new Int32Array(runs);
+  const rx1 = new Int32Array(runs);
+  const ry = new Int32Array(runs);
+  const rowFirst = new Int32Array(h + 1);
+  let r = 0;
+  for (let y = 0; y < h; y++) {
+    rowFirst[y] = r;
+    const o = y * w;
+    for (let x = 0; x < w; x++) {
+      const l = labels[o + x];
+      if (l === NO_LABEL) continue;
+      if (x === 0 || labels[o + x - 1] !== l) {
+        rx0[r] = x;
+        ry[r] = y;
+        r++;
+      }
+      rx1[r - 1] = x;
+    }
+  }
+  rowFirst[h] = r;
+  const parent = new Int32Array(runs);
+  for (let q = 0; q < runs; q++) parent[q] = q;
+  const find = (q: number): number => {
+    let root = q;
+    while (parent[root] !== root) root = parent[root];
+    while (parent[q] !== root) {
+      const next = parent[q];
+      parent[q] = root;
+      q = next;
+    }
+    return root;
+  };
+  for (let y = 1; y < h; y++) {
+    let j = rowFirst[y - 1];
+    const jEnd = rowFirst[y];
+    for (let a = rowFirst[y]; a < rowFirst[y + 1]; a++) {
+      const la = labels[y * w + rx0[a]];
+      // Runs of the row above that touch run a, diagonals included: b.x0 ≤ a.x1 + 1 and a.x0 ≤ b.x1 + 1.
+      while (j < jEnd && rx1[j] + 1 < rx0[a]) j++;
+      for (let b = j; b < jEnd && rx0[b] <= rx1[a] + 1; b++) {
+        if (labels[(y - 1) * w + rx0[b]] !== la) continue;
+        const pa = find(a);
+        const pb = find(b);
+        if (pa !== pb) {
+          if (pa < pb) parent[pb] = pa;
+          else parent[pa] = pb;
         }
       }
     }
-    label.push(l);
-    size.push(n);
-    count++;
+  }
+  const comp = new Int32Array(w * h).fill(-1);
+  const label: number[] = [];
+  const size: number[] = [];
+  const idOf = new Int32Array(runs).fill(-1);
+  let count = 0;
+  for (let q = 0; q < runs; q++) {
+    const root = find(q);
+    let id = idOf[root];
+    if (id < 0) {
+      id = idOf[root] = count++;
+      label.push(labels[ry[q] * w + rx0[q]]);
+      size.push(0);
+    }
+    size[id] += rx1[q] - rx0[q] + 1;
+    comp.fill(id, ry[q] * w + rx0[q], ry[q] * w + rx1[q] + 1);
   }
   return { comp, count, label, size };
 }
@@ -292,24 +336,82 @@ function protectThin(labels: Uint8Array, w: number, h: number, xs: Spans, ys: Sp
       }
     }
   }
-  const d = edt2d(boundary, w, h);
+  // A component is thick (not thin) when some pixel lies ≥ half − 1 from every boundary pixel. Proved cheaply
+  // first (T1.3 speed-up): a pixel whose (2r + 1)² box holds no boundary pixel is ≥ r + 1 from all of them, so
+  // r = ⌈half⌉ − 2 settles most of the picture without a distance transform.
+  const thick = new Uint8Array(count);
+  {
+    const r = Math.max(0, Math.ceil(half) - 2);
+    const W1 = w + 1;
+    const sat = new Int32Array(W1 * (h + 1));
+    for (let y = 0; y < h; y++) {
+      let run = 0;
+      for (let x = 0; x < w; x++) {
+        run += boundary[y * w + x];
+        sat[(y + 1) * W1 + x + 1] = sat[y * W1 + x + 1] + run;
+      }
+    }
+    for (let y = 0; y < h; y++) {
+      const y0 = Math.max(0, y - r);
+      const y1 = Math.min(h, y + r + 1);
+      for (let x = 0; x < w; x++) {
+        const c = comp[y * w + x];
+        if (c < 0 || thick[c]) continue;
+        const x0 = Math.max(0, x - r);
+        const x1 = Math.min(w, x + r + 1);
+        if (sat[y1 * W1 + x1] - sat[y0 * W1 + x1] - sat[y1 * W1 + x0] + sat[y0 * W1 + x0] === 0) thick[c] = 1;
+      }
+    }
+  }
+  // The distance transform runs only on the box around the remaining components, widened by a margin past
+  // which every distance is ≥ half anyway (so the thin/thick decision and a thin component's ridge are exact).
+  let bx0 = w;
+  let by0 = h;
+  let bx1 = -1;
+  let by1 = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const c = comp[y * w + x];
+      if (c < 0 || thick[c]) continue;
+      if (x < bx0) bx0 = x;
+      if (x > bx1) bx1 = x;
+      if (y < by0) by0 = y;
+      if (y > by1) by1 = y;
+    }
+  }
+  if (bx1 < 0) return;
+  const margin = Math.ceil(half) + 2;
+  const cx0 = Math.max(0, bx0 - margin);
+  const cy0 = Math.max(0, by0 - margin);
+  const cw = Math.min(w, bx1 + margin + 1) - cx0;
+  const ch = Math.min(h, by1 + margin + 1) - cy0;
+  const cropB = new Uint8Array(cw * ch);
+  for (let y = 0; y < ch; y++) cropB.set(boundary.subarray((cy0 + y) * w + cx0, (cy0 + y) * w + cx0 + cw), y * cw);
+  const dc = edt2d(cropB, cw, ch);
+  /** Distance of pixel (x, y) of the box. */
+  const dAt = (x: number, y: number): number => dc[(y - cy0) * cw + (x - cx0)];
   const maxT = new Float64Array(count);
-  for (let i = 0; i < w * h; i++) {
-    const c = comp[i];
-    if (c >= 0) maxT[c] = Math.max(maxT[c], (Number.isFinite(d[i]) ? d[i] : w + h) + 1);
+  for (let y = cy0; y < cy0 + ch; y++) {
+    for (let x = cx0; x < cx0 + cw; x++) {
+      const c = comp[y * w + x];
+      if (c < 0 || thick[c]) continue;
+      const di = dAt(x, y);
+      maxT[c] = Math.max(maxT[c], (Number.isFinite(di) ? di : w + h) + 1);
+    }
   }
   const isThin = new Uint8Array(count);
-  for (let c = 0; c < count; c++) isThin[c] = maxT[c] < half ? 1 : 0;
+  for (let c = 0; c < count; c++) isThin[c] = !thick[c] && maxT[c] < half ? 1 : 0;
 
   const colOf = cellOfPixel(xs, w);
   const rowOf = cellOfPixel(ys, h);
   // Skeleton cells of every thin component.
   const skeletonCells = new Map<number, Set<number>>();
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
+  for (let y = cy0; y < cy0 + ch; y++) {
+    for (let x = cx0; x < cx0 + cw; x++) {
       const i = y * w + x;
       const c = comp[i];
       if (c < 0 || !isThin[c] || rowOf[y] < 0 || colOf[x] < 0) continue;
+      const di = dAt(x, y);
       let ridge = true;
       for (let dy = -1; dy <= 1 && ridge; dy++) {
         const yy = y + dy;
@@ -318,7 +420,7 @@ function protectThin(labels: Uint8Array, w: number, h: number, xs: Spans, ys: Sp
           const xx = x + dx;
           if (xx < 0 || xx >= w) continue;
           const j = yy * w + xx;
-          if (comp[j] === c && d[j] > d[i]) {
+          if (comp[j] === c && dAt(xx, yy) > di) {
             ridge = false;
             break;
           }
@@ -341,9 +443,9 @@ function protectThin(labels: Uint8Array, w: number, h: number, xs: Spans, ys: Sp
   const oy = overlaps(ys, h);
   const coverage = new Map<number, Map<number, number>>();
   for (const c of eligible) coverage.set(c, new Map());
-  for (let y = 0; y < h; y++) {
+  for (let y = cy0; y < cy0 + ch; y++) {
     if (oy.cells[y].length === 0) continue;
-    for (let x = 0; x < w; x++) {
+    for (let x = cx0; x < cx0 + cw; x++) {
       const c = comp[y * w + x];
       if (c < 0 || !eligibleSet.has(c)) continue;
       const m = coverage.get(c)!;

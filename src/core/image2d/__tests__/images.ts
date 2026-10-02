@@ -118,3 +118,81 @@ export function logo(w: number, h: number, ink: TestColor = '#c8102e', paper: Te
     return [Math.round(b[0] + (a[0] - b[0]) * t), Math.round(b[1] + (a[1] - b[1]) * t), Math.round(b[2] + (a[2] - b[2]) * t)];
   });
 }
+
+/**
+ * "The flat-art image" of the T1.3 cleanup tests (research 06 §12, golden 1: a flat logo with 2 px outlines):
+ * sky and ground, a sun and a house with 2 px dark outlines, a door, a window and three bars of "lettering",
+ * anti-aliased (4 × 4 supersampled, mixed in sRGB like most renderers). Outline width = `outline` px.
+ */
+export function flatArt(w: number, h: number, outline = 2): RgbaImage {
+  const hex = (c: string): [number, number, number] => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+  const SKY = hex('#8fd3f4');
+  const GROUND = hex('#5a9e3a');
+  const INK = hex('#1e1e28');
+  const SUN = hex('#f9d71c');
+  const WALL = hex('#c0392b');
+  const DOOR = hex('#6b3e26');
+  const GLASS = hex('#f4f1e8');
+  const TEXT = hex('#2c3e8f');
+  const t = outline;
+  const at = (x: number, y: number): [number, number, number] => {
+    // Sun: disc with an outline ring.
+    const sr = Math.hypot(x - 0.75 * w, y - 0.25 * h);
+    const R = 0.15 * h;
+    if (sr <= R) return sr > R - t ? INK : SUN;
+    // House: an outlined rectangle with a door and a window.
+    const hx0 = 0.12 * w;
+    const hx1 = 0.45 * w;
+    const hy0 = 0.35 * h;
+    const hy1 = 0.8 * h;
+    if (x >= hx0 && x < hx1 && y >= hy0 && y < hy1) {
+      if (x < hx0 + t || x >= hx1 - t || y < hy0 + t || y >= hy1 - t) return INK;
+      if (x >= 0.25 * w && x < 0.32 * w && y >= 0.58 * h) return DOOR;
+      if (x >= 0.16 * w && x < 0.22 * w && y >= 0.42 * h && y < 0.52 * h) return GLASS;
+      return WALL;
+    }
+    // Lettering: three bars.
+    for (let k = 0; k < 3; k++) {
+      const bx = 0.55 * w + k * 0.12 * w;
+      if (x >= bx && x < bx + 0.07 * w && y >= 0.55 * h && y < 0.75 * h) return TEXT;
+    }
+    return y < 0.82 * h ? SKY : GROUND;
+  };
+  return fromFn(w, h, (x, y) => {
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    for (let sy = 0; sy < 4; sy++) {
+      for (let sx = 0; sx < 4; sx++) {
+        const c = at(x + (sx + 0.5) / 4, y + (sy + 0.5) / 4);
+        r += c[0];
+        g += c[1];
+        b += c[2];
+      }
+    }
+    return [Math.round(r / 16), Math.round(g / 16), Math.round(b / 16)];
+  });
+}
+
+/**
+ * A `width`-px dark ring of radius 0.4·n around `fill` on a cream background, n × n, anti-aliased (4 × 4
+ * supersampled): the "2-px outline" of the T1.3 acceptance test.
+ */
+export function outlinedRing(n: number, width = 2, fill = '#f9d71c'): RgbaImage {
+  const bg = [240, 236, 220];
+  const ink = [30, 30, 40];
+  const fc = [parseInt(fill.slice(1, 3), 16), parseInt(fill.slice(3, 5), 16), parseInt(fill.slice(5, 7), 16)];
+  const R = 0.4 * n;
+  return fromFn(n, n, (x, y) => {
+    let k = 0;
+    let f = 0;
+    for (let sy = 0; sy < 4; sy++) {
+      for (let sx = 0; sx < 4; sx++) {
+        const d = Math.hypot(x + (sx + 0.5) / 4 - n / 2, y + (sy + 0.5) / 4 - n / 2);
+        if (d <= R && d > R - width) k++;
+        else if (d <= R - width) f++;
+      }
+    }
+    return [0, 1, 2].map((c) => Math.round((bg[c] * (16 - k - f) + ink[c] * k + fc[c] * f) / 16)) as [number, number, number];
+  });
+}

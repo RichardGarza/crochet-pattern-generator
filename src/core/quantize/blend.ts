@@ -74,10 +74,11 @@ function mixPairs(c: Color3, lin: readonly Color3[], usable: (k: number) => bool
 }
 
 /** Share of the given pixels that have both labels a and b within the window. */
-function edgeShare(labels: Uint8Array, w: number, h: number, pixels: readonly number[], a: number, b: number, RADIUS: number): number {
+function edgeShare(labels: Uint8Array, w: number, h: number, pixels: ArrayLike<number>, a: number, b: number, RADIUS: number): number {
   if (pixels.length === 0) return 0;
   let on = 0;
-  for (const i of pixels) {
+  for (let q = 0; q < pixels.length; q++) {
+    const i = pixels[q];
     const x = i % w;
     const y = (i - x) / w;
     let hasA = false;
@@ -113,9 +114,21 @@ export function removeBlendCenters(
   spread?: (c: number, a: number, b: number) => number,
 ): number[] {
   const k = lin.length;
-  const pixels: number[][] = lin.map(() => []);
-  for (let i = 0; i < labels.length; i++) if (labels[i] !== NO_LABEL && labels[i] < k) pixels[labels[i]].push(i);
-  const alive = pixels.map((p) => p.length > 0);
+  const count = new Int32Array(k);
+  for (let i = 0; i < labels.length; i++) if (labels[i] !== NO_LABEL && labels[i] < k) count[labels[i]]++;
+  const alive = [...count].map((c) => c > 0);
+  // Pixel lists, built only for the centers that are tested (T1.3 speed-up: the large real colors rarely are).
+  const lists: (Int32Array | undefined)[] = new Array(k).fill(undefined);
+  const pixelsOf = (c: number): Int32Array => {
+    let list = lists[c];
+    if (list === undefined) {
+      list = new Int32Array(count[c]);
+      let q = 0;
+      for (let i = 0; i < labels.length && q < list.length; i++) if (labels[i] === c) list[q++] = i;
+      lists[c] = list;
+    }
+    return list;
+  };
   const removed: number[] = [];
   // A center's share only changes when a neighbor's pixels are relabeled; recomputing all is cheap enough as
   // the pixel lists are short for blends and the pair test fails fast for real colors.
@@ -129,7 +142,7 @@ export function removeBlendCenters(
         // A ramp (blurred or resampled edge: its pixels spread along the mix) may be 2–3 px wide; a center of
         // one color between two others must touch both within 1 px — a designed 2 px outline does not.
         const radius = spread !== undefined && spread(c, pair.a, pair.b) >= BLEND_RAMP_SPREAD ? RADIUS_RAMP : RADIUS_NARROW;
-        const share = edgeShare(labels, w, h, pixels[c], pair.a, pair.b, radius);
+        const share = edgeShare(labels, w, h, pixelsOf(c), pair.a, pair.b, radius);
         if (share >= BLEND_MIN_EDGE_SHARE && (pick === undefined || share > pick.share)) pick = { c, a: pair.a, b: pair.b, share };
       }
     }
@@ -137,9 +150,12 @@ export function removeBlendCenters(
     const { c, a, b } = pick;
     const fc = featureOfLin(lin[c]);
     const to = dist(fc, featureOfLin(lin[a])) <= dist(fc, featureOfLin(lin[b])) ? a : b;
-    for (const i of pixels[c]) labels[i] = to;
-    for (const i of pixels[c]) pixels[to].push(i);
-    pixels[c] = [];
+    const moved = pixelsOf(c);
+    for (let q = 0; q < moved.length; q++) labels[moved[q]] = to;
+    count[to] += count[c];
+    count[c] = 0;
+    lists[to] = undefined;
+    lists[c] = undefined;
     alive[c] = false;
     removed.push(c);
   }
