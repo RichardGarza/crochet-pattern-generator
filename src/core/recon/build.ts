@@ -52,7 +52,7 @@ import {
 } from './align';
 import { frontRounding, inflatedVolume, inflationTable, maxOf, MULTI_VIEW_KAPPA, projectionIoU, separableHull, viewInflation, type ViewT } from './hull';
 import { fillHoles, maskBox, morphClose, MASK_ISSUES } from './masks';
-import { boundsOf, cleanVolumeAsync, thinSamples, validateMesh, type MeshValidation } from './mesh';
+import { boundsOf, cleanVolumeAsync, thinSamples, validateMesh, type CleanReport, type MeshValidation } from './mesh';
 import { decimate } from './simplify';
 import { turnVolume } from './viewTurn';
 
@@ -300,6 +300,156 @@ function partVolume(field: Float32Array, grid: ReconGrid, toInches: (p: Vec3) =>
 
 function meshRefOf(positions: Float32Array, indices: Uint32Array): string {
   return `recon_${createFnv1a64().update(positions).update(indices).hex().slice(0, 12)}`;
+}
+
+/** The cleaned volume of a request (§2.9.2–2.9.5 step 1) with what the later stages need. */
+export interface ReconVolume {
+  field: Float32Array<ArrayBuffer>;
+  grid: ReconGrid;
+  iouPerView: Record<string, number>;
+  issues: Issue[];
+  scaleBy: 'height' | 'planeExtent';
+  clean: CleanReport;
+  /** Thin samples (≤ 2 samples thick, §2.9.5 step 5). */
+  thin: Uint8Array<ArrayBuffer>;
+  /** How the photos map onto the object frame: the aligned views (multi-view) or the single photo and its turn. */
+  frame: { kind: 'views'; alignment: Alignment } | { kind: 'photo'; photo: AlignedView; photoView: ReconSettings['photoView'] };
+}
+
+/** A stage clock and the gate check of a build. */
+export interface BuildContext {
+  check: () => Promise<void>;
+  t: (k: string) => void;
+}
+
+export function buildContext(req: ReconRequest, o: BuildOptions): BuildContext {
+  let last = performance.now();
+  return {
+    check: async (): Promise<void> => {
+      if (o.gate) await o.gate.check(req.jobId);
+    },
+    t: (k: string): void => {
+      const now = performance.now();
+      if (o.timings) o.timings[k] = (o.timings[k] ?? 0) + (now - last);
+      last = now;
+    },
+  };
+}
+
+/**
+ * The volume of a request in the object frame, cleaned (§2.9.2–2.9.5 step 1), with the build's warnings so far.
+ * Throws `ReconError` when no volume can be made.
+ */
+export async function reconVolume(req: ReconRequest, ctx: BuildContext): Promise<ReconVolume> {
+  checkRequest(req);
+  const s = req.settings;
+  const N = s.N;
+  const { check, t } = ctx;
+  let vol: Volume;
+  let frame: ReconVolume['frame'];
+  const issues: Issue[] = [];
+  const single = async (r: ReconRequest['views'][number], photoView: ReconSettings['photoView']): Promise<Volume> => {
+    const photo = photoFrameView(r, s.keepHoles);
+    if (!photo) {
+      throw new ReconError({
+        code: MASK_ISSUES.empty,
+        severity: 'error',
+        message: `No object was found in the ${PHOTO_NAMES[r.view.label] ?? 'chosen'} photo. Paint it with the brush or try a plainer background.`,
+        where: { view: r.view.id },
+      });
+    }
+    t('masks');
+    await check();
+    frame = { kind: 'photo', photo, photoView };
+    const alignment: Alignment = { views: [photo], extents: [photo.box.w / photo.box.h, 1, 0], scaleMismatch: {}, planes: ['XY'], issues: [] };
+    const inPhoto = await planeVolume(alignment, 'XY', N, s.kappa, check, t);
+    const turned = turnVolume({ data: inPhoto.field, dims: [N, N, N], origin: inPhoto.grid.origin, voxel: inPhoto.grid.voxel }, photoView);
+    t('turn');
+    return {
+      field: turned.data,
+      grid: { N, origin: turned.origin, voxel: turned.voxel },
+      iouPerView: inPhoto.iouPerView,
+      issues: [],
+      scaleBy: photoView === 'top' ? 'planeExtent' : 'height',
+      stretch: 1,
+    };
+  };
+  if (req.views.length === 1) {
+    vol = await single(req.views[0], s.photoView);
+  } else {
+    const masks: ViewMask[] = req.views.map((v) => ({ id: v.view.id, label: v.view.label, mask: v.mask, w: v.maskW, h: v.maskH, align: v.view.align }));
+    const alignment = alignViews(masks, { keepHoles: s.keepHoles });
+    t('masks');
+    await check();
+    const errors = alignment.issues.filter((i) => i.severity === 'error');
+    issues.push(...alignment.issues.filter((i) => i.severity !== 'error'));
+    const showsHeight = alignment.planes.length === 1 && alignment.planes[0] !== 'XZ' && alignment.views.length > 0;
+    const withObject = req.views.filter((v) => v.mask.some((x) => x !== 0));
+    if (errors.length === 0) {
+      frame = { kind: 'views', alignment };
+      vol = await hullVolume(alignment, N, check, t);
+    } else if (errors.every((e) => e.code === ALIGN_ISSUES.views) && showsHeight) {
+      frame = { kind: 'views', alignment };
+      vol = await planeVolume(alignment, alignment.planes[0], N, s.kappa, check, t);
+    } else if (withObject.length === 0) {
+      throw new ReconError(
+        { code: MASK_ISSUES.empty, severity: 'error', message: 'No object was found in any of the photos. Paint it with the brush or try a plainer background.', where: { view: req.views[0].view.id } },
+        [...errors, ...issues],
+      );
+    } else if (withObject.length === 1 && withObject[0].view.label === 'top') {
+      // The other photos are empty: build the top photo alone, as F3 would.
+      vol = await single(withObject[0], 'top');
+    } else {
+      throw new ReconError(errors[0], [...errors, ...issues]);
+    }
+    issues.push(...vol.issues);
+  }
+  for (const [id, iou] of Object.entries(vol.iouPerView)) {
+    if (iou < IOU_WARN) {
+      issues.push({
+        code: RECON_ISSUES.iou,
+        severity: 'warn',
+        message: `The 3D shape matches this photo only ${Math.round(iou * 100)}%. Check the photo's label, mask and alignment.`,
+        where: { view: id },
+      });
+    }
+  }
+  await check();
+
+  // ---- clean-up
+  const { field, grid } = vol;
+  const clean = await cleanVolumeAsync(field, N, grid.voxel, { mergeTouching: s.mergeTouching }, check);
+  t('clean');
+  if (clean.inside === 0) {
+    throw new ReconError(
+      {
+        code: RECON_ISSUES.empty,
+        severity: 'error',
+        message: 'The photos do not overlap in 3D, so nothing is left of the object. Check the labels, the masks and the alignment.',
+      },
+      issues,
+    );
+  }
+  const dropped = clean.removed / (clean.removed + clean.inside);
+  if (dropped >= DETACHED_WARN_FRACTION) {
+    issues.push({
+      code: RECON_ISSUES.detached,
+      severity: 'warn',
+      message: `${Math.round(dropped * 1000) / 10}% of the shape was not connected to the main body and was left out. If parts only touch in the photos, turn on "Merge touching parts".`,
+    });
+  }
+  await check();
+  const thin = thinSamples(field, N);
+  if (thin.count >= THIN_NOTE_FRACTION * clean.inside) {
+    issues.push({
+      code: RECON_ISSUES.thin,
+      severity: 'info',
+      message: 'Some parts are thinner than two voxels (ears, tails, fins): they will be crocheted as flat pieces.',
+    });
+  }
+  t('thin');
+  await check();
+  return { field, grid, iouPerView: vol.iouPerView, issues, scaleBy: vol.scaleBy, clean, thin: thin.mask, frame: frame! };
 }
 
 /**
