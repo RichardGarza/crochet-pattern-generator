@@ -33,7 +33,7 @@ import { appliqueShape, flattenedTube, type FlatShape } from './flat';
 import { add, axisPoint, pieceGeom, projectOnto, scale, surfacePoint, unit, type PieceGeom } from './frame';
 import { gapAt, seamAngles } from './lean';
 import { foldRounds, placePiece } from './place';
-import { isCup, planPart, stuffingOf, type PartPlan, type Stuffing } from './plan';
+import { ellipsePerimeter, isCup, planPart, stuffingOf, type PartPlan, type Stuffing } from './plan';
 import { pieceFinish, sewingTail, closedSeamIn, GATHER_TAIL_IN } from './poles';
 import { profilePoint, trimProfile, type Profile } from './profiles';
 import { roundsForPart, type PieceCounts } from './rounds';
@@ -185,24 +185,28 @@ const fmtIn = (x: number) => String(roundHalfUp(x * 4) / 4);
 const fmtCm = (x: number) => String(roundHalfUp(inToCm(x) * 2) / 2);
 
 // ---------------------------------------------------------------------------------------------------------------
-// The engine
+// Stage 1: frames and the plan (root first), mirrored pairs; per piece: trim and stuffing
 
-/** §5.2.1: the whole amigurumi pattern of a model. */
-export const generateAmigurumi: GenerateAmigurumiFn = async (req: AmiRequest, deps: Deps = {}): Promise<AmiResult> => {
-  const gate = async () => {
-    if (deps.gate) await deps.gate.check(req.jobId);
-  };
-  const s = req.settings;
+export interface PlanStage {
+  graph: ReturnType<typeof attachGraph>;
+  /** Part indices, breadth first from the root. */
+  order: number[];
+  nodes: Map<string, Node>;
+  /** Mirrored copy → its primary part ("make 2"). */
+  twinOf: Map<string, string>;
+  byId: Map<string, Part>;
+  sdf: (p: Part) => WorldSdf;
+  /** W_GAP findings. */
+  issues: Issue[];
+}
+
+/** Frames for every part, root first (§2.10.2), the plan (§2.10.1) and the "make 2" pairs; `null` unless one tree. */
+export function planStage(req: Pick<AmiRequest, 'model' | 'gauge' | 'settings' | 'meshes'>): PlanStage | null {
   const model = req.model;
-  const gauge = req.gauge;
-  const issues: Issue[] = [];
+  const s = req.settings;
   const graph = attachGraph(model.parts);
-  if (!graph.isTree) {
-    const issue: Issue = Object.freeze({ code: 'E_ASSEMBLY', severity: 'error', message: 'the parts are not attached as one tree; re-infer the attachments' });
-    return emptyResult(req, [issue]);
-  }
-
-  // ---- frames, root first (breadth first over the attach tree)
+  if (!graph.isTree) return null;
+  const issues: Issue[] = [];
   const order: number[] = [];
   const depth = new Map<number, number>();
   const queue = [graph.roots[0]];
@@ -218,7 +222,7 @@ export const generateAmigurumi: GenerateAmigurumiFn = async (req: AmiRequest, de
   const parts = model.parts;
   const byId = new Map(parts.map((p) => [p.id, p]));
   const paletteHex = new Map(model.palette.map((c) => [c.id, c.hex]));
-  const defaultCell = stuffedCell(gauge, s.defaultStuffing);
+  const defaultCell = stuffedCell(req.gauge, s.defaultStuffing);
   const nodes = new Map<string, Node>();
   const sdfOf = new Map<string, WorldSdf>();
   const sdf = (p: Part) => {
@@ -253,9 +257,6 @@ export const generateAmigurumi: GenerateAmigurumiFn = async (req: AmiRequest, de
       if (gap > GAP_WARN_IN) issues.push(Object.freeze({ code: 'W_GAP', severity: 'warn', message: `${part.id} is ${gap.toFixed(2)} in from ${parent.id}; it will not touch it when sewn on`, where: { part: part.id } }));
     }
   }
-  await gate();
-
-  // ---- mirrored pairs ("make 2")
   const twinOf = new Map<string, string>();
   for (const i of order) {
     const p = parts[i];
@@ -266,6 +267,103 @@ export const generateAmigurumi: GenerateAmigurumiFn = async (req: AmiRequest, de
     if (!a || !na || !nb || twinOf.has(a.id) || na.plan.make !== nb.plan.make) continue;
     if (isMirrored(a, p)) twinOf.set(p.id, a.id);
   }
+  return { graph, order, nodes, twinOf, byId, sdf, issues };
+}
+
+export interface PieceSetup {
+  trim?: TrimResult;
+  /** The piece ends open: trimmed, or an untrimmed piece with `attach.openEnd`. */
+  open: boolean;
+  cup: boolean;
+  stuffing: Stuffing;
+}
+
+/**
+ * Trim (§2.10.3, walked at the stitch of the part's own or the default stuffing — the stuffing itself depends on
+ * the trim) and the stuffing (§2.10.1) of a crocheted piece.
+ */
+export function pieceSetup(part: Part, node: Node, s: AmiSettings, gauge: ResolvedGauge, sdf: (p: Part) => WorldSdf): PieceSetup {
+  const make = node.plan.make;
+  const root = node.parent === undefined;
+  const walkCell = stuffedCell(gauge, part.stuffing ?? s.defaultStuffing);
+  let trim: TrimResult | undefined;
+  if (!root && node.geom && node.parent && make === 'piece') trim = trimWalk(node.geom, sdf(node.parent), walkCell.hS);
+  const openFar = part.attach?.openEnd === 'top' || part.attach?.openEnd === 'bottom';
+  let cup = false;
+  const g = node.geom;
+  if (g && trim?.sCut !== undefined) {
+    const q = profilePoint(g.profile, trim.sCut);
+    const a = g.sideExtra > 0 ? q.r + g.sideExtra : q.r * g.ratio;
+    cup = isCup(trim.sCut, ellipsePerimeter(a, q.r) / Math.PI);
+  }
+  const stuffing = make === 'applique' || part.type === 'flat' ? 'none' : stuffingOf(part, { make, root, flatness: node.plan.flatness, cup, defaultStuffing: s.defaultStuffing });
+  return { ...(trim ? { trim } : {}), open: trim?.sCut !== undefined || openFar || make === 'applique' || part.type === 'flat', cup, stuffing };
+}
+
+/** One row of the plan (§2.10.1 teddy table columns), for tests and the editor. */
+export interface PlanRow {
+  id: string;
+  parent?: string;
+  make: MakeAs;
+  rule: PartPlan['rule'];
+  flatness: number;
+  eyeMm?: number;
+  axis?: 'X' | 'Y' | 'Z';
+  axisRule?: PieceGeom['axisRule'];
+  start?: PieceGeom['start'];
+  startRule?: PieceGeom['startRule'];
+  /** Buried share of the profile (§2.10.3), crocheted pieces other than the root. */
+  buried?: number;
+  end?: 'open' | 'closed';
+  stuffing?: Stuffing;
+  /** A "make 2" copy of this part. */
+  twinOf?: string;
+}
+
+/** The plan of every part, in model order. `null` unless the attach graph is one tree. */
+export function planReport(req: Pick<AmiRequest, 'model' | 'gauge' | 'settings' | 'meshes'>): PlanRow[] | null {
+  const st = planStage(req);
+  if (!st) return null;
+  return req.model.parts.map((part) => {
+    const n = st.nodes.get(part.id) as Node;
+    const crocheted = n.plan.make === 'piece' || n.plan.make === 'applique';
+    const setup = crocheted ? pieceSetup(part, n, req.settings, req.gauge, st.sdf) : undefined;
+    return {
+      id: part.id,
+      ...(n.parent ? { parent: n.parent.id } : {}),
+      make: n.plan.make,
+      rule: n.plan.rule,
+      flatness: n.plan.flatness,
+      ...(n.plan.eyeMm !== undefined ? { eyeMm: n.plan.eyeMm } : {}),
+      ...(crocheted && n.geom && n.plan.make === 'piece' ? { axis: n.geom.axis.toUpperCase() as 'X' | 'Y' | 'Z', axisRule: n.geom.axisRule, start: n.geom.start, startRule: n.geom.startRule } : {}),
+      ...(setup?.trim ? { buried: setup.trim.buried } : {}),
+      ...(setup ? { end: setup.open ? ('open' as const) : ('closed' as const), stuffing: setup.stuffing } : {}),
+      ...(st.twinOf.has(part.id) ? { twinOf: st.twinOf.get(part.id) } : {}),
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The engine
+
+/** §5.2.1: the whole amigurumi pattern of a model. */
+export const generateAmigurumi: GenerateAmigurumiFn = async (req: AmiRequest, deps: Deps = {}): Promise<AmiResult> => {
+  const gate = async () => {
+    if (deps.gate) await deps.gate.check(req.jobId);
+  };
+  const s = req.settings;
+  const model = req.model;
+  const gauge = req.gauge;
+  const issues: Issue[] = [];
+  const stage = planStage(req);
+  if (!stage) {
+    const issue: Issue = Object.freeze({ code: 'E_ASSEMBLY', severity: 'error', message: 'the parts are not attached as one tree; re-infer the attachments' });
+    return emptyResult(req, [issue]);
+  }
+  const { graph, order, nodes, twinOf, byId, sdf } = stage;
+  const parts = model.parts;
+  issues.push(...stage.issues);
+  await gate();
 
   // ---- palette codes, in order of use
   const codes = new Map<string, string>();
@@ -284,13 +382,16 @@ export const generateAmigurumi: GenerateAmigurumiFn = async (req: AmiRequest, de
     if (make !== 'piece' && make !== 'applique') continue;
     const primaryId = twinOf.get(part.id);
     const primary = primaryId ? works.get(primaryId) : undefined;
-    const root = node.parent === undefined;
     const style = part.crochet?.style ?? s.style;
-    // trim walk with the stitch the piece is sized at before its stuffing is known
-    const walkStuffing: Stuffing = part.stuffing ?? s.defaultStuffing;
-    const walkCell = stuffedCell(gauge, walkStuffing);
-    let trim: TrimResult | undefined;
-    if (!root && node.geom && node.parent && make === 'piece') trim = trimWalk(node.geom, sdf(node.parent), walkCell.hS);
+    const setup = pieceSetup(part, node, s, gauge, sdf);
+    const trim = setup.trim;
+    if (primary) {
+      // the mirrored copy: the same piece; its own frame and trim for the placements on and of it
+      const own = node.geom ? (trim?.sCut !== undefined ? trimProfile(node.geom.profile, trim.sCut) : node.geom.profile) : primary.profile;
+      works.set(part.id, { ...primary, node, twinOf: primary.node.part.id, ...(trim ? { trim } : {}), profile: own });
+      primary.twin = part.id;
+      continue;
+    }
     let kind: Work['kind'] = 'revolved';
     let stuffing: Stuffing;
     let counts: PieceCounts | null = null;
@@ -312,21 +413,14 @@ export const generateAmigurumi: GenerateAmigurumiFn = async (req: AmiRequest, de
     } else if (part.type === 'mesh') {
       kind = 'mesh';
       path = 'B';
-      stuffing = stuffingOf(part, { make, root, flatness: node.plan.flatness, cup: false, defaultStuffing: s.defaultStuffing });
+      stuffing = setup.stuffing;
       counts = await meshCounts(part, node, req, deps, issues);
       await gate();
       if (!counts) continue;
     } else {
       if (part.type === 'torus' && (part.dims.arcDeg ?? 360) >= 360) kind = 'torus';
       const g = node.geom;
-      let cup = false;
-      if (g && trim?.sCut !== undefined) {
-        const q = profilePoint(g.profile, trim.sCut);
-        const a = g.sideExtra > 0 ? q.r + g.sideExtra : q.r * g.ratio;
-        const opening = (Math.PI * (3 * (a + q.r) - Math.sqrt((3 * a + q.r) * (a + 3 * q.r)))) / Math.PI;
-        cup = isCup(trim.sCut, opening);
-      }
-      stuffing = stuffingOf(part, { make, root, flatness: node.plan.flatness, cup, defaultStuffing: s.defaultStuffing });
+      stuffing = setup.stuffing;
       const cell = stuffedCell(gauge, stuffing);
       counts = roundsForPart(part, {
         wS: cell.wS,
@@ -341,13 +435,6 @@ export const generateAmigurumi: GenerateAmigurumiFn = async (req: AmiRequest, de
     }
     const cell = stuffedCell(gauge, stuffing);
     const open = counts.finish === 'open';
-    if (primary) {
-      // the mirrored copy: same piece; its own frame and trim for the placements
-      const own = node.geom ? (trim?.sCut !== undefined ? trimProfile(node.geom.profile, trim.sCut) : node.geom.profile) : primary.profile;
-      works.set(part.id, { ...primary, node, twinOf: primary.node.part.id, ...(trim ? { trim } : {}), profile: own });
-      primary.twin = part.id;
-      continue;
-    }
     const unfolded = shape?.rows ? shape.rows.map((r) => ({ ...r })) : placePiece({ counts: counts.counts, circ: counts.circ, ovalS: counts.ovalS, loops: counts.loops, start: counts.start }, { spiral: s.spiral });
     works.set(part.id, {
       node,
