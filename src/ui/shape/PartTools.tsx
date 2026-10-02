@@ -12,10 +12,9 @@ import {
   type MakeChoice,
 } from '../../state/slices/model3d';
 import type { CrochetModelV1, Part, PartCrochetHints } from '../../types/model';
-import { Button, IconButton, SegmentedControl, Select, Slider, Tooltip } from '../common';
+import { Button, Icon, IconButton, SegmentedControl, Select, Slider, Tooltip } from '../common';
 import { MOD } from '../shell/shortcuts';
 import { editorStore, useEditorStore } from './editorStore';
-import { LinkGlyph, MirrorGlyph } from './glyphs';
 import { duplicateSelection, mirrorSelection, requestDeleteSelection, setHints, unlinkPart } from './tools';
 
 const READ_ONLY = 'This project is read-only';
@@ -37,8 +36,7 @@ export function PartActions({ model, part, readOnly }: { model: CrochetModelV1; 
         </Button>
       </Shortcut>
       <Shortcut keys="M" what={linked ? 'Mirror again: copy this side onto its twin' : 'Mirror to the other side'} off={!!mir}>
-        <Button size="sm" disabledReason={mir ?? undefined} onClick={() => mirrorSelection()} aria-keyshortcuts="M">
-          <MirrorGlyph />
+        <Button size="sm" icon="mirror" disabledReason={mir ?? undefined} onClick={() => mirrorSelection()} aria-keyshortcuts="M">
           Mirror
         </Button>
       </Shortcut>
@@ -74,7 +72,7 @@ export function MirrorLink({ model, part, readOnly }: { model: CrochetModelV1; p
   const other = pair.source.id === part.id ? pair.twin : pair.source;
   return (
     <div className="shape-mirror">
-      <LinkGlyph />
+      <Icon name="link" size={16} className="shape-mirror__icon" />
       <p className="shape-mirror__text">
         Mirrored with{' '}
         <span className="shape-nowrap">

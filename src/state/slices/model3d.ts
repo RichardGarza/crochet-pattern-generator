@@ -17,7 +17,8 @@ import { attachGraph, GAP_WARN_IN, GAP_FLOAT_IN, leftTwinId, subtreeIds } from '
 import { mulMat3, type Mat3 } from '../../core/kernel/vec';
 import { MODEL_LIMITS } from '../../core/model/limits';
 import { DEFAULT_OVERLAP_IN, placeChildOnSurface, reanchorChildren } from '../../core/model/place';
-import { LIMB_PROXIMAL_KEY } from '../../core/model/proportions';
+import { decodeUv64, encodeUv64 } from '../../core/model/builder';
+import { applyProportions, LIMB_PROXIMAL_KEY } from '../../core/model/proportions';
 import { partVolume, surfaceGap } from '../../core/model/sdf';
 import {
   boundsSize,
@@ -36,6 +37,7 @@ import {
   type Rigid,
   worldBounds,
 } from '../../core/model/transforms';
+import type { LimbLength } from '../../types/entryPoints';
 import type { Issue } from '../../types/issues';
 import type { CrochetModelV1, Feature, Part, PartCrochetHints, Region, Vec3 } from '../../types/model';
 import type { ProjectDoc } from '../../types/project';
@@ -1602,4 +1604,533 @@ export function setCrochetHints(model: CrochetModelV1, ids: readonly string[], p
     if (!sameJson(q.crochet ?? null, p.crochet ?? null)) next.set(id, q);
   }
   return withParts(model, next);
+}
+
+// =====================================================================================================================
+// T6.3 — colors (palette, paint, regions), face details (features) and proportions (DESIGN.md §4.2, §2.11.1)
+// =====================================================================================================================
+//
+// Palette ids are what parts, regions and features name; the paint field (`paint.uv64`, primitives) and a mesh part's
+// vertex labels hold palette INDICES (§2.11.1). So any palette edit that removes or reorders colors re-indexes the
+// paint here and returns `labelMap` (old index → new index, 255 = none) for the caller to re-index the mesh labels
+// (`remapMeshLabels`; the mesh assets live outside the model, §5.5.6).
+
+export const COLOR_ID_PATTERN = /^[a-z0-9_]{1,16}$/;
+const HEX_PATTERN = /^#[0-9a-fA-F]{6}$/;
+/** uv64 "no paint here" (`UV64_NONE` of the builder). */
+export const NO_LABEL = 255;
+const UV64_CELLS = 64 * 64;
+
+/** A palette id from any text: lower case, `[a-z0-9_]`, at most 16 characters; "color" when nothing is left. */
+export function slugColorId(text: string): string {
+  const s = String(text)
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 16)
+    .replace(/_+$/, '');
+  return s.length > 0 ? s : 'color';
+}
+
+/** `wanted` (slugged) or `wanted_2`, `wanted_3`, … — a palette id the model does not use yet (≤ 16 characters). */
+export function uniqueColorId(model: Pick<CrochetModelV1, 'palette'>, wanted: string): string {
+  const taken = new Set(model.palette.map((c) => c.id));
+  const base = slugColorId(wanted);
+  if (!taken.has(base)) return base;
+  for (let n = 2; ; n++) {
+    const suffix = `_${n}`;
+    const id = base.slice(0, 16 - suffix.length).replace(/_+$/, '') + suffix;
+    if (!taken.has(id)) return id;
+  }
+}
+
+/** The index of a palette id, or -1. */
+export function paletteIndex(model: Pick<CrochetModelV1, 'palette'>, id: string): number {
+  return model.palette.findIndex((c) => c.id === id);
+}
+
+/** Why a color cannot be added, or null. */
+export function addColorBlockedReason(model: Pick<CrochetModelV1, 'palette'>): string | null {
+  return model.palette.length >= MODEL_LIMITS.maxPalette ? `A model has at most ${MODEL_LIMITS.maxPalette} colors; merge two first` : null;
+}
+
+/** Adds a color (§4.2 Palette). `id: null` when the palette is full or `hex` is not `#rrggbb`. */
+export function addPaletteColor(model: CrochetModelV1, hex: string, o: { name?: string; id?: string } = {}): { model: CrochetModelV1; id: string | null } {
+  if (addColorBlockedReason(model) || !HEX_PATTERN.test(hex)) return { model, id: null };
+  const name = o.name?.trim() || undefined;
+  const id = uniqueColorId(model, o.id ?? name ?? `color_${model.palette.length + 1}`);
+  const color: CrochetModelV1['palette'][number] = { id, hex: hex.toUpperCase() };
+  if (name) color.name = name;
+  return { model: { ...model, palette: [...model.palette, color] }, id };
+}
+
+/** Changes a color's hex and / or name (`name: null` or empty removes it). Ids never change (parts name them). */
+export function setPaletteColor(model: CrochetModelV1, id: string, patch: { hex?: string; name?: string | null }): CrochetModelV1 {
+  const i = paletteIndex(model, id);
+  if (i < 0) return model;
+  const cur = model.palette[i];
+  const next = { ...cur };
+  if (patch.hex !== undefined && HEX_PATTERN.test(patch.hex)) next.hex = patch.hex.toUpperCase();
+  if (patch.name !== undefined) {
+    const name = patch.name?.trim().slice(0, MODEL_LIMITS.maxTextChars);
+    if (name) next.name = name;
+    else delete next.name;
+  }
+  if (sameJson(next, cur)) return model;
+  const palette = model.palette.slice();
+  palette[i] = next;
+  return { ...model, palette };
+}
+
+/** Where a color is used: parts (base color), regions, features and painted uv64 cells (mesh labels are counted by the caller). */
+export function paletteUse(model: Pick<CrochetModelV1, 'palette' | 'parts' | 'features'>, id: string): { parts: string[]; regions: number; features: number; paintCells: number } {
+  const index = paletteIndex(model, id);
+  const out = { parts: [] as string[], regions: 0, features: 0, paintCells: 0 };
+  for (const p of model.parts) {
+    if (p.color === id) out.parts.push(p.id);
+    for (const r of p.regions ?? []) {
+      const colors = r.kind === 'stripes' || r.kind === 'pattern' ? r.colors : [r.color];
+      if (colors.includes(id)) out.regions++;
+    }
+    if (index >= 0 && p.paint?.kind === 'uv64') {
+      const cells = decodeUv64(p.paint.data);
+      if (cells) for (const v of cells) if (v === index) out.paintCells++;
+    }
+  }
+  for (const f of model.features ?? []) if (f.color === id) out.features++;
+  return out;
+}
+
+export interface PaletteRemap {
+  model: CrochetModelV1;
+  /** Old palette index → new index (`NO_LABEL` = none); 256 entries, so any u8 label maps. */
+  labelMap: Uint8Array;
+  /** True when some index changed (mesh labels then need `remapMeshLabels`). */
+  reindexed: boolean;
+}
+
+function identityLabelMap(): Uint8Array {
+  const map = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) map[i] = i;
+  return map;
+}
+
+/**
+ * The palette becomes `order` (ids of the current palette, each once); every id not in `order` must be merged into
+ * one that is (`merge[from] = into`) or be an unused color listed in `o.drop` (its labels become "none"). Part, region and feature colors follow the merge, and the paint field's
+ * indices are re-indexed (a label past the old palette becomes "none"). Invalid input leaves the model unchanged.
+ */
+export function remapPalette(
+  model: CrochetModelV1,
+  order: readonly string[],
+  merge: Readonly<Record<string, string>> = {},
+  o: { drop?: readonly string[] } = {},
+): PaletteRemap {
+  const unchanged: PaletteRemap = { model, labelMap: identityLabelMap(), reindexed: false };
+  const oldIds = model.palette.map((c) => c.id);
+  const keep = new Set(order);
+  const drop = new Set(o.drop ?? []);
+  if (order.length === 0 || keep.size !== order.length || order.some((id) => !oldIds.includes(id))) return unchanged;
+  for (const id of oldIds) if (!keep.has(id) && !drop.has(id) && !(Object.hasOwn(merge, id) && keep.has(merge[id]))) return unchanged;
+  const map = (id: string): string => (keep.has(id) ? id : Object.hasOwn(merge, id) ? merge[id] : id);
+  const labelMap = new Uint8Array(256).fill(NO_LABEL);
+  let reindexed = false;
+  oldIds.forEach((id, i) => {
+    labelMap[i] = order.indexOf(map(id));
+    if (labelMap[i] !== i) reindexed = true;
+  });
+  const palette = order.map((id) => model.palette[oldIds.indexOf(id)]);
+  const next = new Map<string, Part>();
+  for (const p of model.parts) {
+    let q: Part = p;
+    if (map(p.color) !== p.color) q = { ...q, color: map(p.color) };
+    if (p.regions?.some((r) => (r.kind === 'stripes' || r.kind === 'pattern' ? r.colors.some((c) => map(c) !== c) : map(r.color) !== r.color))) {
+      q = {
+        ...q,
+        regions: p.regions.map((r): Region => (r.kind === 'stripes' || r.kind === 'pattern' ? { ...r, colors: r.colors.map(map) } : { ...r, color: map(r.color) })),
+      };
+    }
+    if (reindexed && p.paint?.kind === 'uv64') {
+      const cells = decodeUv64(p.paint.data);
+      if (cells) {
+        let touched = false;
+        let any = false;
+        for (let i = 0; i < cells.length; i++) {
+          const v = cells[i];
+          if (v === NO_LABEL) continue;
+          const w = v < oldIds.length ? labelMap[v] : NO_LABEL;
+          if (w !== v) {
+            cells[i] = w;
+            touched = true;
+          }
+          if (cells[i] !== NO_LABEL) any = true;
+        }
+        if (touched) {
+          q = { ...q };
+          if (any) q.paint = { kind: 'uv64', data: encodeUv64(cells) };
+          else delete q.paint;
+        }
+      }
+    }
+    if (q !== p) next.set(p.id, q);
+  }
+  let features = model.features;
+  if (features?.some((f) => f.color !== undefined && map(f.color) !== f.color)) {
+    features = features.map((f) => (f.color !== undefined && map(f.color) !== f.color ? { ...f, color: map(f.color) } : f));
+  }
+  const samePalette = palette.length === model.palette.length && palette.every((c, i) => c === model.palette[i]);
+  const withNewParts = withParts(model, next);
+  if (samePalette && withNewParts === model && features === model.features) return unchanged;
+  const out: CrochetModelV1 = { ...withNewParts, palette };
+  if (features !== model.features) out.features = features;
+  return { model: out, labelMap, reindexed };
+}
+
+/** Merge `fromId` into `intoId` (§4.2 Palette): everything `fromId` colored takes `intoId`; `fromId` leaves the palette. */
+export function mergePaletteColors(model: CrochetModelV1, fromId: string, intoId: string): PaletteRemap {
+  if (fromId === intoId || paletteIndex(model, fromId) < 0 || paletteIndex(model, intoId) < 0) return remapPalette(model, model.palette.map((c) => c.id));
+  return remapPalette(
+    model,
+    model.palette.map((c) => c.id).filter((id) => id !== fromId),
+    { [fromId]: intoId },
+  );
+}
+
+/** Why a color cannot be removed outright (it is used, or it is the last one), or null. `meshLabels`: labels of it in mesh parts. */
+export function removeColorBlockedReason(model: CrochetModelV1, id: string, meshLabels = 0): string | null {
+  if (model.palette.length <= 1) return 'The palette needs at least one color';
+  const use = paletteUse(model, id);
+  const n = use.parts.length + use.regions + use.features + (use.paintCells > 0 ? 1 : 0) + (meshLabels > 0 ? 1 : 0);
+  return n > 0 ? 'This color is in use: merge it into another color instead' : null;
+}
+
+/** Removes an unused color (indices after it shift down; the paint is re-indexed). */
+export function removePaletteColor(model: CrochetModelV1, id: string, meshLabels = 0): PaletteRemap {
+  const order = model.palette.map((c) => c.id);
+  if (removeColorBlockedReason(model, id, meshLabels) || !order.includes(id)) return remapPalette(model, order);
+  return remapPalette(
+    model,
+    order.filter((c) => c !== id),
+    {},
+    { drop: [id] },
+  );
+}
+
+/** Moves a color up (`delta` < 0) or down the palette; the paint is re-indexed. */
+export function movePaletteColor(model: CrochetModelV1, id: string, delta: number): PaletteRemap {
+  const order = model.palette.map((c) => c.id);
+  const i = order.indexOf(id);
+  const j = Math.min(order.length - 1, Math.max(0, i + Math.trunc(delta)));
+  if (i < 0 || i === j) return remapPalette(model, order);
+  order.splice(i, 1);
+  order.splice(j, 0, id);
+  return remapPalette(model, order);
+}
+
+/** A mesh's vertex labels through `labelMap` (§2.11.1: the flow that keeps a mesh part re-indexes it). Same object when unchanged. */
+export function remapMeshLabels<M extends { labels: Uint8Array<ArrayBuffer> }>(mesh: M, labelMap: Uint8Array): M {
+  let changed = false;
+  const labels = new Uint8Array(mesh.labels.length);
+  for (let i = 0; i < labels.length; i++) {
+    const v = mesh.labels[i];
+    labels[i] = v === NO_LABEL ? NO_LABEL : labelMap[v];
+    if (labels[i] !== v) changed = true;
+  }
+  return changed ? { ...mesh, labels } : mesh;
+}
+
+// ---- paint (Paint P: brush, eraser, fill, eyedropper; §4.2)
+
+/** A part's 64 × 64 paint cells (a fresh array; all `NO_LABEL` when it has no paint). */
+export function paintCellsOf(part: Part): Uint8Array<ArrayBuffer> {
+  const cells = part.type !== 'mesh' && part.paint?.kind === 'uv64' ? decodeUv64(part.paint.data) : null;
+  return cells ?? new Uint8Array(UV64_CELLS).fill(NO_LABEL);
+}
+
+/** Sets a primitive's paint field (`null`, or nothing painted, removes it). Mesh parts paint their vertex labels instead. */
+export function setPartPaint(model: CrochetModelV1, partId: string, cells: Uint8Array | null): CrochetModelV1 {
+  const p = byId(model, partId);
+  if (!p || p.type === 'mesh') return model;
+  const q: Part = { ...p };
+  if (cells && cells.length === UV64_CELLS && cells.some((v) => v !== NO_LABEL)) {
+    const clean = new Uint8Array(cells.length);
+    for (let i = 0; i < cells.length; i++) clean[i] = cells[i] < model.palette.length ? cells[i] : NO_LABEL;
+    q.paint = { kind: 'uv64', data: encodeUv64(clean) };
+  } else delete q.paint;
+  if (sameJson(q.paint ?? null, p.paint ?? null)) return model;
+  return withParts(model, new Map([[partId, q]]));
+}
+
+/** Fill: the whole part takes `color` as its base color and its brush strokes are cleared (stripes and spots stay). */
+export function fillPart(model: CrochetModelV1, partId: string, color: string): CrochetModelV1 {
+  const p = byId(model, partId);
+  if (!p || paletteIndex(model, color) < 0) return model;
+  if (p.color === color && !p.paint) return model;
+  const q: Part = { ...p, color };
+  delete q.paint;
+  return withParts(model, new Map([[partId, q]]));
+}
+
+// ---- regions (§2.11.1: band, stripes, patch, spot; `pattern` regions are kept and listed, not drawn by the builder)
+
+export type PaintableRegion = Exclude<Region, { kind: 'pattern' }>;
+export const REGION_KINDS = ['band', 'stripes', 'patch', 'spot'] as const;
+export type RegionKind = (typeof REGION_KINDS)[number];
+
+/** Why no region can be added to the part, or null. */
+export function addRegionBlockedReason(model: Pick<CrochetModelV1, 'parts'>, partId: string): string | null {
+  const p = byId(model, partId);
+  if (!p) return 'Select a part first';
+  return (p.regions?.length ?? 0) >= MODEL_LIMITS.maxRegionsPerPart ? `A part holds at most ${MODEL_LIMITS.maxRegionsPerPart} stripes, patches and spots` : null;
+}
+
+const clamp01 = (x: number, fallback: number): number => (Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : fallback);
+/** An azimuth in [-180, 180). */
+export function wrapAzimuth(deg: number): number {
+  if (!Number.isFinite(deg)) return 0;
+  const a = ((((deg + 180) % 360) + 360) % 360) - 180;
+  return roundCoord(a) + 0;
+}
+
+/** A region with its numbers in range (§3.5.2): fractions 0…1 with from ≤ to, azimuth wrapped, elevation ±90, sizes > 0. */
+export function normalizeRegion<R extends Region>(r: R): R {
+  const out = { ...r } as Region;
+  const span = (o: { from?: number; to?: number }, req: boolean) => {
+    if (o.from === undefined && o.to === undefined && !req) return;
+    let from = clamp01(o.from ?? 0, 0);
+    let to = clamp01(o.to ?? 1, 1);
+    if (from > to) [from, to] = [to, from];
+    o.from = roundCoord(from, 4);
+    o.to = roundCoord(to, 4);
+  };
+  switch (out.kind) {
+    case 'band':
+    case 'patch':
+      span(out, true);
+      break;
+    case 'stripes':
+    case 'pattern':
+      span(out, false);
+      break;
+    default:
+      break;
+  }
+  if (out.kind === 'patch') {
+    out.azimuthDeg = wrapAzimuth(out.azimuthDeg);
+    out.spanDeg = roundCoord(Math.min(360, Math.max(1, Number.isFinite(out.spanDeg) ? out.spanDeg : 60)), 3);
+  }
+  if (out.kind === 'spot') {
+    out.azimuthDeg = wrapAzimuth(out.azimuthDeg);
+    out.elevationDeg = roundCoord(Math.min(90, Math.max(-90, Number.isFinite(out.elevationDeg) ? out.elevationDeg : 0)), 3);
+    out.radiusIn = roundCoord(Math.min(MODEL_LIMITS.maxDimIn, Math.max(0.02, Number.isFinite(out.radiusIn) ? out.radiusIn : 0.3)), 4);
+  }
+  if (out.kind === 'stripes') {
+    out.widthIn = roundCoord(Math.min(MODEL_LIMITS.maxDimIn, Math.max(0.05, Number.isFinite(out.widthIn) ? out.widthIn : 0.25)), 4);
+    if (out.colors.length === 0) out.colors = ['?'];
+  }
+  return out as R;
+}
+
+/** A sensible new region of `kind` on `part` in `colors` (the first is the region's color; stripes alternate with the second). */
+export function defaultRegion(kind: RegionKind, part: Part, colors: readonly string[]): PaintableRegion {
+  const a = colors[0] ?? part.color;
+  const b = colors.find((c) => c !== a) ?? part.color;
+  const size = boundsSize(localBounds(part));
+  const mid = Math.max(0.1, (size[0] + size[1] + size[2]) / 3);
+  switch (kind) {
+    case 'band':
+      return { kind: 'band', from: 0.4, to: 0.6, color: a };
+    case 'stripes':
+      return { kind: 'stripes', from: 0, to: 1, colors: [a, b], widthIn: roundCoord(Math.max(0.1, Math.min(1, size[1] / 8)), 2) };
+    case 'patch':
+      return { kind: 'patch', azimuthDeg: 0, spanDeg: 90, from: 0.25, to: 0.75, color: a };
+    case 'spot':
+      return { kind: 'spot', azimuthDeg: 0, elevationDeg: 0, radiusIn: roundCoord(Math.max(0.1, mid * 0.18), 2), color: a };
+  }
+}
+
+function withRegions(model: CrochetModelV1, part: Part, regions: Region[]): CrochetModelV1 {
+  const q: Part = { ...part };
+  if (regions.length > 0) q.regions = regions;
+  else delete q.regions;
+  if (sameJson(q.regions ?? null, part.regions ?? null)) return model;
+  return withParts(model, new Map([[part.id, q]]));
+}
+
+/** Adds a region on top of the others (later wins, §2.11.1). `index: -1` when the part is full or missing. */
+export function addRegion(model: CrochetModelV1, partId: string, region: Region): { model: CrochetModelV1; index: number } {
+  const p = byId(model, partId);
+  if (!p || addRegionBlockedReason(model, partId)) return { model, index: -1 };
+  const regions = [...(p.regions ?? []), normalizeRegion(region)];
+  return { model: withRegions(model, p, regions), index: regions.length - 1 };
+}
+
+/** Replaces the region at `index` (normalized). */
+export function updateRegion(model: CrochetModelV1, partId: string, index: number, region: Region): CrochetModelV1 {
+  const p = byId(model, partId);
+  if (!p?.regions || index < 0 || index >= p.regions.length) return model;
+  const regions = p.regions.slice();
+  regions[index] = normalizeRegion(region);
+  return withRegions(model, p, regions);
+}
+
+export function removeRegion(model: CrochetModelV1, partId: string, index: number): CrochetModelV1 {
+  const p = byId(model, partId);
+  if (!p?.regions || index < 0 || index >= p.regions.length) return model;
+  return withRegions(
+    model,
+    p,
+    p.regions.filter((_, i) => i !== index),
+  );
+}
+
+/** Moves a region earlier (`delta` < 0, drawn under) or later (drawn over). */
+export function moveRegion(model: CrochetModelV1, partId: string, index: number, delta: number): CrochetModelV1 {
+  const p = byId(model, partId);
+  if (!p?.regions || index < 0 || index >= p.regions.length) return model;
+  const j = Math.min(p.regions.length - 1, Math.max(0, index + Math.trunc(delta)));
+  if (j === index) return model;
+  const regions = p.regions.slice();
+  const [r] = regions.splice(index, 1);
+  regions.splice(j, 0, r);
+  return withRegions(model, p, regions);
+}
+
+// ---- face details (Features, §4.2; §3.5.1 `Feature`)
+
+export type FeatureKind = Feature['kind'];
+/** Kinds drawn as a line of points (embroidery): their `path` is drawn on the part, click by click. */
+export const PATH_FEATURE_KINDS: readonly FeatureKind[] = ['mouth', 'brow', 'whiskers', 'line'];
+export const FEATURE_KINDS: readonly FeatureKind[] = ['safety_eye', 'embroidered_eye', 'nose', 'mouth', 'cheek', 'brow', 'whiskers', 'line', 'felt', 'applique'];
+/** Safety-eye sizes are millimetres (§2.10.1: T4 snaps them to sizes that exist); the rest are inches. */
+export const SAFETY_EYE_MM: readonly [number, number] = [4, 40];
+
+/** Why no detail can be added, or null. */
+export function addFeatureBlockedReason(model: Pick<CrochetModelV1, 'features' | 'parts'>, on?: string | null): string | null {
+  if ((model.features?.length ?? 0) >= MODEL_LIMITS.maxFeatures) return `A model holds at most ${MODEL_LIMITS.maxFeatures} details`;
+  if (on !== undefined && on !== null && !byId(model, on)) return 'Choose the part it goes on';
+  return null;
+}
+
+/** A detail with its numbers in range: azimuth wrapped, elevation ±90, sizes > 0, path points likewise. */
+export function normalizeFeature(f: Feature): Feature {
+  const out: Feature = { ...f, azimuthDeg: wrapAzimuth(f.azimuthDeg), elevationDeg: roundCoord(Math.min(90, Math.max(-90, Number.isFinite(f.elevationDeg) ? f.elevationDeg : 0)), 3) };
+  if (out.sizeMm !== undefined) {
+    if (Number.isFinite(out.sizeMm) && out.sizeMm > 0) out.sizeMm = roundCoord(Math.min(SAFETY_EYE_MM[1], Math.max(SAFETY_EYE_MM[0], out.sizeMm)), 2);
+    else delete out.sizeMm;
+  }
+  if (out.sizeIn !== undefined) {
+    if (Number.isFinite(out.sizeIn) && out.sizeIn > 0) out.sizeIn = roundCoord(Math.min(MODEL_LIMITS.maxDimIn, Math.max(0.02, out.sizeIn)), 4);
+    else delete out.sizeIn;
+  }
+  if (out.path !== undefined) {
+    const path = out.path.filter((pt) => Array.isArray(pt) && Number.isFinite(pt[0]) && Number.isFinite(pt[1])).map((pt): [number, number] => [wrapAzimuth(pt[0]), roundCoord(Math.min(90, Math.max(-90, pt[1])), 3)]);
+    if (path.length > 0) out.path = path;
+    else delete out.path;
+  }
+  if (out.mirror === false) delete out.mirror;
+  return out;
+}
+
+/** A new detail of `kind` on `on` at (azimuth, elevation), sized for the part. */
+export function defaultFeature(kind: FeatureKind, on: Part, azimuthDeg: number, elevationDeg: number, color?: string): Omit<Feature, 'id'> {
+  const size = boundsSize(localBounds(on));
+  const mid = Math.max(0.1, (size[0] + size[1] + size[2]) / 3);
+  const f: Omit<Feature, 'id'> = { kind, on: on.id, azimuthDeg, elevationDeg };
+  // Placed off the middle, eyes and cheeks come in pairs.
+  if ((kind === 'safety_eye' || kind === 'embroidered_eye' || kind === 'cheek' || kind === 'brow' || kind === 'whiskers') && Math.abs(wrapAzimuth(azimuthDeg)) > 4) f.mirror = true;
+  switch (kind) {
+    case 'safety_eye':
+      // 9 mm is the usual eye on a 4–8 in toy; ≈ 0.09 × the head's middle size, within 6–24 mm.
+      f.sizeMm = roundCoord(Math.min(24, Math.max(6, mid * 25.4 * 0.09)), 0);
+      break;
+    case 'embroidered_eye':
+      f.sizeIn = roundCoord(Math.max(0.08, mid * 0.07), 2);
+      break;
+    case 'nose':
+      f.sizeIn = roundCoord(Math.max(0.1, mid * 0.12), 2);
+      break;
+    case 'cheek':
+      f.sizeIn = roundCoord(Math.max(0.12, mid * 0.14), 2);
+      break;
+    case 'felt':
+    case 'applique':
+      f.sizeIn = roundCoord(Math.max(0.15, mid * 0.2), 2);
+      break;
+    default:
+      break;
+  }
+  if (color) f.color = color;
+  return normalizeFeature(f as Feature);
+}
+
+/** Adds a detail with a fresh id (`<kind>`, `<kind>_2`, … in the part-id pattern). `id: null` when blocked. */
+export function addFeature(model: CrochetModelV1, feature: Omit<Feature, 'id'> & { id?: string }): { model: CrochetModelV1; id: string | null } {
+  if (addFeatureBlockedReason(model, feature.on)) return { model, id: null };
+  if (feature.color !== undefined && paletteIndex(model, feature.color) < 0) return { model, id: null };
+  const id = uniquePartId(model, feature.id ?? feature.kind);
+  const f = normalizeFeature({ ...feature, id } as Feature);
+  return { model: { ...model, features: [...(model.features ?? []), f] }, id };
+}
+
+/** Changes a detail (`color: null` = the default color; `on` must name a part). */
+export function updateFeature(model: CrochetModelV1, id: string, patch: Partial<Omit<Feature, 'id' | 'color'>> & { color?: string | null }): CrochetModelV1 {
+  const list = model.features ?? [];
+  const i = list.findIndex((f) => f.id === id);
+  if (i < 0) return model;
+  const { color, ...rest } = patch;
+  const next: Feature = { ...list[i], ...rest };
+  if (color === null) delete next.color;
+  else if (color !== undefined && paletteIndex(model, color) >= 0) next.color = color;
+  if (!byId(model, next.on)) return model;
+  const f = normalizeFeature(next);
+  if (sameJson(f, list[i])) return model;
+  const features = list.slice();
+  features[i] = f;
+  return { ...model, features };
+}
+
+export function removeFeature(model: CrochetModelV1, id: string): CrochetModelV1 {
+  const list = model.features ?? [];
+  if (!list.some((f) => f.id === id)) return model;
+  const features = list.filter((f) => f.id !== id);
+  const out: CrochetModelV1 = { ...model };
+  if (features.length > 0) out.features = features;
+  else delete out.features;
+  return out;
+}
+
+/** Azimuth / elevation (degrees) of a part-local point seen from the part's local center (§3.5.2 conventions). */
+export function directionAngles(local: Vec3, center: Vec3 = [0, 0, 0]): { azimuthDeg: number; elevationDeg: number } {
+  const dx = local[0] - center[0];
+  const dy = local[1] - center[1];
+  const dz = local[2] - center[2];
+  const az = (Math.atan2(dx, dz) * 180) / Math.PI;
+  const el = (Math.atan2(dy, Math.hypot(dx, dz)) * 180) / Math.PI;
+  return { azimuthDeg: wrapAzimuth(az), elevationDeg: roundCoord(Number.isFinite(el) ? el : 0, 3) };
+}
+
+/** The unit direction of (azimuth, elevation) in a part's local frame. */
+export function angleDirection(azimuthDeg: number, elevationDeg: number): Vec3 {
+  const a = (azimuthDeg * Math.PI) / 180;
+  const e = (elevationDeg * Math.PI) / 180;
+  return [Math.cos(e) * Math.sin(a), Math.sin(e), Math.cos(e) * Math.cos(a)];
+}
+
+// ---- proportions (§4.2; the Step 0 kernel `applyProportions`, G23)
+
+/** Why the Proportions controls cannot change this model at all (beyond the kernel's own reasons), or null. */
+export function proportionsBlockedReason(model: Pick<CrochetModelV1, 'parts'>): string | null {
+  return model.parts.some((p) => p.type === 'mesh') ? 'Sculpted parts cannot be resized yet, so proportions are off for this model (they come with the sculpt tools)' : null;
+}
+
+/** The proportions edit as a pure model edit (the kernel ends with the model at its old height). */
+export function proportionsEdit(o: { headBody?: number; limbs?: LimbLength }): ModelEdit {
+  return (m) => {
+    if (proportionsBlockedReason(m)) return m;
+    const next = applyProportions(m, o).model;
+    return sameJson(next.parts, m.parts) ? m : next;
+  };
 }

@@ -24,25 +24,6 @@ function Svg({ size = 16, children, className }: { size?: number; children: Reac
   );
 }
 
-export function MirrorGlyph({ size }: { size?: number }) {
-  return (
-    <Svg size={size}>
-      <path d="M12 3v3M12 10.5v3M12 18v3" />
-      <path d="M9 7 3.5 17H9z" />
-      <path d="m15 7 5.5 10H15z" />
-    </Svg>
-  );
-}
-
-export function LinkGlyph({ size }: { size?: number }) {
-  return (
-    <Svg size={size}>
-      <path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1" />
-      <path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" />
-    </Svg>
-  );
-}
-
 const SHAPES: Record<AddableType, ReactNode> = {
   sphere: (
     <>

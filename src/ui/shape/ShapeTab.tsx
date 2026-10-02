@@ -70,9 +70,9 @@ export function ShapeTab({ Viewport = DefaultViewport }: ShapeTabProps) {
   const units = useProjectStore((s) => s.doc?.units ?? 'in');
   const readOnly = useProjectStore((s) => s.readOnly);
 
-  // A new project starts with a clean editor.
+  // Another project starts with a clean editor; coming back to the tab (or `openAttachTool`) keeps the state.
   useEffect(() => {
-    editorStore.getState().reset();
+    editorStore.getState().bindProject(projectId);
   }, [projectId]);
 
   // Parts that no longer exist (an undo, a new model) leave the selection.

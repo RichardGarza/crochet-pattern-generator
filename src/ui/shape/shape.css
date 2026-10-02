@@ -496,12 +496,6 @@
   flex: none;
 }
 
-.ui-btn__label .shape-glyph {
-  display: inline-block;
-  margin-right: 6px;
-  vertical-align: -3px;
-}
-
 .shape-actions .ui-btn__label {
   white-space: nowrap;
 }
@@ -537,7 +531,7 @@
   line-height: var(--leading-snug);
 }
 
-.shape-mirror > .shape-glyph {
+.shape-mirror > .shape-mirror__icon {
   margin-top: 2px;
   color: var(--color-accent-text);
 }

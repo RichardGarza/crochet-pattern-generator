@@ -56,7 +56,8 @@ export function hookLabel(mm: number): string {
 }
 
 /** The note shown when a model asks for lace weight (§4.5, integration task T6.5). */
-export const LACE_NOTE = 'Lace weight is sized as CYC 1 for toys; the toy may come out larger than the label suggests.';
+export const LACE_NOTE =
+  'Lace yarn is sized as CYC 1 (super fine) for toys. Worked in lace yarn, the toy comes out a little smaller than shown; measure a test ball for an exact size.';
 
 // ---- the 3D gauge
 
