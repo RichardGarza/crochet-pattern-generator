@@ -14,6 +14,13 @@
 //
 // Everything is deterministic: no hashing, stable sorts, ties by index.
 
+import { drain, type Steps } from './steps';
+
+/** Inner multiply-adds of a Cholesky factorization between two yields of `factorSteps` (a few ms). */
+export const FACTOR_WORK_PER_YIELD = 3_000_000;
+/** Vertices split by the nested dissection between two yields. */
+const ND_WORK_PER_YIELD = 8000;
+
 /** CSR pattern of a symmetric matrix: row i's columns are `col[rowPtr[i] .. rowPtr[i+1])`, ascending, diagonal included. */
 export interface SymmetricPattern {
   n: number;
@@ -116,7 +123,13 @@ export function pcgJacobi(p: SymmetricPattern, val: Float64Array, b: Float64Arra
  * Surfaces give separators of O(√n) vertices (a loop), so the Cholesky fill is O(n log n).
  */
 export function nestedDissection(p: SymmetricPattern, pos: ArrayLike<number>): Int32Array {
+  return drain(nestedDissectionSteps(p, pos));
+}
+
+/** `nestedDissection` as a resumable computation: yields after every few thousand vertices split. */
+export function* nestedDissectionSteps(p: SymmetricPattern, pos: ArrayLike<number>): Steps<Int32Array> {
   const n = p.n;
+  let work = 0;
   const perm = new Int32Array(n);
   let out = 0;
   const side = new Int32Array(n).fill(-1); // stamp: the id of the subset whose upper half the vertex is in
@@ -126,8 +139,13 @@ export function nestedDissection(p: SymmetricPattern, pos: ArrayLike<number>): I
   type Task = { verts: Int32Array; emit: boolean };
   const stack: Task[] = [{ verts: Int32Array.from({ length: n }, (_, i) => i), emit: false }];
   while (stack.length > 0) {
+    if (work >= ND_WORK_PER_YIELD) {
+      work = 0;
+      yield;
+    }
     const task = stack.pop() as Task;
     const v = task.verts;
+    work += v.length;
     if (task.emit || v.length <= LEAF) {
       const sorted = task.emit ? v : Int32Array.from(v).sort();
       for (let k = 0; k < sorted.length; k++) perm[out++] = sorted[k];
@@ -290,6 +308,15 @@ export class SparseCholesky {
    * unusable) when A is not positive definite.
    */
   factor(val: Float64Array): boolean {
+    return drain(this.factorSteps(val));
+  }
+
+  /**
+   * `factor` as a resumable computation (steps.ts): yields after about `workPerYield` inner multiply-adds (default
+   * 3·10⁶, a few ms), so a worker can check its job gate inside one factorization. Abandoning it midway leaves the
+   * factor unusable (as a failed `factor`).
+   */
+  *factorSteps(val: Float64Array, workPerYield = FACTOR_WORK_PER_YIELD): Steps<boolean> {
     const n = this.n;
     const { cp, ci, cx, lp, li, lx, map } = this;
     cx.fill(0);
@@ -299,7 +326,12 @@ export class SparseCholesky {
     const w = new Int32Array(n).fill(-1);
     const x = new Float64Array(n);
     this.factored = false;
+    let work = 0;
     for (let k = 0; k < n; k++) {
+      if (work >= workPerYield) {
+        work = 0;
+        yield;
+      }
       const top = this.ereach(k, s, w);
       x[k] = 0;
       for (let q = cp[k]; q < cp[k + 1]; q++) if (ci[q] <= k) x[ci[q]] += cx[q];
@@ -310,6 +342,7 @@ export class SparseCholesky {
         const lki = x[i] / lx[lp[i]];
         x[i] = 0;
         for (let q = lp[i] + 1; q < c[i]; q++) x[li[q]] -= lx[q] * lki;
+        work += c[i] - lp[i];
         d -= lki * lki;
         const q = c[i]++;
         li[q] = k;

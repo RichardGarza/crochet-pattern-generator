@@ -21,6 +21,7 @@
 import { extendSignedDistance3d } from '../kernel/geom/edt';
 import type { MeshLike } from '../kernel/geom/meshMeasures';
 import type { Vec3 } from '../../types/geometry';
+import { drain, type Steps } from './steps';
 import type { FieldVolume } from './volume';
 
 export const VOXELIZE_N = 96;
@@ -44,6 +45,11 @@ export interface VoxelizeOptions {
   margin?: number;
   /** Half-width of the exact band, in voxels; default 2 (§2.9.8). */
   band?: number;
+  /**
+   * Samples beyond the band: 'edt' (default) — distances from `extendSignedDistance3d`; 'sign' — ±(band · voxel),
+   * signs only, for callers that only mesh the zero level (marching cubes reads nothing else; skips the transform).
+   */
+  farField?: 'edt' | 'sign';
 }
 
 export interface VoxelizeStats {
@@ -120,6 +126,11 @@ function checkMesh(mesh: MeshLike): void {
  * closed (watertight); positions in inches. Throws RangeError for a malformed or empty mesh.
  */
 export function voxelizeMesh(mesh: MeshLike, N = VOXELIZE_N, o: VoxelizeOptions = {}): VoxelizeResult {
+  return drain(voxelizeMeshSteps(mesh, N, o));
+}
+
+/** `voxelizeMesh` as a resumable computation (steps.ts): yields every few thousand triangles and before the far field. */
+export function voxelizeMeshSteps(mesh: MeshLike, N = VOXELIZE_N, o: VoxelizeOptions = {}): Steps<VoxelizeResult> {
   checkMesh(mesh);
   const { min, max } = usedBounds(mesh);
   const grid = voxelGridFor(min, max, N, o.margin ?? VOXELIZE_MARGIN);
@@ -127,18 +138,22 @@ export function voxelizeMesh(mesh: MeshLike, N = VOXELIZE_N, o: VoxelizeOptions 
 }
 
 /** The voxelizer on a lattice the caller chooses (parts of the mesh beyond the lattice are simply not sampled). */
-export function voxelizeMeshOnGrid(mesh: MeshLike, grid: VoxelGrid, o: Pick<VoxelizeOptions, 'band'> = {}): VoxelizeResult {
+export function voxelizeMeshOnGrid(mesh: MeshLike, grid: VoxelGrid, o: Pick<VoxelizeOptions, 'band' | 'farField'> = {}): VoxelizeResult {
   checkMesh(mesh);
   const { dims, origin, voxel } = grid;
   if (!dims.every((n) => Number.isInteger(n) && n >= 2 && n <= MAX_GRID_SIDE)) throw new RangeError(`bad grid dims ${String(dims)}`);
   if (dims[0] * dims[1] * dims[2] > MAX_GRID_SAMPLES) throw new RangeError(`a ${dims.join('×')} lattice exceeds ${MAX_GRID_SAMPLES} samples`);
   if (!origin.every((c) => Number.isFinite(c)) || !(voxel > 0) || !Number.isFinite(voxel)) throw new RangeError('bad grid origin or voxel');
-  return voxelizeOnGrid(mesh, grid, o);
+  return drain(voxelizeOnGrid(mesh, grid, o));
 }
 
-function voxelizeOnGrid(mesh: MeshLike, grid: VoxelGrid, o: Pick<VoxelizeOptions, 'band'>): VoxelizeResult {
+/** Triangles between two yields of the resumable voxelizer. */
+const TRIANGLES_PER_YIELD = 2048;
+
+function* voxelizeOnGrid(mesh: MeshLike, grid: VoxelGrid, o: Pick<VoxelizeOptions, 'band' | 'farField'>): Steps<VoxelizeResult> {
   const band = o.band ?? VOXELIZE_BAND;
   if (!(band >= 1) || !Number.isFinite(band)) throw new RangeError(`band must be a number >= 1 voxel, got ${band}`);
+  if (o.farField !== undefined && o.farField !== 'edt' && o.farField !== 'sign') throw new RangeError(`unknown farField ${String(o.farField)}`);
   const [nx, ny, nz] = grid.dims;
   const { origin, voxel } = grid;
   const sxy = nx * ny;
@@ -160,6 +175,7 @@ function voxelizeOnGrid(mesh: MeshLike, grid: VoxelGrid, o: Pick<VoxelizeOptions
   const best = new Float32Array(total).fill(band2);
   let used = 0;
   for (let t = 0; t < triCount; t++) {
+    if (t % TRIANGLES_PER_YIELD === TRIANGLES_PER_YIELD - 1) yield;
     const ia = idx[3 * t] * 3;
     const ib = idx[3 * t + 1] * 3;
     const ic = idx[3 * t + 2] * 3;
@@ -259,8 +275,9 @@ function voxelizeOnGrid(mesh: MeshLike, grid: VoxelGrid, o: Pick<VoxelizeOptions
 
   // ---- 2. sign by scanline parity along +z
   const colCount = new Int32Array(sxy + 1);
-  const scan = (write: Float64Array | null, offsets: Int32Array | null): void => {
+  const scan = function* (write: Float64Array | null, offsets: Int32Array | null): Steps<void> {
     for (let t = 0; t < triCount; t++) {
+      if (t % TRIANGLES_PER_YIELD === TRIANGLES_PER_YIELD - 1) yield;
       const va = idx[3 * t];
       const vb = idx[3 * t + 1];
       const vcI = idx[3 * t + 2];
@@ -305,12 +322,13 @@ function voxelizeOnGrid(mesh: MeshLike, grid: VoxelGrid, o: Pick<VoxelizeOptions
       }
     }
   };
-  scan(null, null);
+  yield* scan(null, null);
   const start = new Int32Array(sxy + 1);
   for (let c = 0; c < sxy; c++) start[c + 1] = start[c] + colCount[c];
   const crossings = new Float64Array(start[sxy]);
   const cursor = start.slice(0, sxy);
-  scan(crossings, cursor);
+  yield* scan(crossings, cursor);
+  yield;
 
   // ---- combine band and sign
   const field = new Float32Array(total);
@@ -350,7 +368,11 @@ function voxelizeOnGrid(mesh: MeshLike, grid: VoxelGrid, o: Pick<VoxelizeOptions
   }
 
   // ---- 3. far field
-  if (bandSamples > 0) extendSignedDistance3d(field, grid.dims, { spacing: voxel });
+  yield;
+  if (o.farField === 'sign') {
+    const far = band * voxel;
+    for (let k = 0; k < total; k++) if (!Number.isFinite(field[k])) field[k] = field[k] > 0 ? far : -far;
+  } else if (bandSamples > 0) extendSignedDistance3d(field, grid.dims, { spacing: voxel });
   else for (let k = 0; k < total; k++) if (!Number.isFinite(field[k])) field[k] = field[k] > 0 ? (nx + ny + nz) * voxel : -(nx + ny + nz) * voxel;
 
   return {

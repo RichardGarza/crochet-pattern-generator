@@ -168,4 +168,5 @@ export type MeshToolErrorCode =
   | 'not-a-primitive'
   | 'bad-mesh'
   | 'undo-order'
-  | 'unknown-undo';
+  | 'unknown-undo'
+  | 'unknown-volume';

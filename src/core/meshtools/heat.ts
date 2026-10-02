@@ -13,11 +13,14 @@
 // t = (mean edge)², raised to (D/600)² on very long parts (the kernel would underflow), doubled (≤ 6 times) while two
 // critical points of φ lie within two edges of each other.
 //
-// Pure, synchronous, deterministic (no Math.random / Date; ties → lowest index).
+// Pure and deterministic (no Math.random / Date; ties → lowest index). The long steps also come as resumable
+// computations (`…Steps`, steps.ts) that yield between stages and inside the voxelizer and the factorizations, so the
+// worker can check its job gate every few ms (§5.8); the plain functions drain them synchronously.
 import { remeshVolume } from './remesh';
+import { drain, type Steps } from './steps';
 import { MeshToolError } from './volume';
-import { VOXELIZE_MARGIN, voxelizeMesh } from './voxelize';
-import { nestedDissection, pcgJacobi, SparseCholesky, type PcgResult, type SymmetricPattern } from './sparse';
+import { VOXELIZE_MARGIN, voxelizeMeshSteps } from './voxelize';
+import { nestedDissection, nestedDissectionSteps, pcgJacobi, SparseCholesky, type PcgResult, type SymmetricPattern } from './sparse';
 import { signedVolume, surfaceArea, type MeshLike } from '../kernel/geom/meshMeasures';
 import type { IndexedMesh } from '../kernel/geom/marchingCubes';
 import type { Vec3 } from '../../types/geometry';
@@ -330,6 +333,8 @@ export interface RemeshForPathBResult {
   components: number;
   /** Lattice columns with an odd number of crossings (> 0: the input was open; worth a warning). */
   oddColumns: number;
+  /** The topology of `mesh` (built for `meanEdge`; reused by the rows). */
+  sm: SurfaceMesh;
 }
 
 /**
@@ -338,6 +343,11 @@ export interface RemeshForPathBResult {
  * manifold by construction (Step 0 MC guarantee). `MeshToolError('bad-mesh')` when nothing is inside.
  */
 export function remeshForPathB(mesh: MeshLike, targetEdge: number, o: { maxVertices?: number } = {}): RemeshForPathBResult {
+  return drain(remeshForPathBSteps(mesh, targetEdge, o));
+}
+
+/** `remeshForPathB` as a resumable computation (steps.ts). */
+export function* remeshForPathBSteps(mesh: MeshLike, targetEdge: number, o: { maxVertices?: number } = {}): Steps<RemeshForPathBResult> {
   if (!(targetEdge > 0) || !Number.isFinite(targetEdge)) throw new RangeError(`target edge must be > 0, got ${targetEdge}`);
   const maxVertices = o.maxVertices ?? MAX_REMESH_VERTICES;
   if (!(maxVertices >= 100) || !Number.isFinite(maxVertices)) throw new RangeError(`maxVertices must be >= 100, got ${maxVertices}`);
@@ -366,8 +376,12 @@ export function remeshForPathB(mesh: MeshLike, targetEdge: number, o: { maxVerti
       N = MAX_REMESH_N;
       coarsened = true;
     }
-    const vol = voxelizeMesh(mesh, N);
+    // Marching cubes reads only the signs away from the exact band (an edge that crosses the surface has both ends
+    // within one voxel of it), so the far-field transform is skipped: same mesh, no 100 ms unsplittable stretch.
+    const vol = yield* voxelizeMeshSteps(mesh, N, { farField: 'sign' });
+    yield;
     const raw = remeshVolume(vol, { pairs: 10 });
+    yield;
     const noInside = 'the part has no inside (open, flat or too thin for the re-mesh)';
     if (raw.indices.length === 0) throw new MeshToolError('bad-mesh', noInside);
     const cleaned = cleanMesh(raw);
@@ -379,6 +393,7 @@ export function remeshForPathB(mesh: MeshLike, targetEdge: number, o: { maxVerti
       coarsened = true;
       continue;
     }
+    yield;
     const sm = surfaceMesh(cleaned.mesh);
     return {
       mesh: cleaned.mesh,
@@ -389,6 +404,7 @@ export function remeshForPathB(mesh: MeshLike, targetEdge: number, o: { maxVerti
       coarsened,
       components: cleaned.components,
       oddColumns: vol.stats.oddColumns,
+      sm,
     };
   }
 }
@@ -744,14 +760,14 @@ export class HeatSolver {
   private pinned: SparseCholesky | null = null;
   private pinnedAt = -1;
 
-  constructor(sm: SurfaceMesh) {
+  constructor(sm: SurfaceMesh, parts?: { L: Float64Array; mass: Float64Array; chol: SparseCholesky }) {
     this.sm = sm;
     this.meanEdge = meanEdgeLength(sm);
-    const { L, mass } = cotanLaplacian(sm);
+    const { L, mass } = parts ?? cotanLaplacian(sm);
     this.L = L;
     this.mass = mass;
     for (let v = 0; v < sm.nv; v++) if (!(mass[v] > 0)) throw new RangeError(`vertex ${v} has no area (degenerate faces only)`);
-    this.chol = new SparseCholesky(sm.pattern, nestedDissection(sm.pattern, sm.positions));
+    this.chol = parts?.chol ?? new SparseCholesky(sm.pattern, nestedDissection(sm.pattern, sm.positions));
     // ε·M regularization of the PCG Poisson system: ε·M_ii ≈ 1e-10·L_ii on average.
     let trL = 0;
     let trM = 0;
@@ -764,6 +780,17 @@ export class HeatSolver {
     for (let v = 0; v < sm.nv; v++) this.poissonVal[sm.pattern.diag[v]] += eps * mass[v];
   }
 
+  /** The constructor as a resumable computation: operators, ordering and symbolic analysis, with yields between. */
+  static *build(sm: SurfaceMesh): Steps<HeatSolver> {
+    const { L, mass } = cotanLaplacian(sm);
+    yield;
+    const perm = yield* nestedDissectionSteps(sm.pattern, sm.positions);
+    yield;
+    const chol = new SparseCholesky(sm.pattern, perm);
+    yield;
+    return new HeatSolver(sm, { L, mass, chol });
+  }
+
   /** Lumped vertex areas (a copy). */
   get vertexMass(): Float64Array {
     return Float64Array.from(this.mass);
@@ -774,12 +801,13 @@ export class HeatSolver {
     return this.chol.nnzL;
   }
 
-  private factorAt(t: number): void {
+  private *factorAt(t: number): Steps<void> {
     if (this.factoredT === t) return;
+    this.factoredT = NaN;
     const val = new Float64Array(this.L.length);
     for (let k = 0; k < val.length; k++) val[k] = t * this.L[k];
     for (let v = 0; v < this.sm.nv; v++) val[this.sm.pattern.diag[v]] += this.mass[v];
-    if (!this.chol.factor(val)) {
+    if (!(yield* this.chol.factorSteps(val))) {
       this.factoredT = NaN;
       throw new MeshToolError('bad-mesh', 'the heat system is not positive definite (degenerate mesh)');
     }
@@ -790,13 +818,14 @@ export class HeatSolver {
    * L pinned at vertex s: L + L_ss·e_s·e_sᵀ is positive definite on a connected surface, and for a right-hand side
    * summing to 0 its solution is exactly the solution of Lφ = b with φ_s = 0 (sum the rows: L_ss·φ_s = Σb = 0).
    */
-  private pinnedFactor(s: number): SparseCholesky {
+  private *pinnedFactor(s: number): Steps<SparseCholesky> {
     if (this.pinned && this.pinnedAt === s) return this.pinned;
     const val = Float64Array.from(this.L);
     const d = this.sm.pattern.diag[s];
     val[d] += Math.max(val[d], 1e-300);
     const c = this.pinned ?? new SparseCholesky(this.sm.pattern, this.chol.perm);
-    if (!c.factor(val)) throw new MeshToolError('bad-mesh', 'the Poisson system is not positive definite (disconnected or degenerate mesh)');
+    this.pinnedAt = -1;
+    if (!(yield* c.factorSteps(val))) throw new MeshToolError('bad-mesh', 'the Poisson system is not positive definite (disconnected or degenerate mesh)');
     this.pinned = c;
     this.pinnedAt = s;
     return c;
@@ -826,14 +855,25 @@ export class HeatSolver {
     warm?: Float64Array,
     poissonMode: 'direct' | 'pcg' = 'direct',
   ): { phi: Float64Array; raw: Float64Array; poisson: PcgResult; underflow: number } {
+    return drain(this.solveAtSteps(sources, t, warm, poissonMode));
+  }
+
+  /** `solveAt` as a resumable computation (yields inside the factorizations and between the steps). */
+  *solveAtSteps(
+    sources: readonly number[],
+    t: number,
+    warm?: Float64Array,
+    poissonMode: 'direct' | 'pcg' = 'direct',
+  ): Steps<{ phi: Float64Array; raw: Float64Array; poisson: PcgResult; underflow: number }> {
     const sm = this.sm;
     if (sources.length === 0) throw new RangeError('no source vertex');
     for (const s of sources) if (!(Number.isInteger(s) && s >= 0 && s < sm.nv)) throw new RangeError(`source ${s} out of range`);
     if (!(t > 0) || !Number.isFinite(t)) throw new RangeError(`t must be > 0, got ${t}`);
-    this.factorAt(t);
+    yield* this.factorAt(t);
     const delta = new Float64Array(sm.nv);
     for (const s of sources) delta[s] = 1;
     const u = this.chol.solve(delta);
+    yield;
     let underflow = 0;
     for (let v = 0; v < sm.nv; v++) if (!(Math.abs(u[v]) > 0)) underflow++;
     const X = normalizedNegGradient(sm, u);
@@ -844,6 +884,7 @@ export class HeatSolver {
     for (let v = 0; v < sm.nv; v++) mean += div[v];
     mean /= sm.nv;
     for (let v = 0; v < sm.nv; v++) b[v] = -(div[v] - mean);
+    yield;
     let raw: Float64Array;
     let poisson: PcgResult;
     if (poissonMode === 'pcg') {
@@ -853,14 +894,14 @@ export class HeatSolver {
         // Not converged in 2000 iterations (very large or badly shaped meshes): the direct solve on the same ordering.
         if (!this.poissonChol) {
           const c = new SparseCholesky(sm.pattern, this.chol.perm);
-          if (!c.factor(this.poissonVal)) throw new MeshToolError('bad-mesh', 'the Poisson system is not positive definite (degenerate mesh)');
+          if (!(yield* c.factorSteps(this.poissonVal))) throw new MeshToolError('bad-mesh', 'the Poisson system is not positive definite (degenerate mesh)');
           this.poissonChol = c;
         }
         raw = this.poissonChol.solve(b);
         poisson = { ...poisson, direct: true };
       }
     } else {
-      raw = this.pinnedFactor(sources[0]).solve(b);
+      raw = (yield* this.pinnedFactor(sources[0])).solve(b);
       poisson = { iterations: 0, relResidual: this.residual(this.L, raw, b), converged: true, direct: true };
     }
     let shift = Infinity;
@@ -875,6 +916,11 @@ export class HeatSolver {
    * underflow —, doubled while adjacent critical points remain (≤ 6 times).
    */
   geodesic(sources: readonly number[], o: HeatOptions = {}): HeatResult {
+    return drain(this.geodesicSteps(sources, o));
+  }
+
+  /** `geodesic` as a resumable computation (yields between the t doublings and inside each solve). */
+  *geodesicSteps(sources: readonly number[], o: HeatOptions = {}): Steps<HeatResult> {
     const tScale = o.tScale ?? 1;
     const maxD = o.maxDoublings ?? MAX_T_DOUBLINGS;
     if (!(tScale > 0) || !Number.isFinite(tScale)) throw new RangeError(`tScale must be > 0, got ${tScale}`);
@@ -884,16 +930,18 @@ export class HeatSolver {
     const base = tScale * this.meanEdge * this.meanEdge;
     const D = graphEccentricity(this.sm, sources);
     if (!Number.isFinite(D)) throw new MeshToolError('bad-mesh', 'the surface is not connected');
+    yield;
     const floor = (D / FAR_FIELD_SQRT_T) ** 2;
     const t0 = Math.max(base, floor);
     let warm: Float64Array | undefined;
     let pcgIterations = 0;
     for (let d = 0; ; d++) {
       const t = t0 * 2 ** d;
-      const r = this.solveAt(sources, t, warm, mode);
+      const r = yield* this.solveAtSteps(sources, t, warm, mode);
       pcgIterations += r.poisson.iterations;
       const critical = criticalPoints(this.sm, r.phi);
       const adjacent = adjacentCriticalPairs(this.sm, critical);
+      yield;
       // (an underflowed u — not expected above the far-field floor — is treated like an adjacent pair: double t)
       if ((adjacent.length === 0 && r.underflow === 0) || d >= maxD) {
         return { phi: r.phi, t, doublings: d, t0, tFloored: floor > base, meanEdge: this.meanEdge, critical, adjacent, poisson: r.poisson, pcgIterations };
@@ -948,11 +996,16 @@ export function nearestVertex(sm: SurfaceMesh, p: Vec3): number {
  * Ties → lowest index.
  */
 export function chooseSeed(solver: HeatSolver, o: SeedOptions = {}): SeedChoice {
+  return drain(chooseSeedSteps(solver, o));
+}
+
+/** `chooseSeed` as a resumable computation (the attach rule runs one heat solve). */
+export function* chooseSeedSteps(solver: HeatSolver, o: SeedOptions = {}): Steps<SeedChoice> {
   const sm = solver.sm;
   if (o.seed) return { vertex: nearestVertex(sm, o.seed), rule: 'seed' };
   if (o.attach && o.attach.length > 0) {
     const src = [...new Set(o.attach.map((p) => nearestVertex(sm, p)))].sort((a, b) => a - b);
-    const { phi } = solver.geodesic(src, { maxDoublings: 0 });
+    const { phi } = yield* solver.geodesicSteps(src, { maxDoublings: 0 });
     let best = 0;
     for (let v = 1; v < sm.nv; v++) if (phi[v] > phi[best]) best = v;
     return { vertex: best, rule: 'farthest-from-attach' };

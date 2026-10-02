@@ -5,6 +5,7 @@ import { taubinSmooth } from '../../kernel/geom/taubin';
 import { mulberry32 } from '../../kernel/prng';
 import type { MeshLike } from '../../kernel/geom/meshMeasures';
 import type { ColoredMesh, Vec3 } from '../../../types/geometry';
+import { clampClose, clampFan, clampStart, closeTail, hysteresis } from '../counts';
 
 /** Suites that do real geometry work: a generous timeout (a timeout under load is a flake, not a pass). */
 export const HEAVY = { timeout: 120_000 } as const;
@@ -203,4 +204,33 @@ export function noisySphere(amp: number, seed: number, seg = 40, rings = 20): In
 export function greatCircle(r: number, p: ArrayLike<number>, q: ArrayLike<number>): number {
   const c = (p[0] * q[0] + p[1] * q[1] + p[2] * q[2]) / (Math.hypot(p[0], p[1], p[2]) * Math.hypot(q[0], q[1], q[2]));
   return r * Math.acos(Math.max(-1, Math.min(1, c)));
+}
+
+/** Path A "exact" counts of §2.10.5 built from the same blocks: mirrorHalf for symmetric profiles. */
+export function pathAExact(ideal: number[], o: { closed: boolean; symmetric: boolean }): number[] {
+  let n: number[];
+  if (o.symmetric) {
+    const m = ideal.length;
+    const h = Math.ceil(m / 2);
+    const first = clampFan(clampStart(hysteresis(ideal.slice(0, h)), ideal.slice(0, h)));
+    n = [...first];
+    for (let k = h; k < m; k++) n.push(n[m - 1 - k]);
+  } else {
+    n = hysteresis(ideal);
+  }
+  n = clampStart(n, ideal);
+  if (o.closed) n = clampClose(n, ideal).counts;
+  n = clampFan(n);
+  if (o.closed) n = closeTail(n).counts;
+  return n;
+}
+
+/** Ideals of a sphere / semicircle lathe of radius R (Path A, §2.10.5): N = round(πR/hS), closed both ends. */
+export function sphereIdeals(R: number, wS: number, hS: number): number[] {
+  const L = Math.PI * R;
+  const N = Math.max(2, Math.floor(L / hS + 0.5));
+  const hEff = L / N;
+  const out: number[] = [];
+  for (let k = 1; k < N; k++) out.push((2 * Math.PI * R * Math.sin((k * hEff) / R)) / wS);
+  return out;
 }
