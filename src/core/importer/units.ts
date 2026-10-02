@@ -115,11 +115,11 @@ export function decideUnits(rawHeight: number, ctx: ImportContext = {}, hints: U
       const f = INCHES_PER_UNIT[unit];
       const heightIn = h * f;
       if (heightIn >= 1 && heightIn <= MODEL_LIMITS.maxHeightIn) {
-        return make(unit, 'spec', f, true, `read as ${UNIT_WORD[unit]} (${fmt(h, 1)} in would be beyond the ${MODEL_LIMITS.maxHeightIn} in limit): ${result(heightIn)}`);
+        return make(unit, 'default', f, true, `read as ${UNIT_WORD[unit]} (${fmt(h, 1)} in would be beyond the ${MODEL_LIMITS.maxHeightIn} in limit): ${result(heightIn)}`);
       }
     }
-    return make('in', 'spec', 1, true, `read as inches: ${fmt(h, 2)} in tall (beyond the ${MODEL_LIMITS.maxHeightIn} in limit: it will be scaled down)`);
+    return make('in', 'default', 1, true, `read as inches: ${fmt(h, 2)} in tall (beyond the ${MODEL_LIMITS.maxHeightIn} in limit: it will be scaled down)`);
   }
   // inches, the schema's unit
-  return make('in', 'spec', 1, false, `read as inches: ${fmt(h, 2)} in tall`);
+  return make('in', 'default', 1, false, `read as inches: ${fmt(h, 2)} in tall`);
 }

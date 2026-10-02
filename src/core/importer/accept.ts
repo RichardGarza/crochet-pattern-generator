@@ -81,29 +81,24 @@ export function keptMeshRefs(prev: CrochetModelV1 | undefined, next: CrochetMode
   return next.parts.flatMap((p) => (p.type === 'mesh' && before.has(p.dims.meshRef) && !Object.hasOwn(imported, p.dims.meshRef) ? [p.dims.meshRef] : []));
 }
 
-/** The note shown when a model's lace weight (CYC 0) is offered as CYC 1 (integration S1 tasks T6.5 / T7.6). */
-export const LACE_AS_CYC1_NOTE = 'Lace weight is sized as CYC 1 for toys; the toy may come out larger than the label suggests';
-
 export interface YarnPrefill {
   /** CYC 1–7 (a model's 0 is offered as 1). */
   weightCYC?: number;
   hookMm?: number;
   stsPerIn?: number;
   fiber?: string;
-  /** Shown next to the pre-filled weight; never silent. */
-  note?: string;
 }
 
 /**
- * What the Yarn & size step pre-fills from an imported `model.yarn` after Accept (§3.7.7): CYC 0 (lace) is offered
- * as CYC 1 with a visible note; nothing else is changed. Undefined when the model names no yarn.
+ * What an imported `model.yarn` suggests (§3.7.7): CYC 0 (lace) is offered as CYC 1; nothing else is changed.
+ * Undefined when the model names no yarn. The Yarn & size panel (T6) pre-fills from `model.yarn` itself and shows
+ * the lace note (`LACE_NOTE`, §4.5); the importer shows nothing of its own for CYC 0 (integration-s2 task T7-5).
  */
 export function yarnPrefill(yarn: CrochetModelV1['yarn']): YarnPrefill | undefined {
   if (!yarn) return undefined;
   const out: YarnPrefill = {};
   if (yarn.weightCYC !== undefined) {
     out.weightCYC = yarn.weightCYC === 0 ? 1 : yarn.weightCYC;
-    if (yarn.weightCYC === 0) out.note = LACE_AS_CYC1_NOTE;
   }
   if (yarn.hookMm !== undefined) out.hookMm = yarn.hookMm;
   if (yarn.stsPerIn !== undefined) out.stsPerIn = yarn.stsPerIn;

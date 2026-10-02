@@ -103,13 +103,13 @@ describe('the units rule of geometry carriers (§3.7.5)', () => {
     [3, { expectedHeightIn: 10 }, {}, 'normalized', 'expected-height', true], // nothing within ×/÷ 1.5
     [0.2509, {}, { stageHeader: true }, 'm', 'stage-header', true],
     [1.524, {}, { stageHeader: true }, 'm', 'stage-header', true],
-    [1.53, {}, { stageHeader: true }, 'in', 'spec', false],
-    [9.88, {}, { stageHeader: true }, 'in', 'spec', false], // the observed teddy OBJ
+    [1.53, {}, { stageHeader: true }, 'in', 'default', false],
+    [9.88, {}, { stageHeader: true }, 'in', 'default', false], // the observed teddy OBJ
     [1.4, {}, {}, 'm', 'small-bbox', true],
-    [1.5, {}, {}, 'in', 'spec', false],
-    [250.9, {}, {}, 'mm', 'spec', true], // beyond 60 in as inches
-    [800, {}, {}, 'cm', 'spec', true], // 31.5 in as millimeters is fine… no: 800 mm = 31.5 in
-    [5000, {}, {}, 'in', 'spec', true],
+    [1.5, {}, {}, 'in', 'default', false],
+    [250.9, {}, {}, 'mm', 'default', true], // beyond 60 in as inches
+    [800, {}, {}, 'cm', 'default', true], // 31.5 in as millimeters is fine… no: 800 mm = 31.5 in
+    [5000, {}, {}, 'in', 'default', true],
     [0.25, { units: 'in' }, { stageHeader: true }, 'in', 'user', false],
     [0.2509, {}, { sceneUnitsPerInch: 0.0254 }, 'm', 'gltf-extras-ratio', false],
     [9.88, {}, { sceneUnitsPerInch: 1 }, 'in', 'gltf-extras-ratio', false],

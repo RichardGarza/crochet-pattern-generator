@@ -196,7 +196,7 @@ describe('G26: the observed teddy OBJ stays inches', HEAVY, () => {
 
   it('stage header present, h = 9.88: inches, no confirm; 17 parts with the ids, colors and tree of the teddy', async () => {
     const r = await run(observed());
-    expect(r.units).toMatchObject({ chosen: 'in', reason: 'spec', confirm: false });
+    expect(r.units).toMatchObject({ chosen: 'in', reason: 'default', confirm: false });
     expect(r.units?.rawHeight).toBeCloseTo(9.878, 2);
     const m = r.model as CrochetModelV1;
     expect(m.parts.map((p) => p.id).sort()).toEqual([...IDS].sort());
@@ -252,7 +252,7 @@ describe('STL and PLY (§3.7.5)', HEAVY, () => {
 
   it('binary STL with no context: 251 as inches is beyond the limit, so millimeters, confirmed', async () => {
     const r = await run(stl());
-    expect(r.units).toMatchObject({ chosen: 'mm', reason: 'spec', confirm: true });
+    expect(r.units).toMatchObject({ chosen: 'mm', reason: 'default', confirm: true });
     expectBboxWithin2(r.model as CrochetModelV1);
   });
 

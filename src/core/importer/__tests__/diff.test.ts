@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { ColoredMesh } from '../../../types/geometry';
 import type { CrochetModelV1, Feature, Part } from '../../../types/model';
 import { encodeUv64 } from '../../model/builder';
-import { keptMeshRefs, labelRemap, LACE_AS_CYC1_NOTE, planImportAccept, remapMeshLabels, yarnPrefill } from '../accept';
+import { keptMeshRefs, labelRemap, planImportAccept, remapMeshLabels, yarnPrefill } from '../accept';
 import { diffModels } from '../diff';
 import { CANONICAL_TEDDY } from './helpers/fixtures';
 
@@ -137,8 +137,8 @@ describe('planImportAccept (§3.7.7, integration S1 task T7.5)', () => {
 });
 
 describe('yarnPrefill (integration S1 task T7.6)', () => {
-  it('CYC 0 is offered as CYC 1 with the note; other weights as they are; no yarn → nothing', () => {
-    expect(yarnPrefill({ weightCYC: 0, hookMm: 2 })).toEqual({ weightCYC: 1, hookMm: 2, note: LACE_AS_CYC1_NOTE });
+  it('CYC 0 is offered as CYC 1 (no note of its own: the panel shows LACE_NOTE); other weights as they are; no yarn → nothing', () => {
+    expect(yarnPrefill({ weightCYC: 0, hookMm: 2 })).toEqual({ weightCYC: 1, hookMm: 2 });
     expect(yarnPrefill({ weightCYC: 4, hookMm: 3.5, stsPerIn: 5.1, fiber: 'cotton' })).toEqual({ weightCYC: 4, hookMm: 3.5, stsPerIn: 5.1, fiber: 'cotton' });
     expect(yarnPrefill(undefined)).toBeUndefined();
     expect(yarnPrefill({})).toBeUndefined();

@@ -140,7 +140,7 @@ test.describe('T7.2 import.worker (geometry carriers)', () => {
       expect(r.same, `${r.name}: the canonical parts and tree`).toBe(true);
     }
     expect(by['captured GLB']).toMatchObject({ carrier: 'glb', dialect: 'cd-observed-2026-09', units: 'in/gltf-extras-ratio' });
-    expect(by['teddy OBJ + MTL']).toMatchObject({ carrier: 'obj', dialect: 'geometry-only', units: 'in/spec', parts: 17 });
+    expect(by['teddy OBJ + MTL']).toMatchObject({ carrier: 'obj', dialect: 'geometry-only', units: 'in/default', parts: 17 });
     expect(by['teddy OBJ + MTL'].ms, 'the 9.5 MB OBJ in the worker').toBeLessThan(budget(3000)); // §5.8; strict under CPG_PERF=1, the node test g26 checks it strictly in npm run perf
     expect(by['builder-v1 GLB, per-node extras']).toMatchObject({ carrier: 'glb', dialect: 'canonical-1' });
     expect(by['handoff tar.gz']).toMatchObject({ carrier: 'tar' });

@@ -6,6 +6,7 @@ import { importInputsSync } from '../../../core/importer';
 import type { ColoredMesh } from '../../../types/geometry';
 import type { ImportResult } from '../../../types/importer';
 import type { CrochetModelV1, Feature } from '../../../types/model';
+import { MESH_ASSET_MIME, meshAssetCodec } from '../../../core/kernel/assetCodecs';
 import { createProjectStore, type ProjectStore } from '../../projectStore';
 import { acceptImport, type MeshCodec } from '../qa';
 import { teddy, teddyProject } from './teddyProject';
@@ -86,13 +87,25 @@ describe('acceptImport (§3.7.7)', () => {
     expect(out.report.features).toEqual(['freckle']);
   });
 
-  it('mesh parts need a mesh codec; with one, their buffers are stored under their meshRef', async () => {
+  it('mesh parts are stored with the shared mesh codec by default (§5.5.6, integration-s2 task T7-2)', async () => {
     const obj = 'o blob\nv 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\nf 1 2 4\nf 1 3 4\nf 2 3 4\n';
     const r = importInputsSync([{ kind: 'file', name: 'b.obj', bytes: new TextEncoder().encode(obj).buffer as ArrayBuffer }], { units: 'in' });
     expect(r.ok).toBe(true);
     const store = opened();
-    await expect(acceptImport({ result: r, original: { name: 'b.obj', bytes: new Uint8Array([1]) } }, store)).rejects.toThrow(/meshCodec/);
-    expect(store.getState().doc?.imports).toEqual([]);
+    await acceptImport({ result: r, original: { name: 'b.obj', bytes: new Uint8Array([1]) } }, store);
+    const first = (r.model as CrochetModelV1).parts[0];
+    const ref = first.type === 'mesh' ? first.dims.meshRef : '';
+    const asset = store.getState().doc?.threeD?.meshAssets[ref];
+    expect(asset?.mime).toBe(MESH_ASSET_MIME);
+    const back = await meshAssetCodec.decode(await store.getState().getAsset(asset as NonNullable<typeof asset>));
+    expect(back.positions).toEqual((r.meshes as Record<string, ColoredMesh>)[ref].positions);
+    expect(back.labels).toEqual((r.meshes as Record<string, ColoredMesh>)[ref].labels);
+  });
+
+  it('a caller-supplied mesh codec is used instead (tests)', async () => {
+    const obj = 'o blob\nv 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\nf 1 2 4\nf 1 3 4\nf 2 3 4\n';
+    const r = importInputsSync([{ kind: 'file', name: 'b.obj', bytes: new TextEncoder().encode(obj).buffer as ArrayBuffer }], { units: 'in' });
+    const store = opened();
     await acceptImport({ result: r, original: { name: 'b.obj', bytes: new Uint8Array([1]) }, meshCodec: codec }, store);
     const doc = store.getState().doc;
     const first = (r.model as CrochetModelV1).parts[0];

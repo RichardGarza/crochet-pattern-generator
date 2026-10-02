@@ -3,6 +3,7 @@
 // `carry: 'none'`, integration S1 task T7.5), stores the original file and the mesh parts' buffers as assets,
 // appends the `ImportRecord` and clears `qa.awaiting`. The Q&A actions follow in T7.3/T7.4.
 import { keptMeshRefs, labelRemap, planImportAccept, remapMeshLabels } from '../../core/importer/accept';
+import { meshAssetCodec } from '../../core/kernel/assetCodecs';
 import type { CarryReport } from '../../types/entryPoints';
 import type { ColoredMesh } from '../../types/geometry';
 import type { ImportResult } from '../../types/importer';
@@ -10,8 +11,8 @@ import type { AssetRef, ImportRecord } from '../../types/project';
 import { projectStore, type ProjectStore } from '../projectStore';
 
 /**
- * How mesh parts' buffers are stored as assets. The asset format of a `ColoredMesh` is not frozen yet (integration
- * request in docs/tracks/t7.md), so the caller supplies it; an import with mesh parts cannot be accepted without it.
+ * How mesh parts' buffers are stored as assets: by default the shared `meshAssetCodec` (`CPGM`, §5.5.6,
+ * `core/kernel/assetCodecs.ts`); tests may pass their own.
  */
 export interface MeshCodec {
   mime: string;
@@ -28,6 +29,7 @@ export interface AcceptImportInput {
   carryPaintAnyway?: readonly string[];
   /** The revision label; default "Imported from Claude Design". */
   label?: string;
+  /** Default `meshAssetCodec` (§5.5.6). */
   meshCodec?: MeshCodec;
   /** Ids and clock (tests pass fixed ones). */
   newId?: () => string;
@@ -46,7 +48,7 @@ export interface AcceptImportOutcome {
 const randomId = (): string =>
   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `import-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
-/** §3.7.7 Accept: everything in one undo step. Rejects on a read-only project, a failed result or a missing codec. */
+/** §3.7.7 Accept: everything in one undo step. Rejects on a read-only project or a failed result. */
 export async function acceptImport(input: AcceptImportInput, store: ProjectStore = projectStore): Promise<AcceptImportOutcome> {
   const { result } = input;
   if (!result.ok || !result.model) throw new Error('acceptImport: the import failed; there is nothing to accept');
@@ -62,26 +64,21 @@ export async function acceptImport(input: AcceptImportInput, store: ProjectStore
   // assets first (they are content-addressed: storing one that is not used in the end costs nothing but disk)
   const imported = result.meshes ?? {};
   const kept = keptMeshRefs(prev, plan.model, imported);
-  if ((Object.keys(imported).length > 0 || kept.length > 0) && !input.meshCodec) {
-    throw new Error('acceptImport: this import has mesh parts, and no mesh asset format was given (meshCodec)');
-  }
+  const codec = input.meshCodec ?? meshAssetCodec;
   const original = await state.putAsset(
     input.original.bytes instanceof Blob ? input.original.bytes : new Blob([input.original.bytes as BlobPart]),
     input.original.mime ?? 'application/octet-stream',
   );
   const meshAssets: Record<string, AssetRef> = {};
-  if (input.meshCodec) {
-    const codec = input.meshCodec;
-    for (const [ref, mesh] of Object.entries(imported)) meshAssets[ref] = await state.putAsset(codec.encode(mesh), codec.mime);
-    if (kept.length > 0 && prev) {
-      // kept mesh parts' labels index the previous palette: re-point them at the new one
-      const table = labelRemap(prev.palette, plan.model.palette);
-      for (const ref of kept) {
-        const old = doc.threeD.meshAssets[ref];
-        if (!old) continue;
-        const mesh = await codec.decode(await state.getAsset(old));
-        meshAssets[ref] = await state.putAsset(codec.encode(remapMeshLabels(mesh, table)), codec.mime);
-      }
+  for (const [ref, mesh] of Object.entries(imported)) meshAssets[ref] = await state.putAsset(codec.encode(mesh), codec.mime);
+  if (kept.length > 0 && prev) {
+    // kept mesh parts' labels index the previous palette: re-point them at the new one
+    const table = labelRemap(prev.palette, plan.model.palette);
+    for (const ref of kept) {
+      const old = doc.threeD.meshAssets[ref];
+      if (!old) continue;
+      const mesh = await codec.decode(await state.getAsset(old));
+      meshAssets[ref] = await state.putAsset(codec.encode(remapMeshLabels(mesh, table)), codec.mime);
     }
   }
   const after = store.getState();
